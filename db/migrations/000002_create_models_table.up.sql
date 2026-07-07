@@ -1,6 +1,6 @@
-CREATE TABLE models (
+CREATE TABLE models ( -- use model in mapping system
     id SERIAL PRIMARY KEY,
-    provider VARCHAR(50) NOT NULL, -- 'openai', 'google', 'anthropic', etc
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
     model_name VARCHAR(100) NOT NULL,
-    UNIQUE(provider, model_name)
-)
+    UNIQUE(channel_id, model_name)
+);

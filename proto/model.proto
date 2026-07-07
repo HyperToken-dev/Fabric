@@ -1,0 +1,38 @@
+syntax = "proto3";
+package proto;
+option go_package = "hyper-token/gen;proto";
+
+service ModelService {
+    rpc GetModelInfo(GetModelInfoRequest) returns(GetModelInfoResponse);
+    rpc CreateModel(CreateModelRequest) returns(CreateModelResponse);
+    rpc ListModels(ListModelsRequest) returns(ListModelsResponse);
+}
+
+message Model {
+    int32 model_id = 1;
+    string model_name = 2;
+    int32 channel_id = 3;
+}
+
+message GetModelInfoRequest {
+    int32 model_id = 1;
+}
+
+message GetModelInfoResponse {
+    Model model = 1;
+}
+
+message ListModelsRequest {
+    int32 channel_id = 1;
+}
+
+message ListModelsResponse {
+    repeated Model models = 1;
+}
+
+message CreateModelRequest {
+    string model_name = 1;
+    int32 channel_id = 2;
+}
+
+message CreateModelResponse {}

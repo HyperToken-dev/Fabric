@@ -1,16 +1,15 @@
 CREATE TABLE usage_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    api_key_hash VARCHAR(255) NOT NULL REFERENCES api_keys(key_hash) ON DELETE CASCADE,
-    provider VARCHAR(50) NOT NULL,
-    model_name VARCHAR(100) NOT NULL,
-    prompt_tokens INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    FOREIGN KEY (provider, model_name) REFERENCES models(provider, model_name) ON DELETE RESTRICT
+    key_id INTEGER NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+    channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+    prompt_tokens BIGINT NOT NULL DEFAULT 0,
+    completion_tokens BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_usage_logs_api_key_hash ON usage_logs(api_key_hash);
+CREATE INDEX idx_usage_logs_api_key_id ON usage_logs(key_id);
+CREATE INDEX idx_usage_logs_channel_id ON usage_logs(channel_id);
 CREATE INDEX idx_usage_logs_created_at ON usage_logs(created_at);
-CREATE INDEX idx_usage_logs_provider ON usage_logs(provider);
-CREATE INDEX idx_usage_logs_lookup ON usage_logs(api_key_hash, provider, model_name);
+CREATE INDEX idx_usage_logs_key_time ON usage_logs(key_id, created_at DESC);
+CREATE INDEX idx_usage_logs_channel_time ON usage_logs(channel_id, created_at DESC);

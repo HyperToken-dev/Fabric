@@ -2,7 +2,7 @@
 
 ## Project
 
-API metering gateway that counts LLM token usage. Transparent proxy for OpenAI, Google Gemini, and Anthropic APIs, etc.
+API metering gateway that counts LLM token usage. Transparent proxy for OpenAI, Google Gemini, and Anthropic APIs, etc.But **now just for OpenAI**.
 
 ## Commands
 
@@ -28,6 +28,10 @@ Two ports in one binary:
 - **Proxy** (`PROXY_ADDR`, default `:8080`) — transparent reverse proxy. Client sends gateway API key via `Authorization: Bearer ht_...`, gateway swaps in the real provider key and forwards to upstream.
 - **Admin** (`ADMIN_ADDR`, default `:9090`) — connect-go management API (gRPC + REST) for API key CRUD and usage queries.
 
+## Working Principles
+
+- **Error process**: Every error expose by code need to be processed.Skip the error processing is absolutely prohibited.
+
 ## Key concepts
 
 - Module path: `hyper-token` (not `HyperToken`).
@@ -42,14 +46,17 @@ Two ports in one binary:
 
 ## Directory map
 
-| Path                   | Purpose                                               |
-| ---------------------- | ----------------------------------------------------- |
-| `cmd/gateway/`         | Binary entrypoint                                     |
-| `proto/`               | Protobuf + generated code (both pb.go and connect.go) |
-| `db/`                  | Migrations + sqlc queries                             |
-| `internal/proxy/`      | Per-provider reverse proxy handlers                   |
-| `internal/tokenizer/`  | Response parsing for usage extraction                 |
-| `internal/auth/`       | API key generation, hashing, extraction               |
-| `internal/repository/` | sqlc-generated DB code + business logic wrapper       |
-| `internal/server/`     | connect-go management service implementation          |
-| `internal/config/`     | Environment-based configuration                       |
+| Path                   | Purpose                                      |
+| ---------------------- | -------------------------------------------- |
+| `cmd/gateway/`         | Binary entrypoint                            |
+| `proto/`               | Protobuf                                     |
+| `db/`                  | Migrations + sqlc queries                    |
+| `internal/proxy/`      | Per-provider reverse proxy handlers          |
+| `internal/auth/`       | API key generation, hashing, extraction      |
+| `internal/repository/` | sqlc-generated DB code                       |
+| `gen/`                 | buf generated code                           |
+| `internal/logger`      | just a logger config file                    |
+| `internal/server/`     | connect-go management service implementation |
+| `internal/config/`     | Environment-based configuration              |
+
+**DONT PUT SOURCE FILE IN THE CODE GENERATING PATH SUCH AS `gen` OR `repository`**
