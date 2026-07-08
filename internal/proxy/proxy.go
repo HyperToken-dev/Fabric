@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 
 	"hyper-token/internal/repository"
@@ -27,6 +26,7 @@ const (
 	ctxModel     contextKey = "model"
 	ctxModelID   contextKey = "model_id"
 	ctxProvider  contextKey = "provider"
+	ctxUpstream  contextKey = "upstream"
 )
 
 type usageTrackingReader struct {
@@ -99,19 +99,6 @@ func getContextInt32(r *http.Request, key contextKey) int32 {
 func getContextString(r *http.Request, key contextKey) string {
 	v, _ := r.Context().Value(key).(string)
 	return v
-}
-
-func Route(r *http.Request) Provider {
-	path := r.URL.Path
-
-	if isOpenAIPath(path) {
-		return ProviderOpenAI
-	}
-	return ""
-}
-
-func isOpenAIPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/")
 }
 
 func processNonStreaming(body []byte, keyID, channelID, modelID int32, provider Provider, queries *repository.Queries) error {

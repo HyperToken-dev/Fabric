@@ -15,6 +15,11 @@ type Router struct {
 	openaiProxy *proxy.OpenAIProxy
 }
 
+const (
+	channelStatusEnabled int16 = 1
+	apiFormatOpenAI      int32 = 1
+)
+
 func New(queries *repository.Queries, openaiProxy *proxy.OpenAIProxy) *Router {
 	return &Router{queries: queries, openaiProxy: openaiProxy}
 }
@@ -30,16 +35,23 @@ func (rt *Router) AuthMiddleware() gin.HandlerFunc {
 
 		keyHash := auth.HashKey(rawKey)
 		hash := sql.NullString{String: keyHash, Valid: true}
-		row, err := rt.queries.GetApiKeyByHash(c.Request.Context(), hash)
+		row, err := rt.queries.GetApiKeyWithChannelByHash(c.Request.Context(), hash)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
 			c.Abort()
 			return
 		}
+		if row.ChannelStatus != channelStatusEnabled {
+			c.JSON(http.StatusForbidden, gin.H{"error": "channel disabled"})
+			c.Abort()
+			return
+		}
 
 		// Store in context for handlers
-		c.Set("keyID", row.ID)
+		c.Set("keyID", row.KeyID)
 		c.Set("channelID", row.ChannelID)
+		c.Set("channelBaseURL", row.BaseUrl)
+		c.Set("channelAPIFormat", row.ChannelApiFormat)
 		c.Next()
 	}
 }
@@ -53,7 +65,7 @@ func (rt *Router) RegisterProxyRoutes() *gin.Engine {
 
 	// Global Catch-all with Auth
 	r.Use(rt.AuthMiddleware())
-	r.Any("/*any", rt.OpenAIHandler)
+	r.Any("/*any", rt.ProxyHandler)
 
 	return r
 }

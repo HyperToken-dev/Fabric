@@ -2,12 +2,14 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 
 	"hyper-token/internal/repository"
 
@@ -15,10 +17,9 @@ import (
 )
 
 type OpenAIProxy struct {
-	proxy       *httputil.ReverseProxy
-	upstreamURL string
-	apiKey      string
-	queries     *repository.Queries
+	proxy   *httputil.ReverseProxy
+	apiKey  string
+	queries *repository.Queries
 }
 
 type openaiChatRequest struct {
@@ -33,26 +34,29 @@ type OpenAIUsage struct {
 	} `json:"usage"`
 }
 
-func NewOpenAIProxy(upstreamURL, apiKey string, queries *repository.Queries) *OpenAIProxy {
+func NewOpenAIProxy(apiKey string, queries *repository.Queries) *OpenAIProxy {
 	p := &OpenAIProxy{
-		upstreamURL: upstreamURL,
-		apiKey:      apiKey,
-		queries:     queries,
+		apiKey:  apiKey,
+		queries: queries,
 	}
 	p.proxy = p.buildProxy()
 	return p
 }
 
 func (p *OpenAIProxy) buildProxy() *httputil.ReverseProxy {
-	target, _ := url.Parse(p.upstreamURL)
-
 	director := func(req *http.Request) {
 		model := extractOpenAIModel(req)
-		req = setContextString(req, ctxModel, model)
-		req = setContextString(req, ctxProvider, string(ProviderOpenAI))
+		ctx := context.WithValue(req.Context(), ctxModel, model)
+		ctx = context.WithValue(ctx, ctxProvider, string(ProviderOpenAI))
+		*req = *req.WithContext(ctx)
 
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
+		target, ok := req.Context().Value(ctxUpstream).(*url.URL)
+		if !ok {
+			zap.S().Error("Error catched: missing upstream target")
+			return
+		}
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 		req.Host = target.Host
@@ -61,6 +65,10 @@ func (p *OpenAIProxy) buildProxy() *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Director:       director,
 		ModifyResponse: p.modifyResponse,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			zap.S().Errorf("Error catched: proxy error: %v", err)
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+		},
 	}
 }
 
@@ -140,8 +148,30 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	return nil
 }
 
-func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32) {
+func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string) {
+	target, err := parseChannelBaseURL(baseURL)
+	if err != nil {
+		zap.S().Errorf("Error catched: invalid channel base url: %v", err)
+		http.Error(w, "invalid channel base url", http.StatusBadGateway)
+		return
+	}
+
 	r = setContextInt32(r, ctxKeyID, keyID)
 	r = setContextInt32(r, ctxChannelID, channelID)
+	r = r.WithContext(context.WithValue(r.Context(), ctxUpstream, target))
 	p.proxy.ServeHTTP(w, r)
+}
+
+func parseChannelBaseURL(baseURL string) (*url.URL, error) {
+	target, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return nil, err
+	}
+	if target.Scheme == "" || target.Host == "" {
+		return nil, url.InvalidHostError(baseURL)
+	}
+	if target.Path != "" && target.Path != "/" {
+		return nil, url.InvalidHostError("base_url must not include path")
+	}
+	return target, nil
 }

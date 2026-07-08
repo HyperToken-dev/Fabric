@@ -14,6 +14,7 @@ message Channel {
     google.protobuf.Timestamp created_at = 3;
     int32 status = 4;
     string base_url = 5;
+    int32 api_format = 6;
 }
 
 message ListChannelsRequest {}
@@ -25,6 +26,7 @@ message ListChannelsResponse {
 message CreateChannelRequest {
     string channel_name = 1;
     string base_url = 2;
+    int32 api_format = 3;
 }
 
 message CreateChannelResponse {
