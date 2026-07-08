@@ -27,6 +27,7 @@ func (m *ModelService) GetModelInfo(ctx context.Context, req *proto.GetModelInfo
 			ModelId:   model.ID,
 			ModelName: model.ModelName,
 			ChannelId: model.ChannelID,
+			Status:    int32(model.Status),
 		},
 	}, nil
 }
@@ -42,6 +43,7 @@ func (m *ModelService) ListModels(ctx context.Context, req *proto.ListModelsRequ
 			ModelId:   model.ID,
 			ModelName: model.ModelName,
 			ChannelId: model.ChannelID,
+			Status:    int32(model.Status),
 		}
 	}
 	return &proto.ListModelsResponse{

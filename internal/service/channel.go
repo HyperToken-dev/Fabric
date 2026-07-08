@@ -30,13 +30,18 @@ func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChanne
 			ChannelId:   r.ID,
 			ChannelName: r.ChannelName,
 			CreatedAt:   timestamppb.New(r.CreatedAt),
+			Status:      int32(r.Status),
+			BaseUrl:     r.BaseUrl,
 		}
 	}
 	return &proto.ListChannelsResponse{Channels: channels}, nil
 }
 
 func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateChannelRequest) (*proto.CreateChannelResponse, error) {
-	repoChannel, err := s.queries.CreateChannel(ctx, req.ChannelName)
+	repoChannel, err := s.queries.CreateChannel(ctx, repository.CreateChannelParams{
+		ChannelName: req.ChannelName,
+		BaseUrl:     req.BaseUrl,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -45,6 +50,8 @@ func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateCha
 			ChannelId:   repoChannel.ID,
 			ChannelName: repoChannel.ChannelName,
 			CreatedAt:   timestamppb.New(repoChannel.CreatedAt),
+			Status:      int32(repoChannel.Status),
+			BaseUrl:     repoChannel.BaseUrl,
 		},
 	}, nil
 }

@@ -12,6 +12,7 @@ message Model {
     int32 model_id = 1;
     string model_name = 2;
     int32 channel_id = 3;
+    int32 status = 4;
 }
 
 message GetModelInfoRequest {

@@ -1,6 +1,6 @@
 -- name: CreateChannel :one
-INSERT INTO channels (channel_name)
-VALUES ($1)
+INSERT INTO channels (channel_name, base_url)
+VALUES ($1, $2)
 RETURNING *;
 
 -- name: GetChannelById :one
