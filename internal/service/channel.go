@@ -26,25 +26,20 @@ func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChanne
 
 	channels := make([]*proto.Channel, len(rows))
 	for i, r := range rows {
-		models, err := s.queries.ListActiveModelsByChannel(ctx, r.ID)
-		if err != nil {
-			return nil, err
-		}
-		modelProtos := make([]*proto.Model, len(models))
-		for idx, model := range models {
-			modelProtos[idx] = modelToProto(model)
-		}
+		channels[i] = channelToProto(r)
+	}
+	return &proto.ListChannelsResponse{Channels: channels}, nil
+}
 
-		channels[i] = &proto.Channel{
-			ChannelId:   r.ID,
-			ChannelName: r.ChannelName,
-			CreatedAt:   timestamppb.New(r.CreatedAt),
-			Status:      int32(r.Status),
-			BaseUrl:     r.BaseUrl,
-			ApiFormat:   r.ApiFormat,
-			Models:      modelProtos,
-			ProviderKey: r.ProviderKey,
-		}
+func (s *ChannelService) ListActiveChannels(ctx context.Context, req *proto.ListActiveChannelsRequest) (*proto.ListChannelsResponse, error) {
+	rows, err := s.queries.ListActiveChannels(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	channels := make([]*proto.Channel, len(rows))
+	for i, r := range rows {
+		channels[i] = channelToProto(r)
 	}
 	return &proto.ListChannelsResponse{Channels: channels}, nil
 }
@@ -60,14 +55,17 @@ func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateCha
 		return nil, err
 	}
 	return &proto.CreateChannelResponse{
-		Channel: &proto.Channel{
-			ChannelId:   repoChannel.ID,
-			ChannelName: repoChannel.ChannelName,
-			CreatedAt:   timestamppb.New(repoChannel.CreatedAt),
-			Status:      int32(repoChannel.Status),
-			BaseUrl:     repoChannel.BaseUrl,
-			ApiFormat:   repoChannel.ApiFormat,
-			ProviderKey: repoChannel.ProviderKey,
-		},
+		Channel: channelToProto(repoChannel),
 	}, nil
+}
+
+func channelToProto(channel repository.Channel) *proto.Channel {
+	return &proto.Channel{
+		ChannelId:   channel.ID,
+		ChannelName: channel.ChannelName,
+		CreatedAt:   timestamppb.New(channel.CreatedAt),
+		Status:      int32(channel.Status),
+		BaseUrl:     channel.BaseUrl,
+		ApiFormat:   channel.ApiFormat,
+	}
 }

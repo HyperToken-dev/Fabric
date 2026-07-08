@@ -38,13 +38,6 @@ type OpenAIUsage struct {
 	} `json:"usage"`
 }
 
-const (
-	modelStatusActive  int16 = 1
-	modelStatusBanned  int16 = 2
-	modelStatusPending int16 = 3
-	modelTypeText      int32 = 1
-)
-
 func NewOpenAIProxy(queries *repository.Queries) *OpenAIProxy {
 	p := &OpenAIProxy{
 		queries: queries,
@@ -263,18 +256,4 @@ func (p *OpenAIProxy) resolveModel(ctx context.Context, channelID int32, modelNa
 	default:
 		return 0, nil
 	}
-}
-
-func parseChannelBaseURL(baseURL string) (*url.URL, error) {
-	target, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
-		return nil, err
-	}
-	if target.Scheme == "" || target.Host == "" {
-		return nil, url.InvalidHostError(baseURL)
-	}
-	if target.Path != "" && target.Path != "/" {
-		return nil, url.InvalidHostError("base_url must not include path")
-	}
-	return target, nil
 }

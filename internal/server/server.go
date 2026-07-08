@@ -71,6 +71,14 @@ func (s *Server) ListChannels(ctx context.Context, req *connect.Request[gen.List
 	return connect.NewResponse(resp), nil
 }
 
+func (s *Server) ListActiveChannels(ctx context.Context, req *connect.Request[gen.ListActiveChannelsRequest]) (*connect.Response[gen.ListChannelsResponse], error) {
+	resp, err := s.channelSvc.ListActiveChannels(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
 func (s *Server) CreateChannel(ctx context.Context, req *connect.Request[gen.CreateChannelRequest]) (*connect.Response[gen.CreateChannelResponse], error) {
 	resp, err := s.channelSvc.CreateChannel(ctx, req.Msg)
 	if err != nil {

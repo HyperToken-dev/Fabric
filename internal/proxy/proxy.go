@@ -18,6 +18,13 @@ const (
 	ProviderOpenAI Provider = "openai"
 )
 
+const (
+	modelStatusActive  int16 = 1
+	modelStatusBanned  int16 = 2
+	modelStatusPending int16 = 3
+	modelTypeText      int32 = 1
+)
+
 type contextKey string
 
 const (
