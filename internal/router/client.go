@@ -51,6 +51,7 @@ func (rt *Router) AuthMiddleware() gin.HandlerFunc {
 		c.Set("keyID", row.KeyID)
 		c.Set("channelID", row.ChannelID)
 		c.Set("channelBaseURL", row.BaseUrl)
+		c.Set("channelProviderKey", row.ProviderKey)
 		c.Set("channelAPIFormat", row.ChannelApiFormat)
 		c.Next()
 	}

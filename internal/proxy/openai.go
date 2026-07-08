@@ -2,24 +2,27 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"hyper-token/internal/repository"
 
+	"github.com/andybalholm/brotli"
 	"go.uber.org/zap"
 )
 
 type OpenAIProxy struct {
 	proxy   *httputil.ReverseProxy
-	apiKey  string
 	queries *repository.Queries
 }
 
@@ -42,9 +45,8 @@ const (
 	modelTypeText      int32 = 1
 )
 
-func NewOpenAIProxy(apiKey string, queries *repository.Queries) *OpenAIProxy {
+func NewOpenAIProxy(queries *repository.Queries) *OpenAIProxy {
 	p := &OpenAIProxy{
-		apiKey:  apiKey,
 		queries: queries,
 	}
 	p.proxy = p.buildProxy()
@@ -58,7 +60,8 @@ func (p *OpenAIProxy) buildProxy() *httputil.ReverseProxy {
 		ctx = context.WithValue(ctx, ctxProvider, string(ProviderOpenAI))
 		*req = *req.WithContext(ctx)
 
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+		apiKey := getContextString(req, ctxAPIKey)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 
 		target, ok := req.Context().Value(ctxUpstream).(*url.URL)
 		if !ok {
@@ -113,22 +116,43 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	model := getContextString(resp.Request, ctxModel)
 	modelID := getContextInt32(resp.Request, ctxModelID)
 
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	rawBody, err := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
 	// all error in this function shouldn't return an error to client
 	// just log
 	if err != nil {
 		zap.S().Errorf("Error catched: upstream error: %v", err)
+		if closeErr != nil {
+			zap.S().Errorf("Error catched: upstream body close error: %v", closeErr)
+		}
 		return nil
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	resp.ContentLength = int64(len(body))
+	if closeErr != nil {
+		zap.S().Errorf("Error catched: upstream body close error: %v", closeErr)
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(rawBody))
+	resp.ContentLength = int64(len(rawBody))
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil
 	}
 
+	go p.processUsageAsync(rawBody, resp.Header.Get("Content-Encoding"), resp.Header.Get("Content-Type"), keyID, channelID, modelID, model)
+
+	return nil
+}
+
+func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, contentType string, keyID int32, channelID int32, modelID int32, model string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
+	if err != nil {
+		zap.S().Errorf("Error catched: decode response body error: %v, content_type=%q, content_encoding=%q, raw_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(rawBody, 128))
+		return
+	}
+
 	if modelID == 0 {
-		row, err := p.queries.UpsertModel(resp.Request.Context(), repository.UpsertModelParams{
+		row, err := p.queries.UpsertModel(ctx, repository.UpsertModelParams{
 			ChannelID: channelID,
 			ModelName: model,
 			Status:    modelStatusPending,
@@ -136,25 +160,60 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 		})
 		if err != nil {
 			zap.S().Errorf("Error catched: upsert fallback model error: %v", err)
-			return nil
+			return
 		}
 		modelID = row.ID
 	}
 
-	err = processNonStreaming(body, keyID, channelID, modelID, ProviderOpenAI, p.queries)
+	err = processNonStreaming(ctx, decodedBody, keyID, channelID, modelID, ProviderOpenAI, p.queries)
 	if err != nil {
-		zap.S().Errorf("Error catched: process token usage error: %v", err)
-		return nil
+		zap.S().Errorf("Error catched: process token usage error: %v, content_type=%q, content_encoding=%q, decoded_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(decodedBody, 128))
+		return
 	}
-
-	return nil
 }
 
-func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string) {
+func decodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) {
+	encoding := strings.ToLower(strings.TrimSpace(contentEncoding))
+	switch encoding {
+	case "", "identity":
+		return rawBody, nil
+	case "gzip":
+		reader, err := gzip.NewReader(bytes.NewReader(rawBody))
+		if err != nil {
+			return nil, err
+		}
+		decoded, readErr := io.ReadAll(reader)
+		closeErr := reader.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		return decoded, nil
+	case "br":
+		return io.ReadAll(brotli.NewReader(bytes.NewReader(rawBody)))
+	default:
+		return nil, fmt.Errorf("unsupported content encoding: %s", contentEncoding)
+	}
+}
+
+func bodyPrefix(body []byte, maxLen int) string {
+	if len(body) > maxLen {
+		body = body[:maxLen]
+	}
+	return string(body)
+}
+
+func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string) {
 	target, err := parseChannelBaseURL(baseURL)
 	if err != nil {
 		zap.S().Errorf("Error catched: invalid channel base url: %v", err)
 		http.Error(w, "invalid channel base url", http.StatusBadGateway)
+		return
+	}
+	if strings.TrimSpace(providerKey) == "" {
+		http.Error(w, "missing provider key", http.StatusBadGateway)
 		return
 	}
 	modelName := extractOpenAIModel(r)
@@ -178,6 +237,7 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	r = setContextInt32(r, ctxChannelID, channelID)
 	r = setContextString(r, ctxModel, modelName)
 	r = setContextInt32(r, ctxModelID, modelID)
+	r = setContextString(r, ctxAPIKey, providerKey)
 	r = r.WithContext(context.WithValue(r.Context(), ctxUpstream, target))
 	p.proxy.ServeHTTP(w, r)
 }

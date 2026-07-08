@@ -27,6 +27,7 @@ const (
 	ctxModelID   contextKey = "model_id"
 	ctxProvider  contextKey = "provider"
 	ctxUpstream  contextKey = "upstream"
+	ctxAPIKey    contextKey = "api_key"
 )
 
 type usageTrackingReader struct {
@@ -101,12 +102,12 @@ func getContextString(r *http.Request, key contextKey) string {
 	return v
 }
 
-func processNonStreaming(body []byte, keyID, channelID, modelID int32, provider Provider, queries *repository.Queries) error {
+func processNonStreaming(ctx context.Context, body []byte, keyID, channelID, modelID int32, provider Provider, queries *repository.Queries) error {
 	usagelog, err := extractTokenUsage(body, provider)
 	if err != nil {
 		return err
 	}
-	_, err = queries.InsertUsageLog(context.Background(), repository.InsertUsageLogParams{
+	_, err = queries.InsertUsageLog(ctx, repository.InsertUsageLogParams{
 		KeyID:            keyID,
 		ChannelID:        channelID,
 		ModelID:          modelID,

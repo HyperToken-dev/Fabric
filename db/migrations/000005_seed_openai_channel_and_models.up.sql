@@ -1,7 +1,8 @@
-INSERT INTO channels (channel_name, base_url, api_format, status)
-VALUES ('OpenAI', 'https://api.openai.com', 1, 1)
+INSERT INTO channels (channel_name, base_url, provider_key, api_format, status)
+VALUES ('OpenAI', 'https://api.openai.com', '', 1, 1)
 ON CONFLICT (channel_name) DO UPDATE SET
     base_url = EXCLUDED.base_url,
+    provider_key = EXCLUDED.provider_key,
     api_format = EXCLUDED.api_format,
     status = EXCLUDED.status;
 

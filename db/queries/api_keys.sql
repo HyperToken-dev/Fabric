@@ -11,6 +11,7 @@ SELECT
     api_keys.id AS key_id,
     api_keys.channel_id,
     channels.base_url,
+    channels.provider_key,
     channels.api_format AS channel_api_format,
     channels.status AS channel_status
 FROM api_keys

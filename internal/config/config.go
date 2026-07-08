@@ -7,13 +7,12 @@ import (
 )
 
 type Config struct {
-	DB        DBConfig       `mapstructure:"db"`
-	Log       LogConfig      `mapstructure:"log"`
-	Provider  ProviderConfig `mapstructure:"provider"`
-	ProxyAddr string         `mapstructure:"proxyAddr"`
-	AdminAddr string         `mapstructure:"adminAddr"`
-	LogLevel  string         `mapstructure:"logLevel"`
-	WorkDir   string         `mapstructure:"-"`
+	DB        DBConfig  `mapstructure:"db"`
+	Log       LogConfig `mapstructure:"log"`
+	ProxyAddr string    `mapstructure:"proxyAddr"`
+	AdminAddr string    `mapstructure:"adminAddr"`
+	LogLevel  string    `mapstructure:"logLevel"`
+	WorkDir   string    `mapstructure:"-"`
 }
 
 func Load(workDir string) (*Config, error) {

@@ -43,6 +43,7 @@ func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChanne
 			BaseUrl:     r.BaseUrl,
 			ApiFormat:   r.ApiFormat,
 			Models:      modelProtos,
+			ProviderKey: r.ProviderKey,
 		}
 	}
 	return &proto.ListChannelsResponse{Channels: channels}, nil
@@ -52,6 +53,7 @@ func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateCha
 	repoChannel, err := s.queries.CreateChannel(ctx, repository.CreateChannelParams{
 		ChannelName: req.ChannelName,
 		BaseUrl:     req.BaseUrl,
+		ProviderKey: req.ProviderKey,
 		ApiFormat:   req.ApiFormat,
 	})
 	if err != nil {
@@ -65,6 +67,7 @@ func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateCha
 			Status:      int32(repoChannel.Status),
 			BaseUrl:     repoChannel.BaseUrl,
 			ApiFormat:   repoChannel.ApiFormat,
+			ProviderKey: repoChannel.ProviderKey,
 		},
 	}, nil
 }

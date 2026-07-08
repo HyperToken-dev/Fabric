@@ -96,7 +96,7 @@ func main() {
 	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc)
 
 	// register proxy
-	openaiProxy := proxy.NewOpenAIProxy(cfg.Provider.OpenAIKey, queries)
+	openaiProxy := proxy.NewOpenAIProxy(queries)
 
 	rt := router.New(queries, openaiProxy)
 	proxyMux := rt.RegisterProxyRoutes()
