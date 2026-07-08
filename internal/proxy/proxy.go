@@ -106,14 +106,14 @@ func processNonStreaming(body []byte, keyID, channelID, modelID int32, provider 
 	if err != nil {
 		return err
 	}
-	_, _ = queries.InsertUsageLog(context.Background(), repository.InsertUsageLogParams{
+	_, err = queries.InsertUsageLog(context.Background(), repository.InsertUsageLogParams{
 		KeyID:            keyID,
 		ChannelID:        channelID,
 		ModelID:          modelID,
 		PromptTokens:     int64(usagelog.PromptTokens),
 		CompletionTokens: int64(usagelog.CompleteTokens),
 	})
-	return nil
+	return err
 }
 
 func extractTokenUsage(body []byte, provider Provider) (*usageLog, error) {

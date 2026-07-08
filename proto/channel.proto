@@ -2,6 +2,7 @@ syntax = "proto3";
 package proto;
 option go_package = "hyper-token/gen;proto";
 import "google/protobuf/timestamp.proto";
+import "model.proto";
 
 service ChannelService {
     rpc CreateChannel(CreateChannelRequest) returns(CreateChannelResponse);
@@ -15,6 +16,7 @@ message Channel {
     int32 status = 4;
     string base_url = 5;
     int32 api_format = 6;
+    repeated Model models = 7;
 }
 
 message ListChannelsRequest {}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -34,6 +35,13 @@ type OpenAIUsage struct {
 	} `json:"usage"`
 }
 
+const (
+	modelStatusActive  int16 = 1
+	modelStatusBanned  int16 = 2
+	modelStatusPending int16 = 3
+	modelTypeText      int32 = 1
+)
+
 func NewOpenAIProxy(apiKey string, queries *repository.Queries) *OpenAIProxy {
 	p := &OpenAIProxy{
 		apiKey:  apiKey,
@@ -45,7 +53,7 @@ func NewOpenAIProxy(apiKey string, queries *repository.Queries) *OpenAIProxy {
 
 func (p *OpenAIProxy) buildProxy() *httputil.ReverseProxy {
 	director := func(req *http.Request) {
-		model := extractOpenAIModel(req)
+		model := getContextString(req, ctxModel)
 		ctx := context.WithValue(req.Context(), ctxModel, model)
 		ctx = context.WithValue(ctx, ctxProvider, string(ProviderOpenAI))
 		*req = *req.WithContext(ctx)
@@ -103,30 +111,7 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	keyID := getContextInt32(resp.Request, ctxKeyID)
 	channelID := getContextInt32(resp.Request, ctxChannelID)
 	model := getContextString(resp.Request, ctxModel)
-
-	// Upsert model
-	m, err := p.queries.UpsertModel(resp.Request.Context(), repository.UpsertModelParams{
-		ChannelID: channelID,
-		ModelName: model,
-	})
-
-	var modelID int32
-	switch err {
-	case nil:
-		modelID = m.ID
-	case sql.ErrNoRows:
-		row, err2 := p.queries.GetModelByChannelAndName(resp.Request.Context(), repository.GetModelByChannelAndNameParams{
-			ChannelID: channelID,
-			ModelName: model,
-		})
-		if err2 != nil {
-			return nil
-		}
-		modelID = row.ID
-	default:
-		zap.S().Errorf("Error catched: %v", err)
-		return nil
-	}
+	modelID := getContextInt32(resp.Request, ctxModelID)
 
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -136,14 +121,31 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 		zap.S().Errorf("Error catched: upstream error: %v", err)
 		return nil
 	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil
+	}
+
+	if modelID == 0 {
+		row, err := p.queries.UpsertModel(resp.Request.Context(), repository.UpsertModelParams{
+			ChannelID: channelID,
+			ModelName: model,
+			Status:    modelStatusPending,
+			ModelType: modelTypeText,
+		})
+		if err != nil {
+			zap.S().Errorf("Error catched: upsert fallback model error: %v", err)
+			return nil
+		}
+		modelID = row.ID
+	}
 
 	err = processNonStreaming(body, keyID, channelID, modelID, ProviderOpenAI, p.queries)
 	if err != nil {
 		zap.S().Errorf("Error catched: process token usage error: %v", err)
 		return nil
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	resp.ContentLength = int64(len(body))
 
 	return nil
 }
@@ -155,11 +157,52 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 		http.Error(w, "invalid channel base url", http.StatusBadGateway)
 		return
 	}
+	modelName := extractOpenAIModel(r)
+	if modelName == "unknown" {
+		http.Error(w, "missing model", http.StatusBadRequest)
+		return
+	}
+
+	modelID, err := p.resolveModel(r.Context(), channelID, modelName)
+	if err != nil {
+		if err == errModelDisabled {
+			http.Error(w, "model disabled", http.StatusForbidden)
+			return
+		}
+		zap.S().Errorf("Error catched: resolve model error: %v", err)
+		http.Error(w, "model lookup failed", http.StatusInternalServerError)
+		return
+	}
 
 	r = setContextInt32(r, ctxKeyID, keyID)
 	r = setContextInt32(r, ctxChannelID, channelID)
+	r = setContextString(r, ctxModel, modelName)
+	r = setContextInt32(r, ctxModelID, modelID)
 	r = r.WithContext(context.WithValue(r.Context(), ctxUpstream, target))
 	p.proxy.ServeHTTP(w, r)
+}
+
+var errModelDisabled = errors.New("model disabled")
+
+func (p *OpenAIProxy) resolveModel(ctx context.Context, channelID int32, modelName string) (int32, error) {
+	model, err := p.queries.GetModelByChannelAndName(ctx, repository.GetModelByChannelAndNameParams{
+		ChannelID: channelID,
+		ModelName: modelName,
+	})
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	switch model.Status {
+	case modelStatusActive:
+		return model.ID, nil
+	case modelStatusBanned:
+		return 0, errModelDisabled
+	default:
+		return 0, nil
+	}
 }
 
 func parseChannelBaseURL(baseURL string) (*url.URL, error) {

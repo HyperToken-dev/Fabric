@@ -90,7 +90,10 @@ func main() {
 	queries := repository.New(db)
 
 	apiKeySvc := service.NewApiKeyService(db)
-	srv := server.NewServer(apiKeySvc)
+	channelSvc := service.NewChannelService(db)
+	modelSvc := service.NewModelService(db)
+	usageSvc := service.NewUsageService(db)
+	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc)
 
 	// register proxy
 	openaiProxy := proxy.NewOpenAIProxy(cfg.Provider.OpenAIKey, queries)
@@ -108,8 +111,12 @@ func main() {
 	adminMux := http.NewServeMux()
 	apiKeyPath, apiKeyHandler := pbconnect.NewManageApiKeyServiceHandler(srv)
 	usagePath, usageHandler := pbconnect.NewUsageServiceHandler(srv)
+	channelPath, channelHandler := pbconnect.NewChannelServiceHandler(srv)
+	modelPath, modelHandler := pbconnect.NewModelServiceHandler(srv)
 	adminMux.Handle(apiKeyPath, apiKeyHandler)
 	adminMux.Handle(usagePath, usageHandler)
+	adminMux.Handle(channelPath, channelHandler)
+	adminMux.Handle(modelPath, modelHandler)
 
 	zap.S().Infof("Admin server listening on %s", cfg.AdminAddr)
 	if err := http.ListenAndServe(cfg.AdminAddr, adminMux); err != nil {

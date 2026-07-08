@@ -26,6 +26,15 @@ func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChanne
 
 	channels := make([]*proto.Channel, len(rows))
 	for i, r := range rows {
+		models, err := s.queries.ListActiveModelsByChannel(ctx, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		modelProtos := make([]*proto.Model, len(models))
+		for idx, model := range models {
+			modelProtos[idx] = modelToProto(model)
+		}
+
 		channels[i] = &proto.Channel{
 			ChannelId:   r.ID,
 			ChannelName: r.ChannelName,
@@ -33,6 +42,7 @@ func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChanne
 			Status:      int32(r.Status),
 			BaseUrl:     r.BaseUrl,
 			ApiFormat:   r.ApiFormat,
+			Models:      modelProtos,
 		}
 	}
 	return &proto.ListChannelsResponse{Channels: channels}, nil

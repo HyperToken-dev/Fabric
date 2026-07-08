@@ -22,8 +22,13 @@ type Server struct {
 	usageSvc   *service.UsageService
 }
 
-func NewServer(apiKeySvc *service.ApiKeyService) *Server {
-	return &Server{apiKeySvc: apiKeySvc}
+func NewServer(apiKeySvc *service.ApiKeyService, channelSvc *service.ChannelService, modelSvc *service.ModelService, usageSvc *service.UsageService) *Server {
+	return &Server{
+		apiKeySvc:  apiKeySvc,
+		channelSvc: channelSvc,
+		modelSvc:   modelSvc,
+		usageSvc:   usageSvc,
+	}
 }
 
 func (s *Server) CreateApiKey(ctx context.Context, req *connect.Request[gen.CreateApiKeyRequest]) (*connect.Response[gen.CreateApiKeyResponse], error) {
@@ -76,6 +81,14 @@ func (s *Server) CreateChannel(ctx context.Context, req *connect.Request[gen.Cre
 
 func (s *Server) GetModelInfo(ctx context.Context, req *connect.Request[gen.GetModelInfoRequest]) (*connect.Response[gen.GetModelInfoResponse], error) {
 	resp, err := s.modelSvc.GetModelInfo(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) CreateModel(ctx context.Context, req *connect.Request[gen.CreateModelRequest]) (*connect.Response[gen.CreateModelResponse], error) {
+	resp, err := s.modelSvc.CreateModel(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}

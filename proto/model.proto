@@ -13,6 +13,7 @@ message Model {
     string model_name = 2;
     int32 channel_id = 3;
     int32 status = 4;
+    int32 model_type = 5;
 }
 
 message GetModelInfoRequest {
@@ -34,6 +35,10 @@ message ListModelsResponse {
 message CreateModelRequest {
     string model_name = 1;
     int32 channel_id = 2;
+    int32 status = 3;
+    int32 model_type = 4;
 }
 
-message CreateModelResponse {}
+message CreateModelResponse {
+    Model model = 1;
+}
