@@ -70,10 +70,12 @@ func main() {
 	defer zapLogger.Sync()
 
 	// init sensitive word detect
+	var textPolicy proxy.TextPolicy = proxy.NoopTextPolicy{}
 	if cfg.SensitiveWD {
 		if err := sensitive.LoadSensitiveWord(cfg); err != nil {
 			zap.S().Fatalf("load sensitive words error: %v", err)
 		}
+		textPolicy = sensitive.NewTextPolicy()
 	}
 
 	// db con str
@@ -108,7 +110,7 @@ func main() {
 	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc)
 
 	// register proxy
-	openaiProxy := proxy.NewOpenAIProxy(queries)
+	openaiProxy := proxy.NewOpenAIProxy(queries, textPolicy)
 
 	rt := router.New(queries, openaiProxy)
 	proxyMux := rt.RegisterProxyRoutes()

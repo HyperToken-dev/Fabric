@@ -20,8 +20,9 @@ import (
 )
 
 type OpenAIProxy struct {
-	proxy   *httputil.ReverseProxy
-	queries *repository.Queries
+	proxy      *httputil.ReverseProxy
+	queries    *repository.Queries
+	textPolicy TextPolicy
 }
 
 type openaiChatRequest struct {
@@ -67,9 +68,13 @@ type openAIResponsesSSEUsageParser struct {
 	usage   *usageLog    //finally usage of this SSE stream
 }
 
-func NewOpenAIProxy(queries *repository.Queries) *OpenAIProxy {
+func NewOpenAIProxy(queries *repository.Queries, textPolicy TextPolicy) *OpenAIProxy {
+	if textPolicy == nil {
+		textPolicy = NoopTextPolicy{}
+	}
 	p := &OpenAIProxy{
-		queries: queries,
+		queries:    queries,
+		textPolicy: textPolicy,
 	}
 	p.proxy = p.buildProxy()
 	return p
@@ -203,7 +208,7 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 		outputTexts, err := extractOpenAIOutputTexts(resp.Request, decodedBody)
 		if err != nil {
 			zap.S().Errorf("Error catched: extract openai output texts error: %v, content_type=%q, decoded_body_prefix=%q", err, contentType, bodyPrefix(decodedBody, 128))
-		} else if detectPrompts(outputTexts) {
+		} else if detectPrompts(resp.Request.Context(), outputTexts, p.textPolicy) {
 			rejectOpenAIOutputResponse(resp)
 		}
 	}
@@ -527,7 +532,7 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 		return
 	}
 
-	// parse param and sensitive check
+	// parse request and apply text policy
 	parsedReq, err := parseOpenAIPromptRequest(r)
 	if err != nil {
 		zap.S().Errorf("Error catched: parse openai prompt request error: %v", err)
@@ -540,7 +545,7 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 		http.Error(w, "missing model", http.StatusBadRequest)
 		return
 	}
-	if detectPrompts(parsedReq.Prompts) {
+	if detectPrompts(r.Context(), parsedReq.Prompts, p.textPolicy) {
 		http.Error(w, "prompt rejected", http.StatusForbidden)
 		return
 	}

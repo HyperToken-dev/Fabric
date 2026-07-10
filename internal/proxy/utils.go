@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
-	"hyper-token/sensitive"
 	"io"
 	"net/url"
 	"strings"
@@ -50,8 +49,4 @@ func decodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) 
 	default:
 		return nil, fmt.Errorf("unsupported content encoding: %s", contentEncoding)
 	}
-}
-
-func DetectSensitiveWord(sentence string) bool {
-	return sensitive.DetectSensitiveWord(sentence)
 }

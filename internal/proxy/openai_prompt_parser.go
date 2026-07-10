@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -207,12 +208,15 @@ func extractOpenAIResponsesOutputTexts(body []byte) ([]string, error) {
 	return texts, nil
 }
 
-func detectPrompts(prompts []string) bool {
+func detectPrompts(ctx context.Context, prompts []string, policy TextPolicy) bool {
+	if policy == nil {
+		policy = NoopTextPolicy{}
+	}
 	for _, prompt := range prompts {
 		if strings.TrimSpace(prompt) == "" {
 			continue
 		}
-		if DetectSensitiveWord(prompt) {
+		if policy.Rejects(ctx, prompt) {
 			return true
 		}
 	}
