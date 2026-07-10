@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -32,6 +33,7 @@ const (
 	ctxProvider  contextKey = "provider"
 	ctxUpstream  contextKey = "upstream"
 	ctxAPIKey    contextKey = "api_key"
+	ctxStreamKey contextKey = "stream"
 )
 
 type usageLog struct {
@@ -49,6 +51,11 @@ func setContextString(r *http.Request, key contextKey, val string) *http.Request
 	return r.WithContext(ctx)
 }
 
+func setContextBool(r *http.Request, key contextKey, val bool) *http.Request {
+	ctx := context.WithValue(r.Context(), key, val)
+	return r.WithContext(ctx)
+}
+
 func getContextInt32(r *http.Request, key contextKey) int32 {
 	v, _ := r.Context().Value(key).(int32)
 	return v
@@ -57,6 +64,34 @@ func getContextInt32(r *http.Request, key contextKey) int32 {
 func getContextString(r *http.Request, key contextKey) string {
 	v, _ := r.Context().Value(key).(string)
 	return v
+}
+
+func getContextBool(r *http.Request, key contextKey) bool {
+	v, _ := r.Context().Value(key).(bool)
+	return v
+}
+
+var errModelDisabled = errors.New("model disabled")
+
+func (p *OpenAIProxy) resolveModel(ctx context.Context, channelID int32, modelName string) (int32, error) {
+	model, err := p.queries.GetModelByChannelAndName(ctx, repository.GetModelByChannelAndNameParams{
+		ChannelID: channelID,
+		ModelName: modelName,
+	})
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	switch model.Status {
+	case modelStatusActive:
+		return model.ID, nil
+	case modelStatusBanned:
+		return 0, errModelDisabled
+	default:
+		return 0, nil
+	}
 }
 
 func processNonStreaming(ctx context.Context, body []byte, keyID, channelID, modelID int32, provider Provider, queries *repository.Queries) error {
@@ -79,26 +114,39 @@ func insertUsageLog(ctx context.Context, queries *repository.Queries, keyID, cha
 }
 
 func extractTokenUsage(body []byte, provider Provider) (*usageLog, error) {
-	var usagelog *usageLog = new(usageLog)
 	switch provider {
 	case ProviderOpenAI:
-		openaiUsage, err := extractOpenAITokenUsage(body)
-		if err != nil {
-			return nil, err
-		}
-		usagelog.PromptTokens = openaiUsage.Usage.InputTokens
-		usagelog.CompleteTokens = openaiUsage.Usage.OutputTokens
-		return usagelog, nil
+		return extractOpenAITokenUsage(body)
 	default:
 		return nil, errors.New("Not supported provider.")
 	}
 }
 
-func extractOpenAITokenUsage(body []byte) (*OpenAIUsage, error) {
-	var openaiUsage *OpenAIUsage = new(OpenAIUsage)
-	err := json.Unmarshal(body, &openaiUsage)
+func extractOpenAITokenUsage(body []byte) (*usageLog, error) {
+	var resp struct {
+		Usage struct {
+			InputTokens      int `json:"input_tokens"`
+			OutputTokens     int `json:"output_tokens"`
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	err := json.Unmarshal(body, &resp)
 	if err != nil {
 		return nil, err
 	}
-	return openaiUsage, nil
+	switch {
+	case resp.Usage.InputTokens != 0 || resp.Usage.OutputTokens != 0:
+		return &usageLog{
+			PromptTokens:   resp.Usage.InputTokens,
+			CompleteTokens: resp.Usage.OutputTokens,
+		}, nil
+	case resp.Usage.PromptTokens != 0 || resp.Usage.CompletionTokens != 0:
+		return &usageLog{
+			PromptTokens:   resp.Usage.PromptTokens,
+			CompleteTokens: resp.Usage.CompletionTokens,
+		}, nil
+	default:
+		return nil, errors.New("missing openai usage")
+	}
 }

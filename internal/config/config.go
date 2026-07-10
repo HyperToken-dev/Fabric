@@ -7,15 +7,17 @@ import (
 )
 
 type Config struct {
-	DB        DBConfig  `mapstructure:"db"`
-	Log       LogConfig `mapstructure:"log"`
-	ProxyAddr string    `mapstructure:"proxyAddr"`
-	AdminAddr string    `mapstructure:"adminAddr"`
-	LogLevel  string    `mapstructure:"logLevel"`
-	WorkDir   string    `mapstructure:"-"`
+	DB          DBConfig  `mapstructure:"db"`
+	Log         LogConfig `mapstructure:"log"`
+	SensitiveWD bool      `mapstructure:"sensitiveWordDetect"`
+	ProxyAddr   string    `mapstructure:"proxyAddr"`
+	AdminAddr   string    `mapstructure:"adminAddr"`
+	LogLevel    string    `mapstructure:"logLevel"`
+	WorkDir     string    `mapstructure:"-"`
+	RunPath     string    `mapstructure:"-"`
 }
 
-func Load(workDir string) (*Config, error) {
+func Load(workDir, runPath string) (*Config, error) {
 	var cfg *Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, err
@@ -26,6 +28,6 @@ func Load(workDir string) (*Config, error) {
 	if !strings.HasPrefix(cfg.AdminAddr, ":") {
 		cfg.AdminAddr = ":" + cfg.AdminAddr
 	}
-	cfg.WorkDir = workDir
+	cfg.WorkDir, cfg.RunPath = workDir, runPath
 	return cfg, nil
 }

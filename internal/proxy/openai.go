@@ -2,23 +2,20 @@ package proxy
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"hyper-token/internal/repository"
 
-	"github.com/andybalholm/brotli"
 	"go.uber.org/zap"
 )
 
@@ -30,13 +27,6 @@ type OpenAIProxy struct {
 type openaiChatRequest struct {
 	Model  string `json:"model"`
 	Stream bool   `json:"stream"`
-}
-
-type OpenAIUsage struct {
-	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage"`
 }
 
 // SSE reader.processing SSE stream
@@ -54,17 +44,19 @@ type openAIResponsesUsageTrackingReader struct {
 }
 
 // SSE usage unmarshal struct
-type openAIResponsesUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+type openAIUsage struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
 // SSE event of OpenAI
 type openAIResponsesStreamEvent struct {
-	Type     string                `json:"type"`
-	Usage    *openAIResponsesUsage `json:"usage"`
+	Type     string       `json:"type"`
+	Usage    *openAIUsage `json:"usage"`
 	Response struct {
-		Usage *openAIResponsesUsage `json:"usage"`
+		Usage *openAIUsage `json:"usage"`
 	} `json:"response"`
 }
 
@@ -86,12 +78,18 @@ func NewOpenAIProxy(queries *repository.Queries) *OpenAIProxy {
 func (p *OpenAIProxy) buildProxy() *httputil.ReverseProxy {
 	director := func(req *http.Request) {
 		model := getContextString(req, ctxModel)
+		stream := getContextBool(req, ctxStreamKey)
 		ctx := context.WithValue(req.Context(), ctxModel, model)
 		ctx = context.WithValue(ctx, ctxProvider, string(ProviderOpenAI))
 		*req = *req.WithContext(ctx)
 
 		apiKey := getContextString(req, ctxAPIKey)
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+		if req.URL.Path == "/v1/chat/completions" && stream {
+			if err := injectOpenAIChatStreamOptions(req); err != nil {
+				zap.S().Errorf("Error catched: inject openai chat stream options error: %v", err)
+			}
+		}
 
 		target, ok := req.Context().Value(ctxUpstream).(*url.URL)
 		if !ok {
@@ -113,32 +111,53 @@ func (p *OpenAIProxy) buildProxy() *httputil.ReverseProxy {
 	}
 }
 
-// Get the model name of req
-func extractOpenAIModel(req *http.Request) string {
+// if stream = true and /v1/chat/com we need insert a new field "include_usage"
+func injectOpenAIChatStreamOptions(req *http.Request) error {
 	if req.Body == nil {
-		return "unknown"
+		return nil
 	}
 
 	body, err := io.ReadAll(req.Body)
-	req.Body.Close()
+	closeErr := req.Body.Close()
 	if err != nil {
-		return "unknown"
+		if closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
 	}
 
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		restoreOpenAIRequestBody(req, body)
+		return err
+	}
+
+	streamOptions, ok := payload["stream_options"].(map[string]any)
+	if !ok {
+		streamOptions = make(map[string]any)
+	}
+	streamOptions["include_usage"] = true
+	payload["stream_options"] = streamOptions
+
+	newBody, err := json.Marshal(payload)
+	if err != nil {
+		restoreOpenAIRequestBody(req, body)
+		return err
+	}
+	restoreOpenAIRequestBody(req, newBody)
+	return nil
+}
+
+func restoreOpenAIRequestBody(req *http.Request, body []byte) {
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}
-
-	var chatReq openaiChatRequest
-	if err := json.Unmarshal(body, &chatReq); err != nil {
-		return "unknown"
-	}
-
-	if chatReq.Model == "" {
-		return "unknown"
-	}
-	return chatReq.Model
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Length", strconv.Itoa(len(body)))
 }
 
 func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
@@ -148,7 +167,7 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	modelID := getContextInt32(resp.Request, ctxModelID)
 
 	// process SSE
-	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && isOpenAIResponsesStream(resp.Request, resp.Header.Get("Content-Type")) {
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && isOpenAIUsageStream(resp.Request, resp.Header.Get("Content-Type")) {
 		resp.Body = newOpenAIResponsesUsageTrackingReader(resp.Body, resp.Header.Get("Content-Encoding"), keyID, channelID, modelID, model, p.queries)
 		resp.ContentLength = -1
 		resp.Header.Del("Content-Length")
@@ -175,16 +194,41 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil
 	}
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	contentType := resp.Header.Get("Content-Type")
+	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
+	if err != nil {
+		zap.S().Errorf("Error catched: decode response body for output detection error: %v, content_type=%q, content_encoding=%q, raw_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(rawBody, 128))
+	} else {
+		outputTexts, err := extractOpenAIOutputTexts(resp.Request, decodedBody)
+		if err != nil {
+			zap.S().Errorf("Error catched: extract openai output texts error: %v, content_type=%q, decoded_body_prefix=%q", err, contentType, bodyPrefix(decodedBody, 128))
+		} else if detectPrompts(outputTexts) {
+			rejectOpenAIOutputResponse(resp)
+		}
+	}
 
 	// async process can improve efficiency,make sure client get realtime response
-	go p.processUsageAsync(rawBody, resp.Header.Get("Content-Encoding"), resp.Header.Get("Content-Type"), keyID, channelID, modelID, model)
+	go p.processUsageAsync(rawBody, contentEncoding, contentType, keyID, channelID, modelID, model)
 
 	return nil
 }
 
+func rejectOpenAIOutputResponse(resp *http.Response) {
+	errorBody := []byte(`{"error":"model output rejected, please change your prompt"}`)
+	resp.StatusCode = http.StatusUnprocessableEntity
+	resp.Status = strconv.Itoa(http.StatusUnprocessableEntity) + " " + http.StatusText(http.StatusUnprocessableEntity)
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Set("Content-Length", strconv.Itoa(len(errorBody)))
+	resp.Body = io.NopCloser(bytes.NewReader(errorBody))
+	resp.ContentLength = int64(len(errorBody))
+}
+
 // determine whether the data is SSE stram
-func isOpenAIResponsesStream(req *http.Request, contentType string) bool {
-	return strings.Contains(req.URL.Path, "/v1/responses") && strings.Contains(strings.ToLower(contentType), "text/event-stream")
+func isOpenAIUsageStream(req *http.Request, contentType string) bool {
+	isOpenAIUsagePath := strings.Contains(req.URL.Path, "/v1/responses") || strings.Contains(req.URL.Path, "/v1/chat/completions")
+	return isOpenAIUsagePath && strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
 // get a new reader in order to process SSE stream
@@ -232,13 +276,9 @@ func (r *openAIResponsesUsageTrackingReader) Close() error {
 
 // when SSE ends this function will be called
 func (r *openAIResponsesUsageTrackingReader) processUsage() {
-	if r.contentEncoding == "gzip" {
-		compressedBody := append([]byte(nil), r.compressedBody.Bytes()...)
-		go r.processGzipUsage(compressedBody)
-		return
-	}
 	if r.contentEncoding != "" && r.contentEncoding != "identity" {
-		zap.S().Warnf("unsupported responses stream content encoding: %s", r.contentEncoding)
+		compressedBody := append([]byte(nil), r.compressedBody.Bytes()...)
+		go r.processEncodedUsage(compressedBody)
 		return
 	}
 
@@ -247,41 +287,23 @@ func (r *openAIResponsesUsageTrackingReader) processUsage() {
 		zap.S().Errorf("Error catched: finish responses stream usage parser error: %v", err)
 	}
 	// process usage data and log it into database
-	usage := r.parser.Usage()
-	r.insertParsedUsage(usage)
+	r.insertParsedUsage(r.parser.Usage())
 }
 
-// gzip SSE process
-func (r *openAIResponsesUsageTrackingReader) processGzipUsage(compressedBody []byte) {
-	reader, err := gzip.NewReader(bytes.NewReader(compressedBody))
+// encoded data SSE process
+func (r *openAIResponsesUsageTrackingReader) processEncodedUsage(compressedBody []byte) {
+	body, err := decodeResponseBody(compressedBody, r.contentEncoding)
 	if err != nil {
-		zap.S().Errorf("Error catched: create gzip responses stream usage reader error: %v", err)
+		zap.S().Errorf("Error catched: decode responses stream usage body error: %v", err)
 		return
 	}
 
 	var parser openAIResponsesSSEUsageParser
-	buf := make([]byte, 32*1024)
-	for {
-		n, readErr := reader.Read(buf)
-		if n > 0 {
-			if parseErr := parser.Write(buf[:n]); parseErr != nil {
-				zap.S().Errorf("Error catched: parse gzip responses stream usage error: %v", parseErr)
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			zap.S().Errorf("Error catched: read gzip responses stream usage data error: %v", readErr)
-			break
-		}
-	}
-	closeErr := reader.Close()
-	if closeErr != nil {
-		zap.S().Errorf("Error catched: close gzip responses stream usage reader error: %v", closeErr)
+	if err := parser.Write(body); err != nil {
+		zap.S().Errorf("Error catched: parse encoded responses stream usage error: %v", err)
 	}
 	if err := parser.Finish(); err != nil {
-		zap.S().Errorf("Error catched: finish gzip responses stream usage parser error: %v", err)
+		zap.S().Errorf("Error catched: finish encoded responses stream usage parser error: %v", err)
 	}
 	r.insertParsedUsage(parser.Usage())
 }
@@ -416,7 +438,6 @@ func (p *openAIResponsesSSEUsageParser) consumeLine(line string) error {
 // when SSE ends this function will be called
 func (p *openAIResponsesSSEUsageParser) consumeEvent() error {
 	data := strings.TrimSpace(p.data.String())
-	event := p.event
 	p.event = ""
 	p.data.Reset()
 
@@ -428,10 +449,6 @@ func (p *openAIResponsesSSEUsageParser) consumeEvent() error {
 	if err := json.Unmarshal([]byte(data), &streamEvent); err != nil {
 		return err
 	}
-	if event != "response.completed" && streamEvent.Type != "response.completed" {
-		return nil
-	}
-
 	usage := streamEvent.Response.Usage
 	if usage == nil {
 		// fallback when response field does not exists
@@ -442,11 +459,21 @@ func (p *openAIResponsesSSEUsageParser) consumeEvent() error {
 	}
 
 	// log it into SSE's usage logging field
-	p.usage = &usageLog{
-		PromptTokens:   usage.InputTokens,
-		CompleteTokens: usage.OutputTokens,
-	}
+	p.usage = openAIUsageToUsageLog(usage)
 	return nil
+}
+
+func openAIUsageToUsageLog(usage *openAIUsage) *usageLog {
+	if usage.InputTokens != 0 || usage.OutputTokens != 0 {
+		return &usageLog{
+			PromptTokens:   usage.InputTokens,
+			CompleteTokens: usage.OutputTokens,
+		}
+	}
+	return &usageLog{
+		PromptTokens:   usage.PromptTokens,
+		CompleteTokens: usage.CompletionTokens,
+	}
 }
 
 // async usage processing
@@ -481,32 +508,6 @@ func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, 
 	}
 }
 
-func decodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) {
-	encoding := strings.ToLower(strings.TrimSpace(contentEncoding))
-	switch encoding {
-	case "", "identity":
-		return rawBody, nil
-	case "gzip":
-		reader, err := gzip.NewReader(bytes.NewReader(rawBody))
-		if err != nil {
-			return nil, err
-		}
-		decoded, readErr := io.ReadAll(reader)
-		closeErr := reader.Close()
-		if readErr != nil {
-			return nil, readErr
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		return decoded, nil
-	case "br":
-		return io.ReadAll(brotli.NewReader(bytes.NewReader(rawBody)))
-	default:
-		return nil, fmt.Errorf("unsupported content encoding: %s", contentEncoding)
-	}
-}
-
 func bodyPrefix(body []byte, maxLen int) string {
 	if len(body) > maxLen {
 		body = body[:maxLen]
@@ -525,9 +526,22 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 		http.Error(w, "missing provider key", http.StatusBadGateway)
 		return
 	}
-	modelName := extractOpenAIModel(r)
-	if modelName == "unknown" {
+
+	// parse param and sensitive check
+	parsedReq, err := parseOpenAIPromptRequest(r)
+	if err != nil {
+		zap.S().Errorf("Error catched: parse openai prompt request error: %v", err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	modelName := parsedReq.Model
+	if modelName == "" {
 		http.Error(w, "missing model", http.StatusBadRequest)
+		return
+	}
+	if detectPrompts(parsedReq.Prompts) {
+		http.Error(w, "prompt rejected", http.StatusForbidden)
 		return
 	}
 
@@ -547,29 +561,7 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	r = setContextString(r, ctxModel, modelName)
 	r = setContextInt32(r, ctxModelID, modelID)
 	r = setContextString(r, ctxAPIKey, providerKey)
+	r = setContextBool(r, ctxStreamKey, parsedReq.Stream)
 	r = r.WithContext(context.WithValue(r.Context(), ctxUpstream, target))
 	p.proxy.ServeHTTP(w, r)
-}
-
-var errModelDisabled = errors.New("model disabled")
-
-func (p *OpenAIProxy) resolveModel(ctx context.Context, channelID int32, modelName string) (int32, error) {
-	model, err := p.queries.GetModelByChannelAndName(ctx, repository.GetModelByChannelAndNameParams{
-		ChannelID: channelID,
-		ModelName: modelName,
-	})
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	switch model.Status {
-	case modelStatusActive:
-		return model.ID, nil
-	case modelStatusBanned:
-		return 0, errModelDisabled
-	default:
-		return 0, nil
-	}
 }

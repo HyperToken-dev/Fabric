@@ -15,6 +15,7 @@ import (
 	"hyper-token/internal/server"
 	"hyper-token/internal/service"
 	"hyper-token/logger"
+	"hyper-token/sensitive"
 
 	pbconnect "hyper-token/gen/protoconnect"
 
@@ -35,12 +36,16 @@ func main() {
 	}
 	workDir := filepath.Dir(path)
 
+	// get runPath
+	runPath, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Get run path error: %v", err)
+	}
+
 	// init viper
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-	if runPath, err := os.Getwd(); err == nil {
-		viper.AddConfigPath(filepath.Join(runPath, "configs"))
-	}
+	viper.AddConfigPath(filepath.Join(runPath, "configs"))
 	viper.AddConfigPath(workDir)
 	viper.AddConfigPath(".")
 	if err := viper.ReadInConfig(); err != nil {
@@ -54,7 +59,7 @@ func main() {
 	viper.WatchConfig()
 
 	// init config
-	cfg, err := config.Load(workDir)
+	cfg, err := config.Load(workDir, runPath)
 	if err != nil {
 		log.Fatalf("load config file error: %v", err)
 	}
@@ -63,6 +68,13 @@ func main() {
 	zapLogger := logger.NewLogger(cfg)
 	zap.ReplaceGlobals(zapLogger)
 	defer zapLogger.Sync()
+
+	// init sensitive word detect
+	if cfg.SensitiveWD {
+		if err := sensitive.LoadSensitiveWord(cfg); err != nil {
+			zap.S().Fatalf("load sensitive words error: %v", err)
+		}
+	}
 
 	// db con str
 	dsn := config.GetDSN(cfg.DB)
