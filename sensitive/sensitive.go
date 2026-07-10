@@ -13,19 +13,32 @@ import (
 	"go.uber.org/zap"
 )
 
-var sensitiveWords []string
+type Detector struct {
+	words   []string
+	matcher *ahocorasick.Matcher
+}
 
-var matcher *ahocorasick.Matcher
+func NewDetector(words []string) *Detector {
+	words = removeDuplicateStrings(words)
+	return &Detector{
+		words:   words,
+		matcher: ahocorasick.NewStringMatcher(words),
+	}
+}
 
-func LoadSensitiveWord(cfg *config.Config) error {
-	sensitiveWords = make([]string, 0)
-
+func LoadWordsFromConfig(cfg *config.Config) ([]string, error) {
 	path := filepath.Join(cfg.WorkDir, "stwd")
 	if isPathExists, err := checkDirExists(path); err == nil {
 		if !isPathExists {
 			path = filepath.Join(cfg.RunPath, "configs", "stwd")
 		}
 	}
+
+	return LoadWordsFromDir(path)
+}
+
+func LoadWordsFromDir(path string) ([]string, error) {
+	words := make([]string, 0)
 
 	if dirExternal, errExternal := os.ReadDir(path); errExternal == nil {
 		for _, file := range dirExternal {
@@ -46,12 +59,12 @@ func LoadSensitiveWord(cfg *config.Config) error {
 				if word == "" {
 					continue
 				}
-				sensitiveWords = append(sensitiveWords, word)
+				words = append(words, word)
 			}
 
 			err = fileObj.Close()
 			if err != nil {
-				return fmt.Errorf("Failed to close external sensitive dictionary: %v", err)
+				return nil, fmt.Errorf("Failed to close external sensitive dictionary: %v", err)
 			}
 
 			if err := scanner.Err(); err != nil {
@@ -62,24 +75,22 @@ func LoadSensitiveWord(cfg *config.Config) error {
 		zap.S().Warnf("Failed to read external sensitive dictionary: %v.", errExternal)
 	}
 
-	sensitiveWords = removeDuplicateStrings(sensitiveWords)
-	matcher = ahocorasick.NewStringMatcher(sensitiveWords)
-	return nil
+	return removeDuplicateStrings(words), nil
 }
 
-func DetectSensitiveWord(sentence string) bool {
-	if matcher == nil {
+func (d *Detector) Detect(sentence string) bool {
+	if d == nil || d.matcher == nil {
 		return false
 	}
-	hitIndices := matcher.Match([]byte(sentence))
+	hitIndices := d.matcher.Match([]byte(sentence))
 	if len(hitIndices) > 0 {
 		var strBuilder strings.Builder
 		fmt.Fprintf(&strBuilder, "Detected %d sensitive keyword(s) for sentence:\n %s.\n", len(hitIndices), sentence)
 		for _, index := range hitIndices {
-			matchedWord := sensitiveWords[index]
+			matchedWord := d.words[index]
 			fmt.Fprintf(&strBuilder, "- Blocked by: [%s]\n", matchedWord)
 		}
-		zap.S().Warn(strBuilder.String())
+		zap.S().Info(strBuilder.String())
 		return true
 	}
 	return false

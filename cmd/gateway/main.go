@@ -72,10 +72,11 @@ func main() {
 	// init sensitive word detect
 	var textPolicy proxy.TextPolicy = proxy.NoopTextPolicy{}
 	if cfg.SensitiveWD {
-		if err := sensitive.LoadSensitiveWord(cfg); err != nil {
+		words, err := sensitive.LoadWordsFromConfig(cfg)
+		if err != nil {
 			zap.S().Fatalf("load sensitive words error: %v", err)
 		}
-		textPolicy = sensitive.NewTextPolicy()
+		textPolicy = sensitive.NewTextPolicy(sensitive.NewDetector(words))
 	}
 
 	// db con str

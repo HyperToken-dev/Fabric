@@ -2,12 +2,14 @@ package sensitive
 
 import "context"
 
-type TextPolicy struct{}
-
-func NewTextPolicy() TextPolicy {
-	return TextPolicy{}
+type TextPolicy struct {
+	detector *Detector
 }
 
-func (TextPolicy) Rejects(ctx context.Context, text string) bool {
-	return DetectSensitiveWord(text)
+func NewTextPolicy(detector *Detector) TextPolicy {
+	return TextPolicy{detector: detector}
+}
+
+func (p TextPolicy) Rejects(ctx context.Context, text string) bool {
+	return p.detector.Detect(text)
 }
