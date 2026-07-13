@@ -8,7 +8,6 @@ import (
 
 	"fabric/business/usage"
 	openaiusage "fabric/business/usage/openai"
-	"fabric/internal/proxy"
 	"fabric/internal/storage/postgres"
 
 	"go.uber.org/zap"
@@ -22,7 +21,7 @@ func newOpenAIUsageAdapter(store *postgres.ProxyStore) openAIUsageAdapter {
 	return openAIUsageAdapter{store: store}
 }
 
-func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info proxy.UsageContext) io.ReadCloser {
+func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext) io.ReadCloser {
 	return openaiusage.NewTrackingReader(body, contentEncoding, func(parsedUsage *usage.Usage) {
 		if info.ModelID == 0 {
 			zap.S().Errorf("Error catched: missing resolved model id for responses stream usage: key_id=%d, channel_id=%d, model=%q", info.KeyID, info.ChannelID, info.Model)
@@ -37,7 +36,7 @@ func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEnc
 	})
 }
 
-func (a openAIUsageAdapter) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info proxy.UsageContext) error {
+func (a openAIUsageAdapter) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
 	if info.ModelID == 0 {
 		return fmt.Errorf("missing resolved model id for non-streaming usage: key_id=%d, channel_id=%d, model=%q", info.KeyID, info.ChannelID, info.Model)
 	}

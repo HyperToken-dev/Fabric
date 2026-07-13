@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"fabric/internal/config"
-	"fabric/internal/proxy"
 	"fabric/internal/repository"
 	"fabric/internal/router"
 	"fabric/internal/server"
@@ -71,7 +70,7 @@ func main() {
 	defer zapLogger.Sync()
 
 	// init sensitive word detect
-	var textPolicy proxy.TextPolicy = proxy.NoopTextPolicy{}
+	var textPolicy TextPolicy = NoopTextPolicy{}
 	if cfg.SensitiveWD {
 		words, err := sensitive.LoadWordsFromConfig(cfg)
 		if err != nil {
@@ -113,8 +112,8 @@ func main() {
 
 	// register proxy
 	proxyStore := postgres.NewProxyStore(queries)
-	openaiProxy := proxy.NewOpenAIProxy(proxy.OpenAIProxyOptions{
-		ModelStore:   proxyStore,
+	openaiProxy := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore:   newModelStoreAdapter(proxyStore),
 		UsageHandler: newOpenAIUsageAdapter(proxyStore),
 		TextPolicy:   textPolicy,
 	})

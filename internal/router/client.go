@@ -3,7 +3,6 @@ package router
 import (
 	"database/sql"
 	"fabric/internal/auth"
-	"fabric/internal/proxy"
 	"fabric/internal/repository"
 	"net/http"
 
@@ -12,7 +11,11 @@ import (
 
 type Router struct {
 	queries     *repository.Queries
-	openaiProxy *proxy.OpenAIProxy
+	openaiProxy OpenAIProxy
+}
+
+type OpenAIProxy interface {
+	ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string)
 }
 
 const (
@@ -20,7 +23,7 @@ const (
 	apiFormatOpenAI      int32 = 1
 )
 
-func New(queries *repository.Queries, openaiProxy *proxy.OpenAIProxy) *Router {
+func New(queries *repository.Queries, openaiProxy OpenAIProxy) *Router {
 	return &Router{queries: queries, openaiProxy: openaiProxy}
 }
 
