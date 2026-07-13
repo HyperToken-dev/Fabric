@@ -1,6 +1,6 @@
-# HyperToken
+# Fabric
 
-HyperToken is a modular AI gateway framework designed to support transparent AI API proxying, observability, policy enforcement, and higher-level gateway composition.
+Fabric is a modular AI gateway framework designed to support transparent AI API proxying, observability, policy enforcement, and higher-level gateway composition.
 
 The project is planned around three independent but composable layers:
 
@@ -12,7 +12,7 @@ Each layer can be deployed as a standalone service or imported as a library by e
 
 ## Vision
 
-HyperToken aims to provide a flexible foundation for building AI infrastructure across different usage scenarios:
+Fabric aims to provide a flexible foundation for building AI infrastructure across different usage scenarios:
 
 - Transparent proxying for mainstream AI providers
 - Request and response logging
@@ -55,7 +55,7 @@ flowchart TB
 
 ## Layer 1: Core
 
-The Core layer is the protocol layer of HyperToken.
+The Core layer is the protocol layer of Fabric.
 
 It provides the fundamental AI gateway capabilities, including transparent request forwarding and logging. This layer is responsible for adapting requests and responses between client applications and upstream AI providers.
 
@@ -175,7 +175,7 @@ flowchart LR
 
 ## Design Principles
 
-HyperToken follows several architectural principles:
+Fabric follows several architectural principles:
 
 - **Layered design**: protocol, business, and integrated gateway capabilities are separated.
 - **Composable modules**: each layer can be combined with others when needed.
@@ -188,4 +188,4 @@ HyperToken follows several architectural principles:
 
 The current project will evolve toward this layered architecture.
 
-Future refactoring will focus on separating the codebase into clear protocol, business, and integrated gateway boundaries while preserving the ability to run HyperToken as a complete AI gateway.
+Future refactoring will focus on separating the codebase into clear protocol, business, and integrated gateway boundaries while preserving the ability to run Fabric as a complete AI gateway.
