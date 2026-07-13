@@ -7,17 +7,18 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	coreopenai "fabric/core/providers/openai"
+	coreproxy "fabric/core/proxy"
 
 	"go.uber.org/zap"
 )
 
 type OpenAIProxy struct {
-	proxy        *httputil.ReverseProxy
+	coreProxy    *coreopenai.Proxy
 	modelStore   ModelStore
 	usageHandler UsageHandler
 	textPolicy   TextPolicy
@@ -49,44 +50,8 @@ func NewOpenAIProxy(opts OpenAIProxyOptions) *OpenAIProxy {
 		usageHandler: opts.UsageHandler,
 		textPolicy:   opts.TextPolicy,
 	}
-	p.proxy = p.buildProxy()
+	p.coreProxy = coreopenai.New(coreopenai.Options{ModifyResponse: p.modifyResponse})
 	return p
-}
-
-func (p *OpenAIProxy) buildProxy() *httputil.ReverseProxy {
-	director := func(req *http.Request) {
-		model := getContextString(req, ctxModel)
-		stream := getContextBool(req, ctxStreamKey)
-		ctx := context.WithValue(req.Context(), ctxModel, model)
-		ctx = context.WithValue(ctx, ctxProvider, string(ProviderOpenAI))
-		*req = *req.WithContext(ctx)
-
-		apiKey := getContextString(req, ctxAPIKey)
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		if req.URL.Path == "/v1/chat/completions" && stream {
-			if err := injectOpenAIChatStreamOptions(req); err != nil {
-				zap.S().Errorf("Error catched: inject openai chat stream options error: %v", err)
-			}
-		}
-
-		target, ok := req.Context().Value(ctxUpstream).(*url.URL)
-		if !ok {
-			zap.S().Error("Error catched: missing upstream target")
-			return
-		}
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.Host = target.Host
-	}
-
-	return &httputil.ReverseProxy{
-		Director:       director,
-		ModifyResponse: p.modifyResponse,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			zap.S().Errorf("Error catched: proxy error: %v", err)
-			http.Error(w, "bad gateway", http.StatusBadGateway)
-		},
-	}
 }
 
 // if stream = true and /v1/chat/com we need insert a new field "include_usage"
@@ -243,12 +208,6 @@ func bodyPrefix(body []byte, maxLen int) string {
 }
 
 func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string) {
-	target, err := parseChannelBaseURL(baseURL)
-	if err != nil {
-		zap.S().Errorf("Error catched: invalid channel base url: %v", err)
-		http.Error(w, "invalid channel base url", http.StatusBadGateway)
-		return
-	}
 	if strings.TrimSpace(providerKey) == "" {
 		http.Error(w, "missing provider key", http.StatusBadGateway)
 		return
@@ -271,6 +230,11 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 		http.Error(w, "prompt rejected", http.StatusForbidden)
 		return
 	}
+	if parsedReq.Stream && r.URL.Path == "/v1/chat/completions" {
+		if err := injectOpenAIChatStreamOptions(r); err != nil {
+			zap.S().Errorf("Error catched: inject openai chat stream options error: %v", err)
+		}
+	}
 
 	modelID, err := p.resolveModel(r.Context(), channelID, modelName)
 	if err != nil {
@@ -291,8 +255,6 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	r = setContextInt32(r, ctxChannelID, channelID)
 	r = setContextString(r, ctxModel, modelName)
 	r = setContextInt32(r, ctxModelID, modelID)
-	r = setContextString(r, ctxAPIKey, providerKey)
 	r = setContextBool(r, ctxStreamKey, parsedReq.Stream)
-	r = r.WithContext(context.WithValue(r.Context(), ctxUpstream, target))
-	p.proxy.ServeHTTP(w, r)
+	p.coreProxy.ServeHTTP(w, r, coreproxy.Upstream{BaseURL: baseURL, APIKey: providerKey})
 }

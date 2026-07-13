@@ -20,8 +20,6 @@ const (
 	ctxModel     contextKey = "model"
 	ctxModelID   contextKey = "model_id"
 	ctxProvider  contextKey = "provider"
-	ctxUpstream  contextKey = "upstream"
-	ctxAPIKey    contextKey = "api_key"
 	ctxStreamKey contextKey = "stream"
 )
 
