@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	openaiusage "fabric/business/usage/openai"
 	"fabric/internal/config"
 	"fabric/internal/proxy"
 	"fabric/internal/repository"
@@ -114,10 +113,9 @@ func main() {
 
 	// register proxy
 	proxyStore := postgres.NewProxyStore(queries)
-	openaiUsageHandler := openaiusage.NewHandler(proxyStore)
 	openaiProxy := proxy.NewOpenAIProxy(proxy.OpenAIProxyOptions{
 		ModelStore:   proxyStore,
-		UsageHandler: newOpenAIUsageAdapter(openaiUsageHandler),
+		UsageHandler: newOpenAIUsageAdapter(proxyStore),
 		TextPolicy:   textPolicy,
 	})
 

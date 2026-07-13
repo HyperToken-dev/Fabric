@@ -3,14 +3,12 @@ package openai
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
-	"time"
 
 	"fabric/business/usage"
 
@@ -18,58 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const providerOpenAI = "openai"
-
-type Handler struct {
-	recorder usage.Recorder
-}
-
-func NewHandler(recorder usage.Recorder) *Handler {
-	if recorder == nil {
-		recorder = usage.NoopRecorder{}
-	}
-	return &Handler{recorder: recorder}
-}
-
-func (h *Handler) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info usage.Context) io.ReadCloser {
-	return &responsesUsageTrackingReader{
-		reader:          body,
-		contentEncoding: strings.ToLower(strings.TrimSpace(contentEncoding)),
-		info:            info,
-		recorder:        h.recorder,
-	}
-}
-
-func (h *Handler) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info usage.Context) error {
-	if info.ModelID == 0 {
-		return fmt.Errorf("missing resolved model id for non-streaming usage: key_id=%d, channel_id=%d, model=%q", info.KeyID, info.ChannelID, info.Model)
-	}
-
-	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
-	if err != nil {
-		return fmt.Errorf("decode response body error: %w", err)
-	}
-
-	tokens, err := extractTokenUsage(decodedBody)
-	if err != nil {
-		return err
-	}
-
-	return h.recorder.RecordUsage(ctx, usage.Record{
-		KeyID:            info.KeyID,
-		ChannelID:        info.ChannelID,
-		ModelID:          info.ModelID,
-		Model:            info.Model,
-		Provider:         providerOpenAI,
-		PromptTokens:     int64(tokens.PromptTokens),
-		CompletionTokens: int64(tokens.CompletionTokens),
-	})
-}
-
-type usageTokens struct {
-	PromptTokens     int
-	CompletionTokens int
-}
+type UsageCallback func(*usage.Usage)
 
 type openAIUsage struct {
 	InputTokens      int `json:"input_tokens"`
@@ -85,27 +32,40 @@ type openAIResponsesStreamEvent struct {
 	} `json:"response"`
 }
 
-func extractTokenUsage(body []byte) (*usageTokens, error) {
+func ExtractNonStreaming(rawBody []byte, contentEncoding string) (*usage.Usage, error) {
+	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
+	if err != nil {
+		return nil, fmt.Errorf("decode response body error: %w", err)
+	}
+
 	var resp struct {
 		Usage openAIUsage `json:"usage"`
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := json.Unmarshal(decodedBody, &resp); err != nil {
 		return nil, err
 	}
-	return openAIUsageToUsageTokens(&resp.Usage)
+	return openAIUsageToUsage(&resp.Usage)
 }
 
-func openAIUsageToUsageTokens(openaiUsage *openAIUsage) (*usageTokens, error) {
+func NewTrackingReader(body io.ReadCloser, contentEncoding string, onUsage UsageCallback) io.ReadCloser {
+	return &responsesUsageTrackingReader{
+		reader:          body,
+		contentEncoding: strings.ToLower(strings.TrimSpace(contentEncoding)),
+		onUsage:         onUsage,
+	}
+}
+
+func openAIUsageToUsage(openaiUsage *openAIUsage) (*usage.Usage, error) {
 	if openaiUsage.InputTokens != 0 || openaiUsage.OutputTokens != 0 {
-		return &usageTokens{
-			PromptTokens:     openaiUsage.InputTokens,
-			CompletionTokens: openaiUsage.OutputTokens,
+		return &usage.Usage{
+			PromptTokens:     int64(openaiUsage.InputTokens),
+			CompletionTokens: int64(openaiUsage.OutputTokens),
 		}, nil
 	}
 	if openaiUsage.PromptTokens != 0 || openaiUsage.CompletionTokens != 0 {
-		return &usageTokens{
-			PromptTokens:     openaiUsage.PromptTokens,
-			CompletionTokens: openaiUsage.CompletionTokens,
+		return &usage.Usage{
+			PromptTokens:     int64(openaiUsage.PromptTokens),
+			CompletionTokens: int64(openaiUsage.CompletionTokens),
 		}, nil
 	}
 	return nil, errors.New("missing openai usage")
@@ -116,8 +76,7 @@ type responsesUsageTrackingReader struct {
 	parser          responsesSSEUsageParser
 	compressedBody  bytes.Buffer
 	contentEncoding string
-	info            usage.Context
-	recorder        usage.Recorder
+	onUsage         UsageCallback
 	once            sync.Once
 }
 
@@ -155,7 +114,7 @@ func (r *responsesUsageTrackingReader) processUsage() {
 	if err := r.parser.Finish(); err != nil {
 		zap.S().Errorf("Error catched: finish responses stream usage parser error: %v", err)
 	}
-	r.recordParsedUsage(r.parser.Usage())
+	r.emitUsage(r.parser.Usage())
 }
 
 func (r *responsesUsageTrackingReader) processEncodedUsage(compressedBody []byte) {
@@ -172,31 +131,16 @@ func (r *responsesUsageTrackingReader) processEncodedUsage(compressedBody []byte
 	if err := parser.Finish(); err != nil {
 		zap.S().Errorf("Error catched: finish encoded responses stream usage parser error: %v", err)
 	}
-	r.recordParsedUsage(parser.Usage())
+	r.emitUsage(parser.Usage())
 }
 
-func (r *responsesUsageTrackingReader) recordParsedUsage(tokens *usageTokens) {
-	if tokens == nil {
-		zap.S().Warnf("responses stream usage missing: key_id=%d, channel_id=%d, model_id=%d", r.info.KeyID, r.info.ChannelID, r.info.ModelID)
+func (r *responsesUsageTrackingReader) emitUsage(parsedUsage *usage.Usage) {
+	if parsedUsage == nil {
+		zap.S().Warn("responses stream usage missing")
 		return
 	}
-	if r.info.ModelID == 0 {
-		zap.S().Errorf("Error catched: missing resolved model id for responses stream usage: key_id=%d, channel_id=%d, model=%q", r.info.KeyID, r.info.ChannelID, r.info.Model)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := r.recorder.RecordUsage(ctx, usage.Record{
-		KeyID:            r.info.KeyID,
-		ChannelID:        r.info.ChannelID,
-		ModelID:          r.info.ModelID,
-		Model:            r.info.Model,
-		Provider:         providerOpenAI,
-		PromptTokens:     int64(tokens.PromptTokens),
-		CompletionTokens: int64(tokens.CompletionTokens),
-	}); err != nil {
-		zap.S().Errorf("Error catched: insert responses stream usage log error: %v", err)
+	if r.onUsage != nil {
+		r.onUsage(parsedUsage)
 	}
 }
 
@@ -204,7 +148,7 @@ type responsesSSEUsageParser struct {
 	lineBuf bytes.Buffer
 	event   string
 	data    bytes.Buffer
-	usage   *usageTokens
+	usage   *usage.Usage
 }
 
 func (p *responsesSSEUsageParser) Write(chunk []byte) error {
@@ -245,7 +189,7 @@ func (p *responsesSSEUsageParser) Finish() error {
 	return firstErr
 }
 
-func (p *responsesSSEUsageParser) Usage() *usageTokens {
+func (p *responsesSSEUsageParser) Usage() *usage.Usage {
 	return p.usage
 }
 
@@ -301,11 +245,11 @@ func (p *responsesSSEUsageParser) consumeEvent() error {
 		return nil
 	}
 
-	tokens, err := openAIUsageToUsageTokens(openaiUsage)
+	parsedUsage, err := openAIUsageToUsage(openaiUsage)
 	if err != nil {
 		return err
 	}
-	p.usage = tokens
+	p.usage = parsedUsage
 	return nil
 }
 
