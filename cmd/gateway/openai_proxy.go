@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ type openaiChatRequest struct {
 	Stream bool   `json:"stream"`
 }
 
-func NewOpenAIProxy(opts OpenAIProxyOptions) *OpenAIProxy {
+func NewOpenAIProxy(opts OpenAIProxyOptions) (*OpenAIProxy, error) {
 	if opts.ModelStore == nil {
 		opts.ModelStore = NoopModelStore{}
 	}
@@ -51,8 +52,23 @@ func NewOpenAIProxy(opts OpenAIProxyOptions) *OpenAIProxy {
 		usageHandler: opts.UsageHandler,
 		textPolicy:   opts.TextPolicy,
 	}
-	p.coreProxy = coreopenai.New(coreopenai.Options{ModifyResponse: p.modifyResponse})
-	return p
+	coreProxy, err := coreopenai.New(coreopenai.Options{
+		Rewrite:        p.rewrite,
+		ModifyResponse: p.modifyResponse,
+	})
+	if err != nil {
+		return nil, err
+	}
+	p.coreProxy = coreProxy
+	return p, nil
+}
+
+func (p *OpenAIProxy) rewrite(pr *httputil.ProxyRequest) {
+	if pr.Out.URL.Path == "/v1/chat/completions" && getContextBool(pr.In, ctxStreamKey) {
+		if err := injectOpenAIChatStreamOptions(pr.Out); err != nil {
+			zap.S().Errorf("Error catched: inject openai chat stream options error: %v", err)
+		}
+	}
 }
 
 // if stream = true and /v1/chat/com we need insert a new field "include_usage"
@@ -231,12 +247,6 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 		http.Error(w, "prompt rejected", http.StatusForbidden)
 		return
 	}
-	if parsedReq.Stream && r.URL.Path == "/v1/chat/completions" {
-		if err := injectOpenAIChatStreamOptions(r); err != nil {
-			zap.S().Errorf("Error catched: inject openai chat stream options error: %v", err)
-		}
-	}
-
 	modelID, err := p.resolveModel(r.Context(), channelID, modelName)
 	if err != nil {
 		if err == errModelDisabled {

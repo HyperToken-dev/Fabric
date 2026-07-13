@@ -14,6 +14,8 @@ type contextKey string
 
 const ctxUpstream contextKey = "upstream"
 
+type RewriteFunc func(pr *httputil.ProxyRequest)
+
 type ModifyResponseFunc func(resp *http.Response) error
 
 type Proxy struct {
@@ -21,34 +23,36 @@ type Proxy struct {
 }
 
 type Options struct {
+	Rewrite        RewriteFunc
 	ModifyResponse ModifyResponseFunc
 }
 
-func New(opts Options) *Proxy {
-	director := func(req *http.Request) {
-		upstream, ok := req.Context().Value(ctxUpstream).(coreproxy.Upstream)
-		if !ok {
-			return
-		}
-
-		target, ok := req.Context().Value(ctxUpstreamTarget).(*url.URL)
-		if !ok {
-			return
-		}
-
-		req.Header.Set("Authorization", "Bearer "+upstream.APIKey)
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.Host = target.Host
-	}
-
+func New(opts Options) (*Proxy, error) {
+	rewrite := opts.Rewrite
 	return &Proxy{proxy: &httputil.ReverseProxy{
-		Director:       director,
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			upstream, ok := pr.In.Context().Value(ctxUpstream).(coreproxy.Upstream)
+			if !ok {
+				return
+			}
+			target, ok := pr.In.Context().Value(ctxUpstreamTarget).(*url.URL)
+			if !ok {
+				return
+			}
+
+			pr.SetURL(target)
+			pr.Out.Host = target.Host
+			pr.Out.Header.Set("Authorization", "Bearer "+upstream.APIKey)
+
+			if rewrite != nil {
+				rewrite(pr)
+			}
+		},
 		ModifyResponse: opts.ModifyResponse,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, "bad gateway", http.StatusBadGateway)
+			http.Error(w, err.Error(), http.StatusBadGateway)
 		},
-	}}
+	}}, nil
 }
 
 const ctxUpstreamTarget contextKey = "upstream_target"

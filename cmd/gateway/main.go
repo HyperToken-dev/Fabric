@@ -112,11 +112,14 @@ func main() {
 
 	// register proxy
 	proxyStore := postgres.NewProxyStore(queries)
-	openaiProxy := NewOpenAIProxy(OpenAIProxyOptions{
+	openaiProxy, err := NewOpenAIProxy(OpenAIProxyOptions{
 		ModelStore:   newModelStoreAdapter(proxyStore),
 		UsageHandler: newOpenAIUsageAdapter(proxyStore),
 		TextPolicy:   textPolicy,
 	})
+	if err != nil {
+		zap.S().Fatalf("create openai proxy error: %v", err)
+	}
 
 	rt := router.New(queries, openaiProxy)
 	proxyMux := rt.RegisterProxyRoutes()
