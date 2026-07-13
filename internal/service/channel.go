@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	proto "hyper-token/gen"
-	"hyper-token/internal/repository"
+	proto "fabric/gen"
+	"fabric/internal/repository"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

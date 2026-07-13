@@ -1,6 +1,6 @@
 syntax = "proto3";
 package proto;
-option go_package = "hyper-token/gen;proto";
+option go_package = "fabric/gen;proto";
 import "google/protobuf/timestamp.proto";
 
 service ChannelService {

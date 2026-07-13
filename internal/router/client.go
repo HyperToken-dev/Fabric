@@ -2,9 +2,9 @@ package router
 
 import (
 	"database/sql"
-	"hyper-token/internal/auth"
-	"hyper-token/internal/proxy"
-	"hyper-token/internal/repository"
+	"fabric/internal/auth"
+	"fabric/internal/proxy"
+	"fabric/internal/repository"
 	"net/http"
 
 	"github.com/gin-gonic/gin"

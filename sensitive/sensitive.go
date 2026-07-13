@@ -2,8 +2,8 @@ package sensitive
 
 import (
 	"bufio"
+	"fabric/internal/config"
 	"fmt"
-	"hyper-token/internal/config"
 	"os"
 	"path/filepath"
 	"regexp"

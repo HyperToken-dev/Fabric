@@ -11,18 +11,22 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
-
-	"hyper-token/internal/repository"
 
 	"go.uber.org/zap"
 )
 
 type OpenAIProxy struct {
-	proxy      *httputil.ReverseProxy
-	queries    *repository.Queries
-	textPolicy TextPolicy
+	proxy        *httputil.ReverseProxy
+	modelStore   ModelStore
+	usageHandler UsageHandler
+	textPolicy   TextPolicy
+}
+
+type OpenAIProxyOptions struct {
+	ModelStore   ModelStore
+	UsageHandler UsageHandler
+	TextPolicy   TextPolicy
 }
 
 type openaiChatRequest struct {
@@ -30,51 +34,20 @@ type openaiChatRequest struct {
 	Stream bool   `json:"stream"`
 }
 
-// SSE reader.processing SSE stream
-type openAIResponsesUsageTrackingReader struct {
-	reader          io.ReadCloser
-	parser          openAIResponsesSSEUsageParser
-	compressedBody  bytes.Buffer
-	contentEncoding string
-	keyID           int32
-	channelID       int32
-	modelID         int32
-	model           string
-	queries         *repository.Queries
-	once            sync.Once
-}
-
-// SSE usage unmarshal struct
-type openAIUsage struct {
-	InputTokens      int `json:"input_tokens"`
-	OutputTokens     int `json:"output_tokens"`
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-}
-
-// SSE event of OpenAI
-type openAIResponsesStreamEvent struct {
-	Type     string       `json:"type"`
-	Usage    *openAIUsage `json:"usage"`
-	Response struct {
-		Usage *openAIUsage `json:"usage"`
-	} `json:"response"`
-}
-
-type openAIResponsesSSEUsageParser struct {
-	lineBuf bytes.Buffer //save a line that not completely read yet
-	event   string       //save the event name of the SSE event now
-	data    bytes.Buffer //the json data of the SSE event
-	usage   *usageLog    //finally usage of this SSE stream
-}
-
-func NewOpenAIProxy(queries *repository.Queries, textPolicy TextPolicy) *OpenAIProxy {
-	if textPolicy == nil {
-		textPolicy = NoopTextPolicy{}
+func NewOpenAIProxy(opts OpenAIProxyOptions) *OpenAIProxy {
+	if opts.ModelStore == nil {
+		opts.ModelStore = NoopModelStore{}
+	}
+	if opts.UsageHandler == nil {
+		opts.UsageHandler = NoopUsageHandler{}
+	}
+	if opts.TextPolicy == nil {
+		opts.TextPolicy = NoopTextPolicy{}
 	}
 	p := &OpenAIProxy{
-		queries:    queries,
-		textPolicy: textPolicy,
+		modelStore:   opts.ModelStore,
+		usageHandler: opts.UsageHandler,
+		textPolicy:   opts.TextPolicy,
 	}
 	p.proxy = p.buildProxy()
 	return p
@@ -173,7 +146,12 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 
 	// process SSE
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && isOpenAIUsageStream(resp.Request, resp.Header.Get("Content-Type")) {
-		resp.Body = newOpenAIResponsesUsageTrackingReader(resp.Body, resp.Header.Get("Content-Encoding"), keyID, channelID, modelID, model, p.queries)
+		resp.Body = p.usageHandler.WrapStreamingResponse(resp.Body, resp.Header.Get("Content-Encoding"), UsageContext{
+			KeyID:     keyID,
+			ChannelID: channelID,
+			ModelID:   modelID,
+			Model:     model,
+		})
 		resp.ContentLength = -1
 		resp.Header.Del("Content-Length")
 		return nil
@@ -236,279 +214,23 @@ func isOpenAIUsageStream(req *http.Request, contentType string) bool {
 	return isOpenAIUsagePath && strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
-// get a new reader in order to process SSE stream
-// httputil.ReverseProxy will automatically call the Read function of this struct when copy upstream response body to client
-func newOpenAIResponsesUsageTrackingReader(r io.ReadCloser, contentEncoding string, keyID, channelID, modelID int32, model string, queries *repository.Queries) *openAIResponsesUsageTrackingReader {
-	return &openAIResponsesUsageTrackingReader{
-		reader:          r,
-		contentEncoding: strings.ToLower(strings.TrimSpace(contentEncoding)),
-		keyID:           keyID,
-		channelID:       channelID,
-		modelID:         modelID,
-		model:           model,
-		queries:         queries,
-	}
-}
-
-func (r *openAIResponsesUsageTrackingReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	if n > 0 { //when read something, write it to parser
-		switch r.contentEncoding {
-		case "", "identity":
-			if parseErr := r.parser.Write(p[:n]); parseErr != nil {
-				//even if error occurred just log,make sure client get the p data
-				zap.S().Errorf("Error catched: parse responses stream usage error: %v", parseErr)
-			}
-		case "gzip":
-			if _, writeErr := r.compressedBody.Write(p[:n]); writeErr != nil {
-				zap.S().Errorf("Error catched: buffer gzip responses stream usage data error: %v", writeErr)
-			}
-		}
-	}
-	// when SSE stream ends,io.EOF will be readed out.
-	if err == io.EOF {
-		// sync.Once make sure always call processUsage once
-		// processUsage will call Finish Function to resolve the SSE stream dont return "\n\n" characters finally
-		r.once.Do(r.processUsage)
-	}
-	return n, err
-}
-
-// close will be called by httputil.ReverseProxy
-func (r *openAIResponsesUsageTrackingReader) Close() error {
-	return r.reader.Close()
-}
-
-// when SSE ends this function will be called
-func (r *openAIResponsesUsageTrackingReader) processUsage() {
-	if r.contentEncoding != "" && r.contentEncoding != "identity" {
-		compressedBody := append([]byte(nil), r.compressedBody.Bytes()...)
-		go r.processEncodedUsage(compressedBody)
-		return
-	}
-
-	// call Finish function when SSE ends
-	if err := r.parser.Finish(); err != nil {
-		zap.S().Errorf("Error catched: finish responses stream usage parser error: %v", err)
-	}
-	// process usage data and log it into database
-	r.insertParsedUsage(r.parser.Usage())
-}
-
-// encoded data SSE process
-func (r *openAIResponsesUsageTrackingReader) processEncodedUsage(compressedBody []byte) {
-	body, err := decodeResponseBody(compressedBody, r.contentEncoding)
-	if err != nil {
-		zap.S().Errorf("Error catched: decode responses stream usage body error: %v", err)
-		return
-	}
-
-	var parser openAIResponsesSSEUsageParser
-	if err := parser.Write(body); err != nil {
-		zap.S().Errorf("Error catched: parse encoded responses stream usage error: %v", err)
-	}
-	if err := parser.Finish(); err != nil {
-		zap.S().Errorf("Error catched: finish encoded responses stream usage parser error: %v", err)
-	}
-	r.insertParsedUsage(parser.Usage())
-}
-
-func (r *openAIResponsesUsageTrackingReader) insertParsedUsage(usage *usageLog) {
-	if usage == nil {
-		zap.S().Warnf("responses stream usage missing: key_id=%d, channel_id=%d, model_id=%d", r.keyID, r.channelID, r.modelID)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if r.modelID == 0 {
-		// fallback create model when model does not exists
-		row, err := r.queries.UpsertModel(ctx, repository.UpsertModelParams{
-			ChannelID: r.channelID,
-			ModelName: r.model,
-			Status:    modelStatusPending,
-			ModelType: modelTypeText,
-		})
-		if err != nil {
-			zap.S().Errorf("Error catched: upsert responses stream fallback model error: %v", err)
-			return
-		}
-		r.modelID = row.ID
-	}
-	if err := insertUsageLog(ctx, r.queries, r.keyID, r.channelID, r.modelID, usage); err != nil {
-		zap.S().Errorf("Error catched: insert responses stream usage log error: %v", err)
-	}
-}
-
-// The most important function of the SSE parser
-// When a line has not yet ended --> read it into LineBuffer
-// when data line has ended --> reset LineBuffer and call consumeLine function
-func (p *openAIResponsesSSEUsageParser) Write(chunk []byte) error {
-	// a SSE event may contains multiple errors across several lines.
-	// this function can't return all of the error
-	/*
-		The parser merely tracks usage statistics on the side;
-		the failure to parse a specific intermediate event should not compromise
-		the opportunity to parse subsequent events.
-	*/
-	var firstErr error // just return the first error in one line
-
-	for len(chunk) > 0 {
-		// the line has not ended
-		idx := bytes.IndexByte(chunk, '\n')
-		if idx < 0 {
-			_, err := p.lineBuf.Write(chunk)
-			return err
-		}
-
-		// the line has ended
-		if _, err := p.lineBuf.Write(chunk[:idx]); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		line := p.lineBuf.String()
-		p.lineBuf.Reset()
-		if err := p.consumeLine(strings.TrimSuffix(line, "\r")); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		chunk = chunk[idx+1:]
-	}
-	return firstErr
-}
-
-// when SSE ends call this function(called by processUsage)
-// this function that resolve the problem that SSE not ended with "\n\n" or a empty line
-func (p *openAIResponsesSSEUsageParser) Finish() error {
-	var firstErr error
-	if p.lineBuf.Len() > 0 {
-		line := p.lineBuf.String()
-		p.lineBuf.Reset()
-		if err := p.consumeLine(strings.TrimSuffix(line, "\r")); err != nil {
-			firstErr = err
-		}
-	}
-	if p.data.Len() > 0 || p.event != "" {
-		// data exists then call consumeEvent
-		if err := p.consumeEvent(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-// return usage data of the SSE
-func (p *openAIResponsesSSEUsageParser) Usage() *usageLog {
-	return p.usage
-}
-
-// when line ends this function will be called
-func (p *openAIResponsesSSEUsageParser) consumeLine(line string) error {
-	// when read a empty line means that this SSE event has ended
-	if line == "" {
-		return p.consumeEvent()
-	}
-
-	// a line begin with ':' which is just a comment line
-	// a simple example:
-	// : this is a comment
-	if strings.HasPrefix(line, ":") {
-		return nil
-	}
-
-	field, value, found := strings.Cut(line, ":")
-	if !found {
-		field = line
-		value = ""
-	} else if strings.HasPrefix(value, " ") {
-		value = strings.TrimPrefix(value, " ")
-	}
-
-	switch field {
-	case "event":
-		p.event = value
-	case "data":
-		// judge whether the p.data is exists
-		if p.data.Len() > 0 {
-			// json format when a line ends there will be a '\n'
-			if err := p.data.WriteByte('\n'); err != nil {
-				return err
-			}
-		}
-		// then write the new data line to p.data
-		_, err := p.data.WriteString(value)
-		return err
-	}
-	return nil
-}
-
-// when SSE ends this function will be called
-func (p *openAIResponsesSSEUsageParser) consumeEvent() error {
-	data := strings.TrimSpace(p.data.String())
-	p.event = ""
-	p.data.Reset()
-
-	if data == "" || data == "[DONE]" {
-		return nil
-	}
-
-	var streamEvent openAIResponsesStreamEvent
-	if err := json.Unmarshal([]byte(data), &streamEvent); err != nil {
-		return err
-	}
-	usage := streamEvent.Response.Usage
-	if usage == nil {
-		// fallback when response field does not exists
-		usage = streamEvent.Usage
-	}
-	if usage == nil {
-		return nil
-	}
-
-	// log it into SSE's usage logging field
-	p.usage = openAIUsageToUsageLog(usage)
-	return nil
-}
-
-func openAIUsageToUsageLog(usage *openAIUsage) *usageLog {
-	if usage.InputTokens != 0 || usage.OutputTokens != 0 {
-		return &usageLog{
-			PromptTokens:   usage.InputTokens,
-			CompleteTokens: usage.OutputTokens,
-		}
-	}
-	return &usageLog{
-		PromptTokens:   usage.PromptTokens,
-		CompleteTokens: usage.CompletionTokens,
-	}
-}
-
 // async usage processing
 func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, contentType string, keyID int32, channelID int32, modelID int32, model string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
-	if err != nil {
-		zap.S().Errorf("Error catched: decode response body error: %v, content_type=%q, content_encoding=%q, raw_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(rawBody, 128))
+	if modelID == 0 {
+		zap.S().Errorf("Error catched: missing resolved model id for non-streaming usage: key_id=%d, channel_id=%d, model=%q", keyID, channelID, model)
 		return
 	}
 
-	if modelID == 0 {
-		row, err := p.queries.UpsertModel(ctx, repository.UpsertModelParams{
-			ChannelID: channelID,
-			ModelName: model,
-			Status:    modelStatusPending,
-			ModelType: modelTypeText,
-		})
-		if err != nil {
-			zap.S().Errorf("Error catched: upsert fallback model error: %v", err)
-			return
-		}
-		modelID = row.ID
-	}
-
-	err = processNonStreaming(ctx, decodedBody, keyID, channelID, modelID, ProviderOpenAI, p.queries)
-	if err != nil {
-		zap.S().Errorf("Error catched: process token usage error: %v, content_type=%q, content_encoding=%q, decoded_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(decodedBody, 128))
+	if err := p.usageHandler.ProcessNonStreamingResponse(ctx, rawBody, contentEncoding, contentType, UsageContext{
+		KeyID:     keyID,
+		ChannelID: channelID,
+		ModelID:   modelID,
+		Model:     model,
+	}); err != nil {
+		zap.S().Errorf("Error catched: process token usage error: %v, content_type=%q, content_encoding=%q, raw_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(rawBody, 128))
 		return
 	}
 }
@@ -554,6 +276,10 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	if err != nil {
 		if err == errModelDisabled {
 			http.Error(w, "model disabled", http.StatusForbidden)
+			return
+		}
+		if err == errModelUnsupported {
+			http.Error(w, "unsupported model", http.StatusBadRequest)
 			return
 		}
 		zap.S().Errorf("Error catched: resolve model error: %v", err)

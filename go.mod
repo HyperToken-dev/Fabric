@@ -1,4 +1,4 @@
-module hyper-token
+module fabric
 
 go 1.26.4
 

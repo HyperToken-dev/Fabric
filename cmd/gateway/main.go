@@ -8,16 +8,18 @@ import (
 	"os"
 	"path/filepath"
 
-	"hyper-token/internal/config"
-	"hyper-token/internal/proxy"
-	"hyper-token/internal/repository"
-	"hyper-token/internal/router"
-	"hyper-token/internal/server"
-	"hyper-token/internal/service"
-	"hyper-token/logger"
-	"hyper-token/sensitive"
+	openaiusage "fabric/business/usage/openai"
+	"fabric/internal/config"
+	"fabric/internal/proxy"
+	"fabric/internal/repository"
+	"fabric/internal/router"
+	"fabric/internal/server"
+	"fabric/internal/service"
+	"fabric/internal/storage/postgres"
+	"fabric/logger"
+	"fabric/sensitive"
 
-	pbconnect "hyper-token/gen/protoconnect"
+	pbconnect "fabric/gen/protoconnect"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/golang-migrate/migrate/v4"
@@ -111,7 +113,13 @@ func main() {
 	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc)
 
 	// register proxy
-	openaiProxy := proxy.NewOpenAIProxy(queries, textPolicy)
+	proxyStore := postgres.NewProxyStore(queries)
+	openaiUsageHandler := openaiusage.NewHandler(proxyStore)
+	openaiProxy := proxy.NewOpenAIProxy(proxy.OpenAIProxyOptions{
+		ModelStore:   proxyStore,
+		UsageHandler: newOpenAIUsageAdapter(openaiUsageHandler),
+		TextPolicy:   textPolicy,
+	})
 
 	rt := router.New(queries, openaiProxy)
 	proxyMux := rt.RegisterProxyRoutes()

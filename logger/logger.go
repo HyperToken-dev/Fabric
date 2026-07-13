@@ -1,7 +1,7 @@
 package logger
 
 import (
-	"hyper-token/internal/config"
+	"fabric/internal/config"
 	"os"
 	"path/filepath"
 
