@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	sensitiveopenai "fabric/business/sensitive/openai"
 	coreopenai "fabric/core/providers/openai"
 	coreproxy "fabric/core/proxy"
 
@@ -148,7 +149,7 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	if err != nil {
 		zap.S().Errorf("Error catched: decode response body for output detection error: %v, content_type=%q, content_encoding=%q, raw_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(rawBody, 128))
 	} else {
-		outputTexts, err := extractOpenAIOutputTexts(resp.Request, decodedBody)
+		outputTexts, err := sensitiveopenai.ExtractOutputTexts(resp.Request, decodedBody)
 		if err != nil {
 			zap.S().Errorf("Error catched: extract openai output texts error: %v, content_type=%q, decoded_body_prefix=%q", err, contentType, bodyPrefix(decodedBody, 128))
 		} else if detectPrompts(resp.Request.Context(), outputTexts, p.textPolicy) {
@@ -214,7 +215,7 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	}
 
 	// parse request and apply text policy
-	parsedReq, err := parseOpenAIPromptRequest(r)
+	parsedReq, err := sensitiveopenai.ExtractPromptRequest(r)
 	if err != nil {
 		zap.S().Errorf("Error catched: parse openai prompt request error: %v", err)
 		http.Error(w, "invalid request body", http.StatusBadRequest)

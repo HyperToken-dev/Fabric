@@ -2,7 +2,6 @@ package sensitive
 
 import (
 	"bufio"
-	"fabric/internal/config"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,17 +23,6 @@ func NewDetector(words []string) *Detector {
 		words:   words,
 		matcher: ahocorasick.NewStringMatcher(words),
 	}
-}
-
-func LoadWordsFromConfig(cfg *config.Config) ([]string, error) {
-	path := filepath.Join(cfg.WorkDir, "stwd")
-	if isPathExists, err := checkDirExists(path); err == nil {
-		if !isPathExists {
-			path = filepath.Join(cfg.RunPath, "configs", "stwd")
-		}
-	}
-
-	return LoadWordsFromDir(path)
 }
 
 func LoadWordsFromDir(path string) ([]string, error) {
@@ -105,15 +93,4 @@ func removeDuplicateStrings(inputSlice []string) (resultSlice []string) {
 		}
 	}
 	return resultSlice
-}
-
-func checkDirExists(path string) (isExist bool, err error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return info.IsDir(), nil
 }

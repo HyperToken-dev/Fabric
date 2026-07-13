@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"fabric/business/sensitive"
 	"fabric/internal/config"
 	"fabric/internal/repository"
 	"fabric/internal/router"
@@ -15,7 +16,6 @@ import (
 	"fabric/internal/service"
 	"fabric/internal/storage/postgres"
 	"fabric/logger"
-	"fabric/sensitive"
 
 	pbconnect "fabric/gen/protoconnect"
 
@@ -72,7 +72,7 @@ func main() {
 	// init sensitive word detect
 	var textPolicy TextPolicy = NoopTextPolicy{}
 	if cfg.SensitiveWD {
-		words, err := sensitive.LoadWordsFromConfig(cfg)
+		words, err := sensitive.LoadWordsFromDir(sensitiveWordsPath(cfg.WorkDir, cfg.RunPath))
 		if err != nil {
 			zap.S().Fatalf("load sensitive words error: %v", err)
 		}
@@ -153,4 +153,12 @@ func runMigrations(databaseURL string) error {
 		return fmt.Errorf("migrate up: %w", err)
 	}
 	return nil
+}
+
+func sensitiveWordsPath(workDir, runPath string) string {
+	path := filepath.Join(workDir, "stwd")
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+	return filepath.Join(runPath, "configs", "stwd")
 }

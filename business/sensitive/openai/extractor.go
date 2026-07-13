@@ -1,8 +1,7 @@
-package main
+package openai
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,7 @@ import (
 	"strings"
 )
 
-type parsedPromptRequest struct {
+type PromptRequest struct {
 	Model   string
 	Stream  bool
 	Prompts []string
@@ -27,7 +26,7 @@ type openAIContentPart struct {
 	Text string `json:"text"`
 }
 
-func parseOpenAIPromptRequest(req *http.Request) (*parsedPromptRequest, error) {
+func ExtractPromptRequest(req *http.Request) (*PromptRequest, error) {
 	body, err := readAndRestoreRequestBody(req)
 	if err != nil {
 		return nil, err
@@ -67,7 +66,7 @@ func readAndRestoreRequestBody(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
-func parseOpenAIChatPromptRequest(body []byte) (*parsedPromptRequest, error) {
+func parseOpenAIChatPromptRequest(body []byte) (*PromptRequest, error) {
 	var req struct {
 		Model    string          `json:"model"`
 		Stream   bool            `json:"stream"`
@@ -82,10 +81,10 @@ func parseOpenAIChatPromptRequest(body []byte) (*parsedPromptRequest, error) {
 		prompts = appendPromptTextsFromRawContent(prompts, message.Content)
 	}
 
-	return &parsedPromptRequest{Model: req.Model, Stream: req.Stream, Prompts: prompts}, nil
+	return &PromptRequest{Model: req.Model, Stream: req.Stream, Prompts: prompts}, nil
 }
 
-func parseOpenAIResponsesPromptRequest(body []byte) (*parsedPromptRequest, error) {
+func parseOpenAIResponsesPromptRequest(body []byte) (*PromptRequest, error) {
 	var req struct {
 		Model        string          `json:"model"`
 		Input        json.RawMessage `json:"input"`
@@ -101,17 +100,17 @@ func parseOpenAIResponsesPromptRequest(body []byte) (*parsedPromptRequest, error
 	}
 	prompts = appendPromptTextsFromRawContent(prompts, req.Input)
 
-	return &parsedPromptRequest{Model: req.Model, Prompts: prompts}, nil
+	return &PromptRequest{Model: req.Model, Prompts: prompts}, nil
 }
 
-func parseOpenAIGenericPromptRequest(body []byte) (*parsedPromptRequest, error) {
+func parseOpenAIGenericPromptRequest(body []byte) (*PromptRequest, error) {
 	var req struct {
 		Model string `json:"model"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
 	}
-	return &parsedPromptRequest{Model: req.Model}, nil
+	return &PromptRequest{Model: req.Model}, nil
 }
 
 func appendPromptTextsFromRawContent(prompts []string, raw json.RawMessage) []string {
@@ -155,7 +154,7 @@ func appendPromptTextsFromRawObject(prompts []string, raw json.RawMessage) []str
 	return prompts
 }
 
-func extractOpenAIOutputTexts(req *http.Request, body []byte) ([]string, error) {
+func ExtractOutputTexts(req *http.Request, body []byte) ([]string, error) {
 	switch {
 	case strings.Contains(req.URL.Path, "/v1/chat/completions"):
 		return extractOpenAIChatOutputTexts(body)
@@ -206,19 +205,4 @@ func extractOpenAIResponsesOutputTexts(body []byte) ([]string, error) {
 		}
 	}
 	return texts, nil
-}
-
-func detectPrompts(ctx context.Context, prompts []string, policy TextPolicy) bool {
-	if policy == nil {
-		policy = NoopTextPolicy{}
-	}
-	for _, prompt := range prompts {
-		if strings.TrimSpace(prompt) == "" {
-			continue
-		}
-		if policy.Rejects(ctx, prompt) {
-			return true
-		}
-	}
-	return false
 }

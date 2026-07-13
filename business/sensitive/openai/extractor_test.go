@@ -1,4 +1,4 @@
-package main
+package openai
 
 import (
 	"io"
@@ -19,7 +19,7 @@ func TestParseOpenAIChatPromptRequest(t *testing.T) {
 	}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 
-	parsed, err := parseOpenAIPromptRequest(req)
+	parsed, err := ExtractPromptRequest(req)
 	if err != nil {
 		t.Fatalf("parseOpenAIPromptRequest returned error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestParseOpenAIResponsesPromptRequest(t *testing.T) {
 	}`
 	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
 
-	parsed, err := parseOpenAIPromptRequest(req)
+	parsed, err := ExtractPromptRequest(req)
 	if err != nil {
 		t.Fatalf("parseOpenAIPromptRequest returned error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestParseOpenAIResponsesPromptRequestWithStringInput(t *testing.T) {
 	body := `{"model":"gpt-4.1-mini","input":"plain input"}`
 	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
 
-	parsed, err := parseOpenAIPromptRequest(req)
+	parsed, err := ExtractPromptRequest(req)
 	if err != nil {
 		t.Fatalf("parseOpenAIPromptRequest returned error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestParseOpenAIResponsesPromptRequestWithStringInput(t *testing.T) {
 func TestParseOpenAIPromptRequestInvalidJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{`))
 
-	_, err := parseOpenAIPromptRequest(req)
+	_, err := ExtractPromptRequest(req)
 	if err == nil {
 		t.Fatal("parseOpenAIPromptRequest returned nil error, want error")
 	}
@@ -97,7 +97,7 @@ func TestExtractOpenAIChatOutputTexts(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
 
-	texts, err := extractOpenAIOutputTexts(req, body)
+	texts, err := ExtractOutputTexts(req, body)
 	if err != nil {
 		t.Fatalf("extractOpenAIOutputTexts returned error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestExtractOpenAIResponsesOutputTexts(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/responses", nil)
 
-	texts, err := extractOpenAIOutputTexts(req, body)
+	texts, err := ExtractOutputTexts(req, body)
 	if err != nil {
 		t.Fatalf("extractOpenAIOutputTexts returned error: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestExtractOpenAIResponsesOutputTexts(t *testing.T) {
 func TestExtractOpenAIOutputTextsInvalidJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
 
-	_, err := extractOpenAIOutputTexts(req, []byte(`{`))
+	_, err := ExtractOutputTexts(req, []byte(`{`))
 	if err == nil {
 		t.Fatal("extractOpenAIOutputTexts returned nil error, want error")
 	}
