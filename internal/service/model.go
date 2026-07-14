@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"database/sql"
+
 	proto "fabric/gen"
 	"fabric/internal/repository"
+
+	"go.uber.org/zap"
 )
 
 type ModelService struct {
@@ -25,8 +28,10 @@ func NewModelService(db *sql.DB) *ModelService {
 func (m *ModelService) GetModelInfo(ctx context.Context, req *proto.GetModelInfoRequest) (*proto.GetModelInfoResponse, error) {
 	model, err := m.queries.GetModelById(ctx, req.ModelId)
 	if err != nil {
+		zap.L().Error("get model info failed", zap.Error(err), zap.Int32("model_id", req.ModelId))
 		return nil, err
 	}
+	zap.L().Info("model info retrieved", zap.Int32("model_id", model.ID), zap.String("model_name", model.ModelName), zap.Int32("channel_id", model.ChannelID), zap.Int16("status", model.Status))
 	return &proto.GetModelInfoResponse{
 		Model: modelToProto(model),
 	}, nil
@@ -49,20 +54,24 @@ func (m *ModelService) CreateModel(ctx context.Context, req *proto.CreateModelRe
 		ModelType: modelType,
 	})
 	if err != nil {
+		zap.L().Error("create model failed", zap.Error(err), zap.Int32("channel_id", req.ChannelId), zap.String("model_name", req.ModelName), zap.Int16("status", status), zap.Int32("model_type", modelType))
 		return nil, err
 	}
+	zap.L().Info("model created", zap.Int32("model_id", model.ID), zap.String("model_name", model.ModelName), zap.Int32("channel_id", model.ChannelID), zap.Int16("status", model.Status), zap.Int32("model_type", model.ModelType))
 	return &proto.CreateModelResponse{Model: modelToProto(model)}, nil
 }
 
 func (m *ModelService) ListModels(ctx context.Context, req *proto.ListModelsRequest) (*proto.ListModelsResponse, error) {
 	models, err := m.queries.ListModelsByChannel(ctx, req.ChannelId)
 	if err != nil {
+		zap.L().Error("list models failed", zap.Error(err), zap.Int32("channel_id", req.ChannelId))
 		return nil, err
 	}
 	var modelProtos []*proto.Model = make([]*proto.Model, len(models))
 	for idx, model := range models {
 		modelProtos[idx] = modelToProto(model)
 	}
+	zap.L().Info("models listed", zap.Int32("channel_id", req.ChannelId), zap.Int("count", len(modelProtos)))
 	return &proto.ListModelsResponse{
 		Models: modelProtos,
 	}, nil

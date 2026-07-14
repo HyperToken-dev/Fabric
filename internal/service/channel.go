@@ -7,6 +7,7 @@ import (
 	proto "fabric/gen"
 	"fabric/internal/repository"
 
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -21,6 +22,7 @@ func NewChannelService(db *sql.DB) *ChannelService {
 func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChannelsRequest) (*proto.ListChannelsResponse, error) {
 	rows, err := s.queries.ListChannels(ctx)
 	if err != nil {
+		zap.L().Error("list channels failed", zap.Error(err))
 		return nil, err
 	}
 
@@ -28,12 +30,14 @@ func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChanne
 	for i, r := range rows {
 		channels[i] = channelToProto(r)
 	}
+	zap.L().Info("channels listed", zap.Int("count", len(channels)))
 	return &proto.ListChannelsResponse{Channels: channels}, nil
 }
 
 func (s *ChannelService) ListActiveChannels(ctx context.Context, req *proto.ListActiveChannelsRequest) (*proto.ListChannelsResponse, error) {
 	rows, err := s.queries.ListActiveChannels(ctx)
 	if err != nil {
+		zap.L().Error("list active channels failed", zap.Error(err))
 		return nil, err
 	}
 
@@ -41,6 +45,7 @@ func (s *ChannelService) ListActiveChannels(ctx context.Context, req *proto.List
 	for i, r := range rows {
 		channels[i] = channelToProto(r)
 	}
+	zap.L().Info("active channels listed", zap.Int("count", len(channels)))
 	return &proto.ListChannelsResponse{Channels: channels}, nil
 }
 
@@ -52,8 +57,10 @@ func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateCha
 		ApiFormat:   req.ApiFormat,
 	})
 	if err != nil {
+		zap.L().Error("create channel failed", zap.Error(err), zap.String("channel_name", req.ChannelName), zap.String("base_url", req.BaseUrl), zap.Int32("api_format", req.ApiFormat))
 		return nil, err
 	}
+	zap.L().Info("channel created", zap.Int32("channel_id", repoChannel.ID), zap.String("channel_name", repoChannel.ChannelName), zap.String("base_url", repoChannel.BaseUrl), zap.Int32("api_format", repoChannel.ApiFormat))
 	return &proto.CreateChannelResponse{
 		Channel: channelToProto(repoChannel),
 	}, nil

@@ -14,7 +14,7 @@ service UsageService {
 }
 
 message UsageLog {
-    int32 usage_id = 1;
+    string usage_id = 1;
     int32 key_id = 2;
     int32 model_id = 3;
     int32 channel_id = 4;

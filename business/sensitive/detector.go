@@ -2,95 +2,152 @@ package sensitive
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/cloudflare/ahocorasick"
-	"go.uber.org/zap"
 )
 
+type Dictionary struct {
+	Name         string
+	Words        []string
+	EffectModels []string
+}
+
+type Match struct {
+	Dictionary string
+	Words      []string
+}
+
+type Result struct {
+	Matches []Match
+}
+
+func (r Result) Rejected() bool {
+	return len(r.Matches) > 0
+}
+
 type Detector struct {
-	words   []string
-	matcher *ahocorasick.Matcher
+	dictionaries []compiledDictionary
 }
 
-func NewDetector(words []string) *Detector {
+type compiledDictionary struct {
+	name         string
+	words        []string
+	effectModels map[string]struct{}
+	matcher      *ahocorasick.Matcher
+}
+
+func LoadDictionary(name, path string, effectModels []string) (Dictionary, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Dictionary{}, fmt.Errorf("open sensitive dictionary %q: %w", path, err)
+	}
+
+	var words []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		word := strings.TrimSpace(scanner.Text())
+		if word != "" {
+			words = append(words, word)
+		}
+	}
+	scanErr := scanner.Err()
+	closeErr := file.Close()
+	if scanErr != nil || closeErr != nil {
+		return Dictionary{}, errors.Join(scanErr, closeErr)
+	}
+
 	words = removeDuplicateStrings(words)
-	return &Detector{
-		words:   words,
-		matcher: ahocorasick.NewStringMatcher(words),
+	if len(words) == 0 {
+		return Dictionary{}, fmt.Errorf("sensitive dictionary %q contains no usable words", path)
 	}
+	return Dictionary{
+		Name:         name,
+		Words:        words,
+		EffectModels: append([]string(nil), effectModels...),
+	}, nil
 }
 
-func LoadWordsFromDir(path string) ([]string, error) {
-	words := make([]string, 0)
+func NewDetector(dicts ...Dictionary) (*Detector, error) {
+	compiled := make([]compiledDictionary, 0, len(dicts))
+	for _, dict := range dicts {
+		if strings.TrimSpace(dict.Name) == "" {
+			return nil, errors.New("sensitive dictionary name is required")
+		}
 
-	if dirExternal, errExternal := os.ReadDir(path); errExternal == nil {
-		for _, file := range dirExternal {
-			isMatch, _ := regexp.MatchString(`(?i)\.txt$`, file.Name())
-			if !isMatch {
+		words := normalizeNonEmptyStrings(dict.Words)
+		if len(words) == 0 {
+			return nil, fmt.Errorf("sensitive dictionary %q contains no usable words", dict.Name)
+		}
+
+		models := make(map[string]struct{})
+		for _, model := range removeDuplicateStrings(normalizeNonEmptyStrings(dict.EffectModels)) {
+			models[model] = struct{}{}
+		}
+		compiled = append(compiled, compiledDictionary{
+			name:         dict.Name,
+			words:        words,
+			effectModels: models,
+			matcher:      ahocorasick.NewStringMatcher(words),
+		})
+	}
+	return &Detector{dictionaries: compiled}, nil
+}
+
+func (d *Detector) Detect(model, text string) Result {
+	if d == nil {
+		return Result{}
+	}
+
+	var result Result
+	for _, dict := range d.dictionaries {
+		if len(dict.effectModels) > 0 {
+			if _, applies := dict.effectModels[model]; !applies {
 				continue
 			}
-			filePath := filepath.Join(path, file.Name())
-			fileObj, err := os.Open(filePath)
-			if err != nil {
-				zap.S().Warnf("Failed to read sensitive dictionary %s: %v", path, err)
+		}
+
+		indices := dict.matcher.Match([]byte(text))
+		if len(indices) == 0 {
+			continue
+		}
+		words := make([]string, 0, len(indices))
+		seen := make(map[int]struct{}, len(indices))
+		for _, index := range indices {
+			if _, exists := seen[index]; exists {
 				continue
 			}
-
-			scanner := bufio.NewScanner(fileObj)
-			for scanner.Scan() {
-				word := strings.TrimSpace(scanner.Text())
-				if word == "" {
-					continue
-				}
-				words = append(words, word)
-			}
-
-			err = fileObj.Close()
-			if err != nil {
-				return nil, fmt.Errorf("Failed to close external sensitive dictionary: %v", err)
-			}
-
-			if err := scanner.Err(); err != nil {
-				zap.S().Warnf("Failed to read sensitive dictionary %s: %v", path, err)
-			}
+			seen[index] = struct{}{}
+			words = append(words, dict.words[index])
 		}
-	} else {
-		zap.S().Warnf("Failed to read external sensitive dictionary: %v.", errExternal)
+		result.Matches = append(result.Matches, Match{Dictionary: dict.name, Words: words})
 	}
-
-	return removeDuplicateStrings(words), nil
+	return result
 }
 
-func (d *Detector) Detect(sentence string) bool {
-	if d == nil || d.matcher == nil {
-		return false
-	}
-	hitIndices := d.matcher.Match([]byte(sentence))
-	if len(hitIndices) > 0 {
-		var strBuilder strings.Builder
-		fmt.Fprintf(&strBuilder, "Detected %d sensitive keyword(s) for sentence:\n %s.\n", len(hitIndices), sentence)
-		for _, index := range hitIndices {
-			matchedWord := d.words[index]
-			fmt.Fprintf(&strBuilder, "- Blocked by: [%s]\n", matchedWord)
+func normalizeNonEmptyStrings(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			normalized = append(normalized, value)
 		}
-		zap.S().Info(strBuilder.String())
-		return true
 	}
-	return false
+	return removeDuplicateStrings(normalized)
 }
 
-func removeDuplicateStrings(inputSlice []string) (resultSlice []string) {
-	seenMap := make(map[string]bool)
-	for _, strVal := range inputSlice {
-		if !seenMap[strVal] {
-			seenMap[strVal] = true
-			resultSlice = append(resultSlice, strVal)
+func removeDuplicateStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
 		}
+		seen[value] = struct{}{}
+		result = append(result, value)
 	}
-	return resultSlice
+	return result
 }

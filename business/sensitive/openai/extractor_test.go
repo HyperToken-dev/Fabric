@@ -38,6 +38,21 @@ func TestParseOpenAIChatPromptRequest(t *testing.T) {
 	if string(restored) != body {
 		t.Fatalf("restored body = %q, want %q", string(restored), body)
 	}
+	if req.GetBody == nil {
+		t.Fatal("GetBody was not restored")
+	}
+	again, err := req.GetBody()
+	if err != nil {
+		t.Fatalf("GetBody() error = %v", err)
+	}
+	defer again.Close()
+	gotAgain, err := io.ReadAll(again)
+	if err != nil {
+		t.Fatalf("read GetBody(): %v", err)
+	}
+	if string(gotAgain) != body {
+		t.Fatalf("GetBody() body = %q, want %q", gotAgain, body)
+	}
 }
 
 func TestParseOpenAIResponsesPromptRequest(t *testing.T) {
@@ -88,6 +103,53 @@ func TestParseOpenAIPromptRequestInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestExtractPromptRequestMissingBody(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/responses", nil)
+	req.Body = nil
+
+	_, err := ExtractPromptRequest(req)
+	if err == nil {
+		t.Fatal("ExtractPromptRequest() error = nil, want error")
+	}
+}
+
+func TestParseOpenAIGenericPromptRequest(t *testing.T) {
+	body := `{"model":"gpt-4.1"}`
+	req := httptest.NewRequest("POST", "/v1/embeddings", strings.NewReader(body))
+
+	parsed, err := ExtractPromptRequest(req)
+	if err != nil {
+		t.Fatalf("ExtractPromptRequest() error = %v", err)
+	}
+	if parsed.Model != "gpt-4.1" {
+		t.Fatalf("model = %q, want gpt-4.1", parsed.Model)
+	}
+	if len(parsed.Prompts) != 0 {
+		t.Fatalf("prompts = %#v, want empty", parsed.Prompts)
+	}
+}
+
+func TestParseOpenAIChatPromptRequestNestedContentAndEmptyText(t *testing.T) {
+	body := `{
+		"model":"gpt-4.1",
+		"messages":[
+			{"role":"user","content":[{"content":[{"text":"nested text"},{"text":"   "}]}]},
+			{"role":"user","content":"   "},
+			{"role":"user","content":null}
+		]
+	}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+
+	parsed, err := ExtractPromptRequest(req)
+	if err != nil {
+		t.Fatalf("ExtractPromptRequest() error = %v", err)
+	}
+	want := []string{"nested text"}
+	if !reflect.DeepEqual(parsed.Prompts, want) {
+		t.Fatalf("prompts = %#v, want %#v", parsed.Prompts, want)
+	}
+}
+
 func TestExtractOpenAIChatOutputTexts(t *testing.T) {
 	body := []byte(`{
 		"choices":[
@@ -132,5 +194,34 @@ func TestExtractOpenAIOutputTextsInvalidJSON(t *testing.T) {
 	_, err := ExtractOutputTexts(req, []byte(`{`))
 	if err == nil {
 		t.Fatal("extractOpenAIOutputTexts returned nil error, want error")
+	}
+}
+
+func TestExtractOutputTextsUnknownPath(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/embeddings", nil)
+
+	texts, err := ExtractOutputTexts(req, []byte(`{`))
+	if err != nil {
+		t.Fatalf("ExtractOutputTexts() error = %v", err)
+	}
+	if texts != nil {
+		t.Fatalf("texts = %#v, want nil", texts)
+	}
+}
+
+func TestExtractOpenAIResponsesOutputTextsSkipsWhitespace(t *testing.T) {
+	body := []byte(`{
+		"output_text":"   ",
+		"output":[{"content":[{"type":"output_text","text":"kept"},{"type":"output_text","text":"  "}]}]
+	}`)
+	req := httptest.NewRequest("POST", "/v1/responses", nil)
+
+	texts, err := ExtractOutputTexts(req, body)
+	if err != nil {
+		t.Fatalf("ExtractOutputTexts() error = %v", err)
+	}
+	want := []string{"kept"}
+	if !reflect.DeepEqual(texts, want) {
+		t.Fatalf("texts = %#v, want %#v", texts, want)
 	}
 }

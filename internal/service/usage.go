@@ -10,6 +10,7 @@ import (
 	proto "fabric/gen"
 	"fabric/internal/repository"
 
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -28,8 +29,10 @@ func (s *UsageService) GetUsageByKeyID(ctx context.Context, req *proto.GetUsageB
 		Offset: 0,
 	})
 	if err != nil {
+		zap.L().Error("get usage by key id failed", zap.Error(err), zap.Int32("key_id", req.KeyId))
 		return nil, err
 	}
+	zap.L().Info("usage logs retrieved by key id", zap.Int32("key_id", req.KeyId), zap.Int("count", len(logs)))
 	return &proto.GetUsageResponse{UsageLog: repoLogsToProto(logs)}, nil
 }
 
@@ -40,8 +43,10 @@ func (s *UsageService) GetUsageByKeyHash(ctx context.Context, req *proto.GetUsag
 		Offset:  0,
 	})
 	if err != nil {
+		zap.L().Error("get usage by key hash failed", zap.Error(err), zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)))
 		return nil, err
 	}
+	zap.L().Info("usage logs retrieved by key hash", zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)), zap.Int("count", len(logs)))
 	return &proto.GetUsageResponse{UsageLog: repoLogsToProto(logs)}, nil
 }
 
@@ -52,13 +57,25 @@ func (s *UsageService) GetUsageByChannelID(ctx context.Context, req *proto.GetUs
 		Offset:    0,
 	})
 	if err != nil {
+		zap.L().Error("get usage by channel id failed", zap.Error(err), zap.Int32("channel_id", req.ChannelId))
 		return nil, err
 	}
+	zap.L().Info("usage logs retrieved by channel id", zap.Int32("channel_id", req.ChannelId), zap.Int("count", len(logs)))
 	return &proto.GetUsageResponse{UsageLog: repoLogsToProto(logs)}, nil
 }
 
 func (s *UsageService) GetUsageByModelID(ctx context.Context, req *proto.GetUsageByModelIDRequest) (*proto.GetUsageResponse, error) {
-	return &proto.GetUsageResponse{}, nil
+	logs, err := s.queries.GetUsageLogsByModelID(ctx, repository.GetUsageLogsByModelIDParams{
+		ModelID: req.ModelId,
+		Limit:   100,
+		Offset:  0,
+	})
+	if err != nil {
+		zap.L().Error("get usage by model id failed", zap.Error(err), zap.Int32("model_id", req.ModelId))
+		return nil, err
+	}
+	zap.L().Info("usage logs retrieved by model id", zap.Int32("model_id", req.ModelId), zap.Int("count", len(logs)))
+	return &proto.GetUsageResponse{UsageLog: repoLogsToProto(logs)}, nil
 }
 
 func (s *UsageService) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *proto.GetUsageByDeadlineAndKeyHashRequest) (*proto.GetUsageResponse, error) {
@@ -67,12 +84,13 @@ func (s *UsageService) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *pr
 		deadline = req.Deadline.AsTime()
 	}
 
-	stats, err := s.queries.GetUsageStatsByKey(ctx, repository.GetUsageStatsByKeyParams{
-		KeyID:   0,
+	stats, err := s.queries.GetUsageStatsByKeyHash(ctx, repository.GetUsageStatsByKeyHashParams{
+		KeyHash: sql.NullString{String: req.KeyHash, Valid: true},
 		Column2: deadline,
 		Column3: time.Now().UTC(),
 	})
 	if err != nil {
+		zap.L().Error("get usage stats by key hash failed", zap.Error(err), zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)), zap.Time("deadline", deadline))
 		return nil, err
 	}
 
@@ -84,12 +102,14 @@ func (s *UsageService) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *pr
 			CompletionTokens: fmt.Sprintf("%d", stat.TotalCompletionTokens),
 		})
 	}
+	zap.L().Info("usage stats retrieved by key hash", zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)), zap.Time("deadline", deadline), zap.Int("count", len(pbLogs)))
 	return &proto.GetUsageResponse{UsageLog: pbLogs}, nil
 }
 
 func (s *UsageService) GetUsageSummary(ctx context.Context, req *proto.GetUsageSummaryRequest) (*proto.GetUsageResponse, error) {
 	stats, err := s.queries.GetUsageStatsGlobal(ctx, repository.GetUsageStatsGlobalParams{})
 	if err != nil {
+		zap.L().Error("get usage summary failed", zap.Error(err))
 		return nil, err
 	}
 
@@ -99,6 +119,7 @@ func (s *UsageService) GetUsageSummary(ctx context.Context, req *proto.GetUsageS
 		totalCompletion += stat.TotalCompletionTokens
 	}
 
+	zap.L().Info("usage summary retrieved", zap.Int("count", len(stats)), zap.Int64("prompt_tokens", totalPrompt), zap.Int64("completion_tokens", totalCompletion))
 	return &proto.GetUsageResponse{
 		UsageLog: []*proto.UsageLog{{
 			PromptTokens:     fmt.Sprintf("%d", totalPrompt),
@@ -111,7 +132,7 @@ func repoLogsToProto(logs []repository.UsageLog) []*proto.UsageLog {
 	result := make([]*proto.UsageLog, len(logs))
 	for i, l := range logs {
 		result[i] = &proto.UsageLog{
-			UsageId:          int32(l.ID.ID()),
+			UsageId:          l.ID.String(),
 			KeyId:            l.KeyID,
 			ModelId:          l.ModelID,
 			ChannelId:        l.ChannelID,

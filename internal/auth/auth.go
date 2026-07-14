@@ -3,11 +3,14 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 )
 
 var bearerPrefix = "Bearer "
+
+var ErrMissingBearerToken = errors.New("missing bearer token")
 
 func HashKey(key string) string {
 	h := sha256.Sum256([]byte(key))
@@ -15,9 +18,13 @@ func HashKey(key string) string {
 }
 
 func ExtractKeyFromRequest(r *http.Request) (string, error) {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, bearerPrefix) {
-		return "", nil
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		return "", ErrMissingBearerToken
 	}
-	return auth[len(bearerPrefix):], nil
+	key := strings.TrimSpace(authHeader[len(bearerPrefix):])
+	if key == "" {
+		return "", ErrMissingBearerToken
+	}
+	return key, nil
 }

@@ -3,22 +3,32 @@ package main
 import (
 	"context"
 	"strings"
+
+	"fabric/business/sensitive"
+
+	"go.uber.org/zap"
+)
+
+type TextDirection string
+
+const (
+	TextDirectionInput  TextDirection = "input"
+	TextDirectionOutput TextDirection = "output"
 )
 
 // allow or reject a request that send to upstream provider or vice versa
 type TextPolicy interface {
-	// when return true, reject the req
-	Rejects(ctx context.Context, text string) bool
+	Detect(ctx context.Context, model, text string) sensitive.Result
 }
 
 // Default implements
 type NoopTextPolicy struct{}
 
-func (NoopTextPolicy) Rejects(ctx context.Context, text string) bool {
-	return false
+func (NoopTextPolicy) Detect(ctx context.Context, model, text string) sensitive.Result {
+	return sensitive.Result{}
 }
 
-func detectPrompts(ctx context.Context, prompts []string, policy TextPolicy) bool {
+func detectPrompts(ctx context.Context, model string, direction TextDirection, prompts []string, policy TextPolicy) bool {
 	if policy == nil {
 		policy = NoopTextPolicy{}
 	}
@@ -26,7 +36,14 @@ func detectPrompts(ctx context.Context, prompts []string, policy TextPolicy) boo
 		if strings.TrimSpace(prompt) == "" {
 			continue
 		}
-		if policy.Rejects(ctx, prompt) {
+		result := policy.Detect(ctx, model, prompt)
+		if result.Rejected() {
+			zap.L().Info("sensitive text rejected",
+				zap.String("direction", string(direction)),
+				zap.String("model", model),
+				zap.String("text", prompt),
+				zap.Any("matches", result.Matches),
+			)
 			return true
 		}
 	}

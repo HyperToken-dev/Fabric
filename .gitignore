@@ -1,6 +1,8 @@
 configs/
 gen/
+openspec/
 repository/
 .codegraph/
+.opencode
 
 codegraph.json

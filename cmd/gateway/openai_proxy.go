@@ -66,7 +66,7 @@ func NewOpenAIProxy(opts OpenAIProxyOptions) (*OpenAIProxy, error) {
 func (p *OpenAIProxy) rewrite(pr *httputil.ProxyRequest) {
 	if pr.Out.URL.Path == "/v1/chat/completions" && getContextBool(pr.In, ctxStreamKey) {
 		if err := injectOpenAIChatStreamOptions(pr.Out); err != nil {
-			zap.S().Errorf("Error catched: inject openai chat stream options error: %v", err)
+			zap.L().Error("inject openai chat stream options failed", zap.Error(err))
 		}
 	}
 }
@@ -128,6 +128,15 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 
 	// process SSE
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && isOpenAIUsageStream(resp.Request, resp.Header.Get("Content-Type")) {
+		zap.L().Info("openai upstream streaming response received",
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("content_type", resp.Header.Get("Content-Type")),
+			zap.String("content_encoding", resp.Header.Get("Content-Encoding")),
+			zap.Int32("key_id", keyID),
+			zap.Int32("channel_id", channelID),
+			zap.Int32("model_id", modelID),
+			zap.String("model", model),
+		)
 		resp.Body = p.usageHandler.WrapStreamingResponse(resp.Body, resp.Header.Get("Content-Encoding"), UsageContext{
 			KeyID:     keyID,
 			ChannelID: channelID,
@@ -145,17 +154,27 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	// all error in this function shouldn't return an error to client
 	// just log
 	if err != nil {
-		zap.S().Errorf("Error catched: upstream error: %v", err)
+		zap.L().Error("read upstream response body failed", zap.Error(err))
 		if closeErr != nil {
-			zap.S().Errorf("Error catched: upstream body close error: %v", closeErr)
+			zap.L().Error("close upstream response body failed", zap.Error(closeErr))
 		}
 		return nil
 	}
 	if closeErr != nil {
-		zap.S().Errorf("Error catched: upstream body close error: %v", closeErr)
+		zap.L().Error("close upstream response body failed", zap.Error(closeErr))
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(rawBody))
 	resp.ContentLength = int64(len(rawBody))
+	zap.L().Info("openai upstream response received",
+		zap.Int("status_code", resp.StatusCode),
+		zap.String("content_type", resp.Header.Get("Content-Type")),
+		zap.String("content_encoding", resp.Header.Get("Content-Encoding")),
+		zap.Int32("key_id", keyID),
+		zap.Int32("channel_id", channelID),
+		zap.Int32("model_id", modelID),
+		zap.String("model", model),
+		zap.Int("body_bytes", len(rawBody)),
+	)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil
 	}
@@ -163,12 +182,12 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	contentType := resp.Header.Get("Content-Type")
 	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
 	if err != nil {
-		zap.S().Errorf("Error catched: decode response body for output detection error: %v, content_type=%q, content_encoding=%q, raw_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(rawBody, 128))
+		zap.L().Error("decode response body for output detection failed", zap.Error(err), zap.String("content_type", contentType), zap.String("content_encoding", contentEncoding), zap.String("raw_body_prefix", bodyPrefix(rawBody, 128)))
 	} else {
 		outputTexts, err := sensitiveopenai.ExtractOutputTexts(resp.Request, decodedBody)
 		if err != nil {
-			zap.S().Errorf("Error catched: extract openai output texts error: %v, content_type=%q, decoded_body_prefix=%q", err, contentType, bodyPrefix(decodedBody, 128))
-		} else if detectPrompts(resp.Request.Context(), outputTexts, p.textPolicy) {
+			zap.L().Error("extract openai output texts failed", zap.Error(err), zap.String("content_type", contentType), zap.String("decoded_body_prefix", bodyPrefix(decodedBody, 128)))
+		} else if detectPrompts(resp.Request.Context(), model, TextDirectionOutput, outputTexts, p.textPolicy) {
 			rejectOpenAIOutputResponse(resp)
 		}
 	}
@@ -202,7 +221,7 @@ func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, 
 	defer cancel()
 
 	if modelID == 0 {
-		zap.S().Errorf("Error catched: missing resolved model id for non-streaming usage: key_id=%d, channel_id=%d, model=%q", keyID, channelID, model)
+		zap.L().Error("missing resolved model id for non-streaming usage", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", model))
 		return
 	}
 
@@ -212,9 +231,10 @@ func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, 
 		ModelID:   modelID,
 		Model:     model,
 	}); err != nil {
-		zap.S().Errorf("Error catched: process token usage error: %v, content_type=%q, content_encoding=%q, raw_body_prefix=%q", err, contentType, contentEncoding, bodyPrefix(rawBody, 128))
+		zap.L().Error("process token usage failed", zap.Error(err), zap.String("content_type", contentType), zap.String("content_encoding", contentEncoding), zap.String("raw_body_prefix", bodyPrefix(rawBody, 128)), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
 		return
 	}
+	zap.L().Info("non-streaming usage processed", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
 }
 
 func bodyPrefix(body []byte, maxLen int) string {
@@ -226,6 +246,7 @@ func bodyPrefix(body []byte, maxLen int) string {
 
 func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string) {
 	if strings.TrimSpace(providerKey) == "" {
+		zap.L().Error("missing provider key", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("method", r.Method), zap.String("path", r.URL.Path))
 		http.Error(w, "missing provider key", http.StatusBadGateway)
 		return
 	}
@@ -233,34 +254,47 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	// parse request and apply text policy
 	parsedReq, err := sensitiveopenai.ExtractPromptRequest(r)
 	if err != nil {
-		zap.S().Errorf("Error catched: parse openai prompt request error: %v", err)
+		zap.L().Error("parse openai prompt request failed", zap.Error(err), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("method", r.Method), zap.String("path", r.URL.Path))
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	modelName := parsedReq.Model
+	modelName := strings.TrimSpace(parsedReq.Model)
 	if modelName == "" {
+		zap.L().Warn("missing openai model", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("method", r.Method), zap.String("path", r.URL.Path))
 		http.Error(w, "missing model", http.StatusBadRequest)
 		return
 	}
-	if detectPrompts(r.Context(), parsedReq.Prompts, p.textPolicy) {
+	zap.L().Info("openai proxy request received",
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.Int32("key_id", keyID),
+		zap.Int32("channel_id", channelID),
+		zap.String("model", modelName),
+		zap.Bool("stream", parsedReq.Stream),
+	)
+	if detectPrompts(r.Context(), modelName, TextDirectionInput, parsedReq.Prompts, p.textPolicy) {
+		zap.L().Warn("openai prompt rejected", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName))
 		http.Error(w, "prompt rejected", http.StatusForbidden)
 		return
 	}
 	modelID, err := p.resolveModel(r.Context(), channelID, modelName)
 	if err != nil {
 		if err == errModelDisabled {
+			zap.L().Warn("openai model disabled", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName))
 			http.Error(w, "model disabled", http.StatusForbidden)
 			return
 		}
 		if err == errModelUnsupported {
+			zap.L().Warn("openai model unsupported", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName))
 			http.Error(w, "unsupported model", http.StatusBadRequest)
 			return
 		}
-		zap.S().Errorf("Error catched: resolve model error: %v", err)
+		zap.L().Error("resolve model failed", zap.Error(err), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName))
 		http.Error(w, "model lookup failed", http.StatusInternalServerError)
 		return
 	}
+	zap.L().Info("openai model resolved", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName), zap.Int32("model_id", modelID))
 
 	r = setContextInt32(r, ctxKeyID, keyID)
 	r = setContextInt32(r, ctxChannelID, channelID)

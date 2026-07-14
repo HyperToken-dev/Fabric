@@ -24,15 +24,36 @@ func newOpenAIUsageAdapter(store *postgres.ProxyStore) openAIUsageAdapter {
 func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext) io.ReadCloser {
 	return openaiusage.NewTrackingReader(body, contentEncoding, func(parsedUsage *usage.Usage) {
 		if info.ModelID == 0 {
-			zap.S().Errorf("Error catched: missing resolved model id for responses stream usage: key_id=%d, channel_id=%d, model=%q", info.KeyID, info.ChannelID, info.Model)
+			zap.L().Error("missing resolved model id for streaming usage",
+				zap.Int32("key_id", info.KeyID),
+				zap.Int32("channel_id", info.ChannelID),
+				zap.String("model", info.Model),
+			)
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := a.store.InsertUsage(ctx, info.KeyID, info.ChannelID, info.ModelID, parsedUsage.PromptTokens, parsedUsage.CompletionTokens); err != nil {
-			zap.S().Errorf("Error catched: insert responses stream usage log error: %v", err)
+			zap.L().Error("insert streaming usage log failed",
+				zap.Error(err),
+				zap.Int32("key_id", info.KeyID),
+				zap.Int32("channel_id", info.ChannelID),
+				zap.Int32("model_id", info.ModelID),
+				zap.String("model", info.Model),
+				zap.Int64("prompt_tokens", parsedUsage.PromptTokens),
+				zap.Int64("completion_tokens", parsedUsage.CompletionTokens),
+			)
+			return
 		}
+		zap.L().Info("streaming usage log inserted",
+			zap.Int32("key_id", info.KeyID),
+			zap.Int32("channel_id", info.ChannelID),
+			zap.Int32("model_id", info.ModelID),
+			zap.String("model", info.Model),
+			zap.Int64("prompt_tokens", parsedUsage.PromptTokens),
+			zap.Int64("completion_tokens", parsedUsage.CompletionTokens),
+		)
 	})
 }
 
@@ -45,5 +66,16 @@ func (a openAIUsageAdapter) ProcessNonStreamingResponse(ctx context.Context, raw
 	if err != nil {
 		return err
 	}
-	return a.store.InsertUsage(ctx, info.KeyID, info.ChannelID, info.ModelID, parsedUsage.PromptTokens, parsedUsage.CompletionTokens)
+	if err := a.store.InsertUsage(ctx, info.KeyID, info.ChannelID, info.ModelID, parsedUsage.PromptTokens, parsedUsage.CompletionTokens); err != nil {
+		return err
+	}
+	zap.L().Info("non-streaming usage log inserted",
+		zap.Int32("key_id", info.KeyID),
+		zap.Int32("channel_id", info.ChannelID),
+		zap.Int32("model_id", info.ModelID),
+		zap.String("model", info.Model),
+		zap.Int64("prompt_tokens", parsedUsage.PromptTokens),
+		zap.Int64("completion_tokens", parsedUsage.CompletionTokens),
+	)
+	return nil
 }

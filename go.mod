@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	connectrpc.com/connect v1.18.1
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/andybalholm/brotli v1.2.2
 	github.com/cloudflare/ahocorasick v0.0.0-20240916140611-054963ec9396
 	github.com/fsnotify/fsnotify v1.10.1

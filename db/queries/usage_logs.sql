@@ -25,6 +25,12 @@ WHERE channel_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
+-- name: GetUsageLogsByModelID :many
+SELECT * FROM usage_logs
+WHERE model_id = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+
 -- name: CountUsageLogsByChannel :one
 SELECT COUNT(*) FROM usage_logs WHERE channel_id = $1;
 
@@ -39,6 +45,20 @@ WHERE key_id = $1
   AND ($2::timestamptz IS NULL OR created_at >= $2)
   AND ($3::timestamptz IS NULL OR created_at <= $3)
 GROUP BY model_id
+ORDER BY request_count DESC;
+
+-- name: GetUsageStatsByKeyHash :many
+SELECT
+    usage_logs.model_id,
+    SUM(usage_logs.prompt_tokens)::bigint AS total_prompt_tokens,
+    SUM(usage_logs.completion_tokens)::bigint AS total_completion_tokens,
+    COUNT(*)::bigint AS request_count
+FROM usage_logs
+JOIN api_keys ON usage_logs.key_id = api_keys.id
+WHERE api_keys.key_hash = $1
+  AND ($2::timestamptz IS NULL OR usage_logs.created_at >= $2)
+  AND ($3::timestamptz IS NULL OR usage_logs.created_at <= $3)
+GROUP BY usage_logs.model_id
 ORDER BY request_count DESC;
 
 -- name: GetUsageStatsByChannel :many

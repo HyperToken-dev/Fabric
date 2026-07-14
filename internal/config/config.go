@@ -7,14 +7,15 @@ import (
 )
 
 type Config struct {
-	DB          DBConfig  `mapstructure:"db"`
-	Log         LogConfig `mapstructure:"log"`
-	SensitiveWD bool      `mapstructure:"sensitiveWordDetect"`
-	ProxyAddr   string    `mapstructure:"proxyAddr"`
-	AdminAddr   string    `mapstructure:"adminAddr"`
-	LogLevel    string    `mapstructure:"logLevel"`
-	WorkDir     string    `mapstructure:"-"`
-	RunPath     string    `mapstructure:"-"`
+	DB                    DBConfig                    `mapstructure:"db"`
+	Log                   LogConfig                   `mapstructure:"log"`
+	SensitiveWD           bool                        `mapstructure:"sensitiveWordDetect"`
+	SensitiveDictionaries []SensitiveDictionaryConfig `mapstructure:"sensitiveWordDictionaries"`
+	ProxyAddr             string                      `mapstructure:"proxyAddr"`
+	AdminAddr             string                      `mapstructure:"adminAddr"`
+	LogLevel              string                      `mapstructure:"logLevel"`
+	WorkDir               string                      `mapstructure:"-"`
+	RunPath               string                      `mapstructure:"-"`
 }
 
 func Load(workDir, runPath string) (*Config, error) {

@@ -86,11 +86,11 @@ func (r *responsesUsageTrackingReader) Read(p []byte) (int, error) {
 		switch r.contentEncoding {
 		case "", "identity":
 			if parseErr := r.parser.Write(p[:n]); parseErr != nil {
-				zap.S().Errorf("Error catched: parse responses stream usage error: %v", parseErr)
+				zap.L().Error("parse responses stream usage failed", zap.Error(parseErr))
 			}
 		case "gzip":
 			if _, writeErr := r.compressedBody.Write(p[:n]); writeErr != nil {
-				zap.S().Errorf("Error catched: buffer gzip responses stream usage data error: %v", writeErr)
+				zap.L().Error("buffer gzip responses stream usage data failed", zap.Error(writeErr))
 			}
 		}
 	}
@@ -112,7 +112,7 @@ func (r *responsesUsageTrackingReader) processUsage() {
 	}
 
 	if err := r.parser.Finish(); err != nil {
-		zap.S().Errorf("Error catched: finish responses stream usage parser error: %v", err)
+		zap.L().Error("finish responses stream usage parser failed", zap.Error(err))
 	}
 	r.emitUsage(r.parser.Usage())
 }
@@ -120,16 +120,16 @@ func (r *responsesUsageTrackingReader) processUsage() {
 func (r *responsesUsageTrackingReader) processEncodedUsage(compressedBody []byte) {
 	body, err := decodeResponseBody(compressedBody, r.contentEncoding)
 	if err != nil {
-		zap.S().Errorf("Error catched: decode responses stream usage body error: %v", err)
+		zap.L().Error("decode responses stream usage body failed", zap.Error(err), zap.String("content_encoding", r.contentEncoding))
 		return
 	}
 
 	var parser responsesSSEUsageParser
 	if err := parser.Write(body); err != nil {
-		zap.S().Errorf("Error catched: parse encoded responses stream usage error: %v", err)
+		zap.L().Error("parse encoded responses stream usage failed", zap.Error(err), zap.String("content_encoding", r.contentEncoding))
 	}
 	if err := parser.Finish(); err != nil {
-		zap.S().Errorf("Error catched: finish encoded responses stream usage parser error: %v", err)
+		zap.L().Error("finish encoded responses stream usage parser failed", zap.Error(err), zap.String("content_encoding", r.contentEncoding))
 	}
 	r.emitUsage(parser.Usage())
 }
