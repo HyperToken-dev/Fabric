@@ -169,7 +169,19 @@ db:
   maxLifeTime: 1h
 ```
 
-If you have not prepared sensitive-word dictionaries, set `sensitiveWordDetect: false` first. If you enable detection, prepare the corresponding dictionary files under `configs/stwd/`.
+If you have not prepared sensitive-word dictionaries, set `sensitiveWordDetect: false` first.
+
+To enable sensitive-word detection, configure rule-based dictionaries and prepare the corresponding files under `configs/stwd/`:
+
+```yaml
+sensitiveWordDetect: true
+sensitiveWordDictionaries:
+  - name: example_name
+    effectModels: [gpt-5.5]
+    keywordFileList: [st-01, st-02]
+```
+
+Each entry is a detection rule. `name` is required and is only used as a human-readable rule name in logs and match results. `effectModels` controls which models the rule applies to; leave it empty to apply the rule to all models. `keywordFileList` is required and lists keyword files under `configs/stwd/`, so `st-01` loads `configs/stwd/st-01.txt`. Each keyword file contains one keyword per line.
 
 ### 3. Start the Gateway
 

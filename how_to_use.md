@@ -61,15 +61,14 @@ If you have not prepared sensitive-word dictionaries, disable detection first:
 sensitiveWordDetect: false
 ```
 
-If you want to enable sensitive-word detection, configure dictionaries and prepare the corresponding files:
+If you want to enable sensitive-word detection, configure rule-based dictionaries and prepare the corresponding files:
 
 ```yaml
 sensitiveWordDetect: true
 sensitiveWordDictionaries:
-  - name: st-01
-    effectiveModels: [gpt-5.5]
-  - name: st-02
-    effectiveModels: [gpt-4o, gpt-4o-mini]
+  - name: example_name
+    effectModels: [gpt-5.5]
+    keywordFileList: [st-01, st-02]
 ```
 
 Dictionary file paths:
@@ -79,7 +78,7 @@ configs/stwd/st-01.txt
 configs/stwd/st-02.txt
 ```
 
-Each dictionary file contains one sensitive word per line. `effectiveModels` controls which models a dictionary applies to. If a dictionary does not specify model scope, the current detector logic can apply it to all models.
+Each entry is a detection rule. `name` is required and is only used as a human-readable rule name in logs and match results. `effectModels` controls which models the rule applies to; leave it empty to apply the rule to all models. `keywordFileList` is required and lists keyword files under `configs/stwd/`, so `st-01` loads `configs/stwd/st-01.txt`. Each keyword file contains one keyword per line.
 
 ### 1.3 Database
 
@@ -340,10 +339,9 @@ Sensitive-word detection is controlled by `sensitiveWordDetect`.
 ```yaml
 sensitiveWordDetect: true
 sensitiveWordDictionaries:
-  - name: st-01
-    effectiveModels: [gpt-5.5]
-  - name: st-02
-    effectiveModels: [gpt-4o, gpt-4o-mini]
+  - name: example_name
+    effectModels: [gpt-5.5]
+    keywordFileList: [st-01, st-02]
 ```
 
 Dictionary files live under:
@@ -358,7 +356,9 @@ Behavior:
 - Fabric checks input prompts before forwarding requests upstream.
 - Fabric checks non-streaming model outputs before returning responses.
 - If detection matches, the request or response is rejected.
-- `effectiveModels` controls which models a dictionary applies to.
+- `name` is required and is only used as a human-readable rule name in logs and match results.
+- `effectModels` controls which models a rule applies to; leave it empty to apply the rule to all models.
+- `keywordFileList` is required and lists keyword files under `configs/stwd/`, using the existing `.txt` suffix convention.
 
 ## 6. Library Usage
 
@@ -420,7 +420,7 @@ Usage flow:
 
 ### Startup fails because a sensitive-word dictionary file is missing
 
-If `sensitiveWordDetect: true`, Fabric loads `configs/stwd/<name>.txt` for each configured dictionary. Startup fails if a dictionary file does not exist.
+If `sensitiveWordDetect: true`, Fabric loads each file listed by `keywordFileList` from `configs/stwd/` using the `.txt` suffix convention. For example, `keywordFileList: [st-01]` loads `configs/stwd/st-01.txt`. Startup fails if a configured keyword file does not exist.
 
 Fix it by either:
 
