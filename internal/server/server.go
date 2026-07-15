@@ -87,6 +87,46 @@ func (s *Server) CreateChannel(ctx context.Context, req *connect.Request[gen.Cre
 	return connect.NewResponse(resp), nil
 }
 
+func (s *Server) UpdateChannelName(ctx context.Context, req *connect.Request[gen.UpdateChannelNameRequest]) (*connect.Response[gen.UpdateChannelResponse], error) {
+	resp, err := s.channelSvc.UpdateChannelName(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) UpdateChannelStatus(ctx context.Context, req *connect.Request[gen.UpdateChannelStatusRequest]) (*connect.Response[gen.UpdateChannelResponse], error) {
+	resp, err := s.channelSvc.UpdateChannelStatus(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) UpdateChannelBaseURL(ctx context.Context, req *connect.Request[gen.UpdateChannelBaseURLRequest]) (*connect.Response[gen.UpdateChannelResponse], error) {
+	resp, err := s.channelSvc.UpdateChannelBaseURL(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) UpdateChannelAPIFormat(ctx context.Context, req *connect.Request[gen.UpdateChannelAPIFormatRequest]) (*connect.Response[gen.UpdateChannelResponse], error) {
+	resp, err := s.channelSvc.UpdateChannelAPIFormat(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) UpdateChannelProviderKey(ctx context.Context, req *connect.Request[gen.UpdateChannelProviderKeyRequest]) (*connect.Response[gen.UpdateChannelResponse], error) {
+	resp, err := s.channelSvc.UpdateChannelProviderKey(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
 func (s *Server) GetModelInfo(ctx context.Context, req *connect.Request[gen.GetModelInfoRequest]) (*connect.Response[gen.GetModelInfoResponse], error) {
 	resp, err := s.modelSvc.GetModelInfo(ctx, req.Msg)
 	if err != nil {

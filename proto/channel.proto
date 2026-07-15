@@ -7,6 +7,11 @@ service ChannelService {
     rpc CreateChannel(CreateChannelRequest) returns(CreateChannelResponse);
     rpc ListChannels(ListChannelsRequest) returns(ListChannelsResponse);
     rpc ListActiveChannels(ListActiveChannelsRequest) returns(ListChannelsResponse);
+    rpc UpdateChannelName(UpdateChannelNameRequest) returns(UpdateChannelResponse);
+    rpc UpdateChannelStatus(UpdateChannelStatusRequest) returns(UpdateChannelResponse);
+    rpc UpdateChannelBaseURL(UpdateChannelBaseURLRequest) returns(UpdateChannelResponse);
+    rpc UpdateChannelAPIFormat(UpdateChannelAPIFormatRequest) returns(UpdateChannelResponse);
+    rpc UpdateChannelProviderKey(UpdateChannelProviderKeyRequest) returns(UpdateChannelResponse);
 }
 
 message Channel {
@@ -34,5 +39,34 @@ message CreateChannelRequest {
 }
 
 message CreateChannelResponse {
+    Channel channel = 1;
+}
+
+message UpdateChannelNameRequest {
+    int32 channel_id = 1;
+    string channel_name = 2;
+}
+
+message UpdateChannelStatusRequest {
+    int32 channel_id = 1;
+    int32 status = 2;
+}
+
+message UpdateChannelBaseURLRequest {
+    int32 channel_id = 1;
+    string base_url = 2;
+}
+
+message UpdateChannelAPIFormatRequest {
+    int32 channel_id = 1;
+    int32 api_format = 2;
+}
+
+message UpdateChannelProviderKeyRequest {
+    int32 channel_id = 1;
+    string provider_key = 2;
+}
+
+message UpdateChannelResponse {
     Channel channel = 1;
 }

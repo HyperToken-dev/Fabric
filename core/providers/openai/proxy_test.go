@@ -104,6 +104,35 @@ func TestProxyServeHTTPRejectsInvalidBaseURL(t *testing.T) {
 	}
 }
 
+func TestParseBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		wantErr bool
+	}{
+		{name: "root without slash", baseURL: "https://api.openai.com"},
+		{name: "root with slash", baseURL: "https://api.openai.com/"},
+		{name: "trim spaces", baseURL: " https://api.openai.com "},
+		{name: "empty", baseURL: "", wantErr: true},
+		{name: "missing scheme", baseURL: "api.openai.com", wantErr: true},
+		{name: "missing host", baseURL: "https://", wantErr: true},
+		{name: "path", baseURL: "https://api.openai.com/v1", wantErr: true},
+		{name: "path with slash", baseURL: "https://api.openai.com/v1/", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseBaseURL(tt.baseURL)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestProxyServeHTTPReturnsBadGatewayForUpstreamError(t *testing.T) {
 	p, err := New(Options{})
 	if err != nil {
