@@ -60,7 +60,7 @@ const ctxUpstreamTarget contextKey = "upstream_target"
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request, upstream coreproxy.Upstream) {
 	target, err := parseBaseURL(upstream.BaseURL)
 	if err != nil {
-		http.Error(w, "invalid upstream base url", http.StatusBadGateway)
+		http.Error(w, "invalid upstream base url: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 

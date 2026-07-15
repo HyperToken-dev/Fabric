@@ -1,0 +1,14 @@
+.git
+.codegraph
+.opencode
+openspec
+logs
+gateway
+Dockerfile
+dockerfile
+*.log
+.gitignore
+README.md
+how_to_use.md
+tmp
+coverage

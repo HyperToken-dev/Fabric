@@ -1,0 +1,25 @@
+proxyAddr: 3002
+adminAddr: 9090
+logLevel: info
+
+sensitiveWordDetect: false # When this is set to true, the configuration items below must be valid.
+sensitiveWordDictionaries:
+  - name: example_name
+    effectModels: [gpt-5.5, gpt-5.4]
+    keywordFileList: [st-01, st-02] # This will go to configs/stwd/st-01.txt
+
+db:
+  addr: postgres
+  user: root
+  port: 5432
+  dbName: fabric
+  password: "123456" # important!change your password when needed!
+  maxIdle: 20
+  maxOpen: 100
+  maxLifeTime: 1h
+
+log:
+  maxSize: 100
+  maxBackups: 10
+  maxAge: 30
+  compress: true
