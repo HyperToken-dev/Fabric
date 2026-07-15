@@ -17,7 +17,10 @@ Future provider support is planned, but current proxy code is OpenAI-focused.
 go build ./...              # build all packages
 go vet ./...                # vet all packages
 go test ./...               # run tests
-go run ./cmd/gateway        # start gateway; reads configs/config.yaml
+go run ./cmd/gateway        # start gateway locally; reads configs/config.yaml
+
+docker compose up -d        # start Fabric and PostgreSQL; uses configs/config.docker.yaml
+docker compose down         # stop Docker services
 
 make generate               # sqlc generate, then buf generate
 make build                  # generate, then go build ./...
@@ -40,8 +43,13 @@ buf generate                 # .proto -> Go (gen/)
 
 Two ports in one binary:
 
-- **Proxy** (`proxyAddr` in `configs/config.yaml`) - OpenAI-compatible proxy routes. Clients send gateway API keys via `Authorization: Bearer <key>`; the gateway resolves the configured channel/model credentials and forwards to upstream.
-- **Admin** (`adminAddr` in `configs/config.yaml`) - connect-go management APIs for API keys, channels, models, and usage logs.
+- **Proxy** (`proxyAddr`) - OpenAI-compatible proxy routes. Clients send gateway API keys via `Authorization: Bearer <key>`; the gateway resolves the configured channel/model credentials and forwards to upstream.
+- **Admin** (`adminAddr`) - connect-go management APIs for API keys, channels, models, and usage logs.
+
+Configuration paths depend on startup mode:
+
+- Local Go runs read `configs/config.yaml`.
+- Docker Compose uses tracked `configs/config.docker.yaml`, mounted by `compose.yaml` as `/app/configs/config.yaml` inside the Fabric container.
 
 Startup flow in `cmd/gateway/main.go`:
 
@@ -63,7 +71,7 @@ Startup flow in `cmd/gateway/main.go`:
 
 - Module path: `fabric`.
 - Go version: 1.26.4.
-- Configuration is YAML-based via Viper; primary config file is `configs/config.yaml`.
+- Configuration is YAML-based via Viper. Local runs use `configs/config.yaml`; Docker Compose uses `configs/config.docker.yaml` mounted as container `configs/config.yaml`.
 - The OpenAI proxy injects `stream_options.include_usage=true` for streaming chat completions so usage can be captured.
 - Sensitive-word detection is controlled by `sensitiveWordDetect` in config.
 
@@ -77,6 +85,8 @@ Startup flow in `cmd/gateway/main.go`:
 
 | Path                   | Purpose                                        |
 | ---------------------- | ---------------------------------------------- |
+| `compose.yaml`         | Docker Compose stack for Fabric + PostgreSQL   |
+| `Dockerfile`           | Multi-stage Docker build for the gateway       |
 | `cmd/gateway/`         | Binary entrypoint                              |
 | `core/proxy/`          | Provider-neutral proxy primitives              |
 | `core/providers/`      | Provider-specific core proxy implementations   |

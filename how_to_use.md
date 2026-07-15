@@ -6,11 +6,99 @@ This document explains how to use Fabric in detail, including running the integr
 
 ### 1.1 Requirements
 
-- Go 1.26.4
-- PostgreSQL
+- Docker and Docker Compose for the recommended startup path.
+- Go 1.26.4 and PostgreSQL only when running locally without Docker.
 - Access to an OpenAI-compatible upstream service
 
-### 1.2 Configuration
+### 1.2 Start with Docker Compose
+
+The recommended way to run Fabric from a fresh clone is Docker Compose:
+
+```bash
+git clone https://github.com/HyperToken-dev/Fabric.git
+cd Fabric
+docker compose up -d
+```
+
+Docker Compose builds the Fabric gateway image from `Dockerfile`, starts a PostgreSQL service, waits for PostgreSQL health checks, and then starts the gateway.
+
+Default servers:
+
+- Proxy Server: `http://localhost:3002`
+- Admin Server: `http://localhost:9090`
+
+Fabric runs migrations from `db/migrations/` during startup. The current migrations create and maintain these core tables:
+
+- `channels`
+- `api_keys`
+- `models`
+- `usage_logs`
+
+The migrations also seed an OpenAI channel and a set of OpenAI-compatible models. In real deployments, configure or create a channel with a real `provider_key` through the management API.
+
+### 1.3 Configuration Files
+
+Fabric's binary reads a file named `config.yaml`. Which file you edit depends on how you start Fabric:
+
+- **Docker Compose**: edit `configs/config.docker.yaml`. The tracked `compose.yaml` mounts it as `/app/configs/config.yaml` inside the Fabric container.
+- **Local Go run**: edit `configs/config.yaml`. This is the default file read by `go run ./cmd/gateway` from the repository.
+
+Docker users do not need to create a separate `configs/config.yaml` before starting Fabric.
+
+The Docker configuration currently looks like this:
+
+```yaml
+proxyAddr: 3002
+adminAddr: 9090
+logLevel: info
+
+sensitiveWordDetect: false
+sensitiveWordDictionaries:
+  - name: example_name
+    effectModels: [gpt-5.5, gpt-5.4]
+    keywordFileList: [st-01, st-02]
+
+db:
+  addr: postgres
+  user: root
+  port: 5432
+  dbName: fabric
+  password: "123456"
+  maxIdle: 20
+  maxOpen: 100
+  maxLifeTime: 1h
+
+log:
+  maxSize: 100
+  maxBackups: 10
+  maxAge: 30
+  compress: true
+```
+
+Configuration reference:
+
+- `proxyAddr`: proxy server listen port. Clients call OpenAI-compatible APIs through this port. Docker exposes it as `3002`.
+- `adminAddr`: admin server listen port. connect-go management APIs are exposed through this port. Docker exposes it as `9090`.
+- `logLevel`: logging level, for example `info`.
+- `sensitiveWordDetect`: enables or disables sensitive-word detection.
+- `sensitiveWordDictionaries`: list of sensitive-word detection rules used when detection is enabled.
+- `sensitiveWordDictionaries[].name`: rule name used in logs and match results.
+- `sensitiveWordDictionaries[].effectModels`: models this rule applies to. Leave it empty to apply the rule to all models.
+- `sensitiveWordDictionaries[].keywordFileList`: dictionary file base names under `configs/stwd/`. Do not include the `.txt` suffix.
+- `db.addr`: PostgreSQL host. In Docker Compose this is the service name `postgres`.
+- `db.user`: PostgreSQL user. In Docker Compose this must match `POSTGRES_USER` in `compose.yaml`.
+- `db.port`: PostgreSQL port.
+- `db.dbName`: PostgreSQL database name. In Docker Compose this must match `POSTGRES_DB` in `compose.yaml`.
+- `db.password`: PostgreSQL password. In Docker Compose this must match `POSTGRES_PASSWORD` in `compose.yaml`.
+- `db.maxIdle`: maximum idle database connections.
+- `db.maxOpen`: maximum open database connections.
+- `db.maxLifeTime`: maximum database connection lifetime.
+- `log.maxSize`: maximum size of one rotated log file.
+- `log.maxBackups`: maximum number of retained rotated log files.
+- `log.maxAge`: maximum age of retained log files.
+- `log.compress`: whether to compress rotated log files.
+
+### 1.4 Local Go Run
 
 Fabric reads `configs/config.yaml` by default. A typical configuration looks like this:
 
@@ -61,7 +149,7 @@ If you have not prepared sensitive-word dictionaries, disable detection first:
 sensitiveWordDetect: false
 ```
 
-If you want to enable sensitive-word detection, configure rule-based dictionaries and prepare the corresponding files:
+If you want to enable sensitive-word detection for local runs, configure rule-based dictionaries and prepare the corresponding files:
 
 ```yaml
 sensitiveWordDetect: true
@@ -80,7 +168,7 @@ configs/stwd/st-02.txt
 
 Each entry is a detection rule. `name` is required and is only used as a human-readable rule name in logs and match results. `effectModels` controls which models the rule applies to; leave it empty to apply the rule to all models. `keywordFileList` is required and lists keyword files under `configs/stwd/`, so `st-01` loads `configs/stwd/st-01.txt`. Each keyword file contains one keyword per line.
 
-### 1.3 Database
+#### Local Database
 
 Create the database:
 
@@ -97,15 +185,10 @@ Fabric runs migrations from `db/migrations/` during startup. The current migrati
 
 The migrations also seed an OpenAI channel and a set of OpenAI-compatible models. In real deployments, configure or create a channel with a real `provider_key` through the management API.
 
-### 1.4 Start
+#### Local Start
 
 ```bash
-go run ./cmd/gateway
-```
-
-Or:
-
-```bash
+make generate
 make run
 ```
 
@@ -118,9 +201,9 @@ Default servers:
 
 When running the integrated gateway directly, the recommended flow is:
 
-1. Prepare PostgreSQL.
-2. Update `configs/config.yaml`.
-3. Start Fabric.
+1. Clone the repository.
+2. Start Fabric with `docker compose up -d`.
+3. Confirm Proxy Server `http://localhost:3002` and Admin Server `http://localhost:9090` are reachable.
 4. Create or configure a Channel through the Admin API.
 5. Create a Model through the Admin API.
 6. Create a Gateway API Key through the Admin API.
@@ -334,31 +417,68 @@ Usage logs are associated with:
 
 ## 5. Model-Scoped Sensitive-Word Detection
 
-Sensitive-word detection is controlled by `sensitiveWordDetect`.
+Sensitive-word detection is controlled by `sensitiveWordDetect`. It is disabled by default in `configs/config.docker.yaml`:
+
+```yaml
+sensitiveWordDetect: false
+```
+
+### 5.1 Create Dictionary Files
+
+Dictionary files live under `configs/stwd/`. Create one `.txt` file per dictionary and put one keyword on each line:
+
+```bash
+cd configs/stwd
+```
+
+For example, create `blocked-words.txt`:
+
+```text
+badword1
+badword2
+badword3
+```
+
+Empty lines are ignored, and duplicate keywords are removed when the dictionary is loaded.
+
+### 5.2 Configure Docker Detection Rules
+
+Edit `configs/config.docker.yaml` and enable detection:
 
 ```yaml
 sensitiveWordDetect: true
 sensitiveWordDictionaries:
-  - name: example_name
+  - name: default-block-list
     effectModels: [gpt-5.5]
-    keywordFileList: [st-01, st-02]
+    keywordFileList: [blocked-words]
 ```
 
-Dictionary files live under:
+`keywordFileList` uses file base names without the `.txt` suffix. The example above loads:
 
 ```text
-configs/stwd/st-01.txt
-configs/stwd/st-02.txt
+configs/stwd/blocked-words.txt
 ```
 
-Behavior:
+Each entry under `sensitiveWordDictionaries` is a detection rule:
+
+- `name` is required and is used as a human-readable rule name in logs and match results.
+- `effectModels` controls which models the rule applies to. Use `effectModels: []` to apply the rule to all models.
+- `keywordFileList` is required and lists dictionary file base names under `configs/stwd/`.
+
+After changing `configs/config.docker.yaml` or dictionary files, restart the service:
+
+```bash
+docker compose up -d
+```
+
+### 5.3 Detection Behavior
 
 - Fabric checks input prompts before forwarding requests upstream.
 - Fabric checks non-streaming model outputs before returning responses.
-- If detection matches, the request or response is rejected.
-- `name` is required and is only used as a human-readable rule name in logs and match results.
-- `effectModels` controls which models a rule applies to; leave it empty to apply the rule to all models.
-- `keywordFileList` is required and lists keyword files under `configs/stwd/`, using the existing `.txt` suffix convention.
+- If an input prompt matches, Fabric returns `403` with `prompt rejected`.
+- If a non-streaming model output matches, Fabric returns `422` with `model output rejected, please change your prompt`.
+- Streaming output sensitive-word detection is not currently applied to streamed response chunks.
+- If `sensitiveWordDetect: true` and a configured dictionary file is missing or contains no usable words, startup fails.
 
 ## 6. Library Usage
 
@@ -411,10 +531,9 @@ Relevant directories:
 
 Usage flow:
 
-1. Prepare PostgreSQL.
-2. Update `configs/config.yaml`.
-3. Configure Channel, Model, and Gateway API Key through the Admin API.
-4. Let applications call the Fabric Proxy Server with OpenAI-compatible requests.
+1. Start with `docker compose up -d` or run locally with `go run ./cmd/gateway` after preparing PostgreSQL.
+2. Configure Channel, Model, and Gateway API Key through the Admin API.
+3. Let applications call the Fabric Proxy Server with OpenAI-compatible requests.
 
 ## 7. Troubleshooting
 
@@ -441,7 +560,18 @@ The Gateway API Key does not exist or has been revoked. Create a new API Key thr
 
 ### Database connection fails
 
-Check the `db` section in `configs/config.yaml`. Confirm PostgreSQL is running, the database exists, and the username/password are correct.
+For Docker Compose, check that PostgreSQL is healthy and that `configs/config.docker.yaml` matches the PostgreSQL environment in `compose.yaml`:
+
+- `db.addr` should be `postgres`.
+- `db.user` should match `POSTGRES_USER`.
+- `db.password` should match `POSTGRES_PASSWORD`.
+- `db.dbName` should match `POSTGRES_DB`.
+
+```bash
+docker compose ps
+```
+
+For local Go runs, check the `db` section in `configs/config.yaml`. Confirm PostgreSQL is running, the database exists, and the username/password are correct.
 
 ## 8. Development and Generation Commands
 
@@ -450,6 +580,9 @@ go build ./...
 go vet ./...
 go test ./...
 go run ./cmd/gateway
+
+docker compose up -d
+docker compose down
 
 make generate
 make build
