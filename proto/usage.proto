@@ -1,0 +1,57 @@
+syntax = "proto3";
+package proto;
+option go_package = "fabric/gen;proto";
+import "google/protobuf/timestamp.proto";
+
+service UsageService {
+    rpc GetUsageByKeyID(GetUsageByKeyIDRequest) returns(GetUsageResponse);
+    rpc GetUsageByKeyHash(GetUsageByKeyHashRequest) returns(GetUsageResponse);
+    rpc GetUsageByChannelID(GetUsageByChannelIDRequest) returns(GetUsageResponse);
+    rpc GetUsageByModelID(GetUsageByModelIDRequest) returns(GetUsageResponse);
+    rpc GetUsageByDeadlineAndKeyHash(GetUsageByDeadlineAndKeyHashRequest) returns(GetUsageResponse);
+    rpc GetUsageSummary(GetUsageSummaryRequest) returns(GetUsageResponse);
+    rpc LogUsage(LogUsageRequest) returns(LogUsageResponse);
+}
+
+message UsageLog {
+    string usage_id = 1;
+    int32 key_id = 2;
+    int32 model_id = 3;
+    int32 channel_id = 4;
+    string prompt_tokens = 5;
+    string completion_tokens = 6;
+    google.protobuf.Timestamp created_at = 7;
+}
+
+message GetUsageByKeyIDRequest {
+    int32 key_id = 1;
+}
+
+message GetUsageByKeyHashRequest {
+    string key_hash = 1;
+}
+
+message GetUsageByChannelIDRequest {
+    int32 channel_id = 1;
+}
+
+message GetUsageByModelIDRequest {
+    int32 model_id = 1;
+}
+
+message GetUsageByDeadlineAndKeyHashRequest {
+    string key_hash = 1;
+    google.protobuf.Timestamp deadline = 2;
+}
+
+message GetUsageResponse {
+    repeated UsageLog usage_log = 1;
+}
+
+message GetUsageSummaryRequest {}
+
+message LogUsageRequest {
+    UsageLog usage_log = 1;
+}
+
+message LogUsageResponse {}

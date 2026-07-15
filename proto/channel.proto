@@ -1,0 +1,38 @@
+syntax = "proto3";
+package proto;
+option go_package = "fabric/gen;proto";
+import "google/protobuf/timestamp.proto";
+
+service ChannelService {
+    rpc CreateChannel(CreateChannelRequest) returns(CreateChannelResponse);
+    rpc ListChannels(ListChannelsRequest) returns(ListChannelsResponse);
+    rpc ListActiveChannels(ListActiveChannelsRequest) returns(ListChannelsResponse);
+}
+
+message Channel {
+    int32 channel_id = 1;
+    string channel_name = 2;
+    google.protobuf.Timestamp created_at = 3;
+    int32 status = 4;
+    string base_url = 5;
+    int32 api_format = 6;
+}
+
+message ListChannelsRequest {}
+
+message ListActiveChannelsRequest {}
+
+message ListChannelsResponse {
+    repeated Channel channels = 1;
+}
+
+message CreateChannelRequest {
+    string channel_name = 1;
+    string base_url = 2;
+    int32 api_format = 3;
+    string provider_key = 4;
+}
+
+message CreateChannelResponse {
+    Channel channel = 1;
+}
