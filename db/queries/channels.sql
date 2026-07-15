@@ -15,5 +15,35 @@ SELECT * FROM channels ORDER BY created_at DESC;
 -- name: ListActiveChannels :many
 SELECT * FROM channels WHERE status = 1 ORDER BY created_at DESC;
 
+-- name: UpdateChannelName :one
+UPDATE channels
+SET channel_name = $2
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateChannelStatus :one
+UPDATE channels
+SET status = $2
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateChannelBaseURL :one
+UPDATE channels
+SET base_url = $2
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateChannelAPIFormat :one
+UPDATE channels
+SET api_format = $2
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateChannelProviderKey :one
+UPDATE channels
+SET provider_key = $2
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;

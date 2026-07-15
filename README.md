@@ -48,17 +48,43 @@ Planned capabilities:
 
 ## Architecture
 
-Fabric is designed around three layers:
+Fabric is designed as reusable layers, not as a single fixed deployment shape. You can run the complete gateway, combine Business with Core, or reuse only the Business or Core layer inside your own system.
 
 ```mermaid
-graph TD
-    Gateway["<b>Integrated Gateway</b><br/>A pre-assembled gateway: configure and run"]
-    Business["<b>Business Layer</b><br/>Usage / Sensitive Words / Quota / Limit<br/>Deploy independently or import as a library"]
-    Core["<b>Core Layer</b><br/>Provider proxying, protocol adaptation, I/O<br/>Deploy independently or import as a library"]
+flowchart TB
+    subgraph Deployments["Deployable Forms"]
+        GBC["Gateway + Business + Core<br/>Integrated AI gateway"]
+        BC["Business + Core<br/>Governance modules with provider proxying"]
+        B["Business Only<br/>Usage, sensitive-word detection, quota, limit, audit"]
+        C["Core Only<br/>Provider proxying, protocol adaptation, I/O primitives"]
+    end
 
-    Gateway --> Business
-    Business --> Core
+    subgraph Layers["Reusable Layers"]
+        Gateway["Gateway Layer<br/>Admin APIs, routing, assembled product"]
+        Business["Business Layer<br/>Usage / Sensitive Words / Quota / Limit / Audit"]
+        Core["Core Layer<br/>Provider proxying / protocol adaptation / I/O"]
+    end
+
+    GBC --> Gateway
+    GBC --> Business
+    GBC --> Core
+
+    BC --> Business
+    BC --> Core
+
+    B --> Business
+    C --> Core
+
+    Gateway -. depends on .-> Business
+    Business -. depends on .-> Core
 ```
+
+Supported deployment and reuse forms include:
+
+- **Gateway + Business + Core**: run Fabric as a complete OpenAI-compatible gateway with admin APIs, proxy routes, usage logging, model/channel/key management, and policy modules.
+- **Business + Core**: use governance capabilities together with provider proxying without adopting the full integrated gateway product.
+- **Business only**: embed usage logging, sensitive-word detection, quota, limit, audit, or policy modules into an existing gateway.
+- **Core only**: embed provider proxying, protocol adaptation, and low-level I/O primitives into your own service.
 
 ### Core Layer
 
@@ -139,68 +165,45 @@ Planned provider/model vendors include:
 
 ## Quick Start
 
-### 1. Prepare PostgreSQL
-
-Fabric stores channels, API keys, models, and usage logs in PostgreSQL.
+### 1. Clone and Start with Docker Compose
 
 ```bash
-createdb hypertoken
+git clone https://github.com/HyperToken-dev/Fabric.git
+cd Fabric
+docker compose up -d
 ```
 
-### 2. Update Configuration
+Docker Compose builds the gateway image from `Dockerfile`, starts PostgreSQL, and exposes:
 
-Edit `configs/config.yaml` and make sure the database connection is correct:
+- Proxy Server: `http://localhost:3002`
+- Admin Server: `http://localhost:9090`
 
-```yaml
-proxyAddr: 3002
-adminAddr: 9090
-logLevel: info
+The tracked `configs/config.docker.yaml` is used by Docker Compose. It is mounted into the container as `/app/configs/config.yaml`, so Docker users do not need to create a separate `configs/config.yaml` before starting Fabric.
 
-sensitiveWordDetect: false
+The gateway runs database migrations from `db/migrations/` during startup. After startup, configure a real upstream provider key through the Admin API before proxying production traffic.
 
-db:
-  addr: 127.0.0.1
-  user: postgres
-  port: 5432
-  dbName: hypertoken
-  password: "your-password"
-  maxIdle: 20
-  maxOpen: 100
-  maxLifeTime: 1h
-```
+### 2. Optional Sensitive-Word Detection
 
-If you have not prepared sensitive-word dictionaries, set `sensitiveWordDetect: false` first.
-
-To enable sensitive-word detection, configure rule-based dictionaries and prepare the corresponding files under `configs/stwd/`:
+Sensitive-word detection is disabled by default in `configs/config.docker.yaml`. To enable it, create dictionary files under `configs/stwd/` and reference them from `sensitiveWordDictionaries`:
 
 ```yaml
 sensitiveWordDetect: true
 sensitiveWordDictionaries:
-  - name: example_name
+  - name: default-block-list
     effectModels: [gpt-5.5]
-    keywordFileList: [st-01, st-02]
+    keywordFileList: [blocked-words]
 ```
 
-Each entry is a detection rule. `name` is required and is only used as a human-readable rule name in logs and match results. `effectModels` controls which models the rule applies to; leave it empty to apply the rule to all models. `keywordFileList` is required and lists keyword files under `configs/stwd/`, so `st-01` loads `configs/stwd/st-01.txt`. Each keyword file contains one keyword per line.
+This example loads `configs/stwd/blocked-words.txt`. Each dictionary file contains one keyword per line. See [how_to_use.md](./how_to_use.md) for the full configuration and sensitive-word guide.
 
-### 3. Start the Gateway
+### 3. Local Development Run
 
-```bash
-go run ./cmd/gateway
-```
-
-Or:
+For local development without Docker, prepare PostgreSQL, edit `configs/config.yaml`, then run:
 
 ```bash
+make generate
 make run
 ```
-
-By default, Fabric starts two servers:
-
-- Proxy Server: `:3002`
-- Admin Server: `:9090`
-
-The gateway runs database migrations from `db/migrations/` during startup.
 
 ## Detailed Usage
 
@@ -213,6 +216,9 @@ go build ./...              # build all packages
 go vet ./...                # vet all packages
 go test ./...               # run tests
 go run ./cmd/gateway        # start gateway; reads configs/config.yaml
+
+docker compose up -d        # start Fabric and PostgreSQL with Docker Compose
+docker compose down         # stop Docker services
 
 make generate               # sqlc generate, then buf generate
 make build                  # generate, then go build ./...

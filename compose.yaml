@@ -1,0 +1,62 @@
+name: fabric
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "50m"
+    max-file: "3"
+
+networks:
+  fabric-internal:
+    driver: bridge
+    enable_ipv6: true
+    attachable: true
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+
+volumes:
+  fabric-data:
+  postgres-data:
+
+services:
+  fabric:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fabric
+    volumes:
+      - ./configs/config.docker.yaml:/app/configs/config.yaml:ro
+      - ./configs/stwd:/app/configs/stwd:ro
+      - fabric-data:/app/logs
+    ports:
+      - 3002:3002
+      - 9090:9090
+    networks:
+      - fabric-internal
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres: # required when you don't have a postgres instance
+    image: postgres:18.3
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: 123456 # important!change this password when needed.
+      POSTGRES_DB: fabric
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d fabric"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    expose:
+      - 5432/tcp
+    networks:
+      - fabric-internal
