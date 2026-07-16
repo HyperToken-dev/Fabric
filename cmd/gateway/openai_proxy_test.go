@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"fabric/business/sensitive"
+	"github.com/HyperToken-dev/fabric/business/sensitive"
 )
 
 func TestOpenAIProxyServeHTTPValidationAndModelResolution(t *testing.T) {

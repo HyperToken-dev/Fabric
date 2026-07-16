@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"fabric/internal/storage/postgres"
+	"github.com/HyperToken-dev/fabric/internal/storage/postgres"
 )
 
 type modelStoreAdapter struct {

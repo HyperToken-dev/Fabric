@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	coreopenai "fabric/core/providers/openai"
-	proto "fabric/gen"
-	"fabric/internal/repository"
+	coreopenai "github.com/HyperToken-dev/fabric/core/providers/openai"
+	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"

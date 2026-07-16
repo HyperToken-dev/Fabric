@@ -2,8 +2,8 @@ package router
 
 import (
 	"database/sql"
-	"fabric/internal/auth"
-	"fabric/internal/repository"
+	"github.com/HyperToken-dev/fabric/internal/auth"
+	"github.com/HyperToken-dev/fabric/internal/repository"
 	"net/http"
 
 	"github.com/gin-gonic/gin"

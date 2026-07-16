@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"fabric/internal/repository"
+	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"

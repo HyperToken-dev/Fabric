@@ -3,9 +3,9 @@ package server
 import (
 	"context"
 
-	gen "fabric/gen"
-	protoconnect "fabric/gen/protoconnect"
-	"fabric/internal/service"
+	gen "github.com/HyperToken-dev/fabric/gen"
+	protoconnect "github.com/HyperToken-dev/fabric/gen/protoconnect"
+	"github.com/HyperToken-dev/fabric/internal/service"
 
 	"connectrpc.com/connect"
 )

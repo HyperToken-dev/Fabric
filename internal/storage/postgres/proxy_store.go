@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"strings"
 
-	"fabric/internal/repository"
+	"github.com/HyperToken-dev/fabric/internal/repository"
 )
 
 type ModelStatus int

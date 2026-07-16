@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"fabric/business/sensitive"
+	"github.com/HyperToken-dev/fabric/business/sensitive"
 
 	"go.uber.org/zap"
 )

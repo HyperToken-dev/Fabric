@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	proto "fabric/gen"
+	proto "github.com/HyperToken-dev/fabric/gen"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
