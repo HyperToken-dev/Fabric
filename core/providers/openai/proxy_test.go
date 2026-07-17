@@ -3,13 +3,13 @@ package openai
 import (
 	"io"
 	"net/http"
-	"net/http/httputil"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"testing"
 
-	coreproxy "fabric/core/proxy"
+	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 )
 
 func TestProxyServeHTTPForwardsToUpstream(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"fabric/internal/auth"
-	"fabric/internal/repository"
+	"github.com/HyperToken-dev/fabric/internal/auth"
+	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"

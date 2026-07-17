@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	sensitiveopenai "fabric/business/sensitive/openai"
-	coreopenai "fabric/core/providers/openai"
-	coreproxy "fabric/core/proxy"
+	sensitiveopenai "github.com/HyperToken-dev/fabric/business/sensitive/openai"
+	coreopenai "github.com/HyperToken-dev/fabric/core/providers/openai"
+	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 
 	"go.uber.org/zap"
 )

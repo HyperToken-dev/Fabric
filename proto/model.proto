@@ -1,6 +1,6 @@
 syntax = "proto3";
 package proto;
-option go_package = "fabric/gen;proto";
+option go_package = "github.com/HyperToken-dev/fabric/gen;proto";
 
 service ModelService {
     rpc GetModelInfo(GetModelInfoRequest) returns(GetModelInfoResponse);

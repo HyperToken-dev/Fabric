@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"fabric/internal/config"
+	"github.com/HyperToken-dev/fabric/internal/config"
 )
 
 func TestLoadSensitiveDetectorLoadsOnlyConfiguredFiles(t *testing.T) {

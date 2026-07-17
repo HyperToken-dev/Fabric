@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	coreproxy "fabric/core/proxy"
+	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 )
 
 type contextKey string

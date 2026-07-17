@@ -236,6 +236,11 @@ Methods:
 - `CreateChannel(CreateChannelRequest) returns (CreateChannelResponse)`
 - `ListChannels(ListChannelsRequest) returns (ListChannelsResponse)`
 - `ListActiveChannels(ListActiveChannelsRequest) returns (ListChannelsResponse)`
+- `UpdateChannelName(UpdateChannelNameRequest) returns (UpdateChannelResponse)`
+- `UpdateChannelStatus(UpdateChannelStatusRequest) returns (UpdateChannelResponse)`
+- `UpdateChannelBaseURL(UpdateChannelBaseURLRequest) returns (UpdateChannelResponse)`
+- `UpdateChannelAPIFormat(UpdateChannelAPIFormatRequest) returns (UpdateChannelResponse)`
+- `UpdateChannelProviderKey(UpdateChannelProviderKeyRequest) returns (UpdateChannelResponse)`
 
 `CreateChannelRequest` fields:
 
@@ -243,6 +248,16 @@ Methods:
 - `base_url`: upstream service URL, for example `https://api.openai.com`.
 - `api_format`: API format. The current OpenAI-compatible format is `1`.
 - `provider_key`: upstream provider API key.
+
+Update request fields:
+
+- `UpdateChannelNameRequest`: `channel_id`, `channel_name`.
+- `UpdateChannelStatusRequest`: `channel_id`, `status`. Current status values are `1` active, `2` banned, and `3` pending.
+- `UpdateChannelBaseURLRequest`: `channel_id`, `base_url`.
+- `UpdateChannelAPIFormatRequest`: `channel_id`, `api_format`. The current OpenAI-compatible format is `1`.
+- `UpdateChannelProviderKeyRequest`: `channel_id`, `provider_key`.
+
+`UpdateChannelProviderKey` updates the stored upstream provider credential. `Channel` responses do not expose `provider_key`.
 
 Example:
 
@@ -254,6 +269,61 @@ curl http://localhost:9090/proto.ChannelService/CreateChannel \
     "baseUrl": "https://api.openai.com",
     "apiFormat": 1,
     "providerKey": "sk-your-provider-key"
+  }'
+```
+
+Update channel name:
+
+```bash
+curl http://localhost:9090/proto.ChannelService/UpdateChannelName \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channelId": 1,
+    "channelName": "openai-prod"
+  }'
+```
+
+Update channel status:
+
+```bash
+curl http://localhost:9090/proto.ChannelService/UpdateChannelStatus \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channelId": 1,
+    "status": 1
+  }'
+```
+
+Update channel base URL:
+
+```bash
+curl http://localhost:9090/proto.ChannelService/UpdateChannelBaseURL \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channelId": 1,
+    "baseUrl": "https://api.openai.com"
+  }'
+```
+
+Update channel API format:
+
+```bash
+curl http://localhost:9090/proto.ChannelService/UpdateChannelAPIFormat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channelId": 1,
+    "apiFormat": 1
+  }'
+```
+
+Update channel provider key:
+
+```bash
+curl http://localhost:9090/proto.ChannelService/UpdateChannelProviderKey \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channelId": 1,
+    "providerKey": "sk-new-provider-key"
   }'
 ```
 
@@ -516,6 +586,141 @@ Reusable capabilities:
 - Sensitive-word detector.
 - OpenAI prompt/output text extraction.
 - Model-scoped dictionary policy.
+
+Business-layer packages can be imported directly from downstream Go services:
+
+```go
+import (
+    openaiusage "github.com/HyperToken-dev/fabric/business/usage/openai"
+    "github.com/HyperToken-dev/fabric/business/sensitive"
+    sensitiveopenai "github.com/HyperToken-dev/fabric/business/sensitive/openai"
+)
+```
+
+#### 6.2.1 Non-Streaming Usage Extraction
+
+Use `business/usage/openai` when your service already has the upstream OpenAI-compatible response body and wants to extract token usage without running Fabric's integrated gateway:
+
+```go
+parsedUsage, err := openaiusage.ExtractNonStreaming(rawResponseBody, contentEncoding)
+if err != nil {
+    return err
+}
+
+// Persist, bill, or audit usage in your own system.
+recordUsage(parsedUsage.PromptTokens, parsedUsage.CompletionTokens)
+```
+
+`rawResponseBody` is the complete upstream response body. `contentEncoding` should be the response `Content-Encoding` value, for example `""`, `"identity"`, `"gzip"`, or `"br"`.
+
+#### 6.2.2 Streaming Usage Tracking
+
+For streaming OpenAI-compatible responses, wrap the upstream response body before returning it to your caller:
+
+```go
+trackedBody := openaiusage.NewTrackingReader(upstreamBody, contentEncoding, func(parsedUsage *usage.Usage) {
+    // This callback runs when stream usage is discovered.
+    recordUsage(parsedUsage.PromptTokens, parsedUsage.CompletionTokens)
+})
+
+defer trackedBody.Close()
+```
+
+Your proxy still streams `trackedBody` to the client. The Business layer only parses usage and invokes the callback; your application decides where to store usage records and how to handle callback errors.
+
+If you need the `usage.Usage` type in your callback signature, import it from:
+
+```go
+import "github.com/HyperToken-dev/fabric/business/usage"
+```
+
+#### 6.2.3 Sensitive-Word Detection
+
+Use `business/sensitive` when you want Fabric's dictionary matching and model-scoped policy behavior inside your own request flow:
+
+```go
+detector, err := sensitive.NewDetector(
+    sensitive.Dictionary{
+        Name:         "default-block-list",
+        Words:        []string{"blocked phrase", "secret"},
+        EffectModels: []string{"gpt-5.5"},
+    },
+)
+if err != nil {
+    return err
+}
+
+result := detector.Detect("gpt-5.5", "user prompt containing secret")
+if result.Rejected() {
+    rejectRequest(result.Matches)
+}
+```
+
+`EffectModels` scopes a dictionary to specific model names. Leave it empty to apply that dictionary to every model passed to `Detect`. Dictionary names are included in match results so downstream systems can audit which rule matched.
+
+If your dictionaries are stored as one word per line, load them before constructing the detector:
+
+```go
+dict, err := sensitive.LoadDictionary("default-block-list", "configs/stwd/blocked-words.txt", []string{"gpt-5.5"})
+if err != nil {
+    return err
+}
+
+detector, err := sensitive.NewDetector(dict)
+if err != nil {
+    return err
+}
+```
+
+#### 6.2.4 OpenAI Prompt and Output Extraction
+
+Use `business/sensitive/openai` when your proxy receives OpenAI-compatible requests and responses but wants to apply its own rejection policy:
+
+```go
+promptReq, err := sensitiveopenai.ExtractPromptRequest(req)
+if err != nil {
+    return err
+}
+
+for _, prompt := range promptReq.Prompts {
+    if detector.Detect(promptReq.Model, prompt).Rejected() {
+        rejectRequest(nil)
+    }
+}
+```
+
+`ExtractPromptRequest` reads and restores `req.Body`, so the request can still be forwarded upstream after inspection.
+
+For non-streaming upstream responses, extract output text before returning the response to your caller:
+
+```go
+texts, err := sensitiveopenai.ExtractOutputTexts(req, rawResponseBody)
+if err != nil {
+    return err
+}
+
+for _, text := range texts {
+    if detector.Detect(promptReq.Model, text).Rejected() {
+        rejectResponse(nil)
+    }
+}
+```
+
+Streaming output sensitive-word detection is not provided by these helpers today; downstream callers must implement chunk-level inspection themselves if they need it.
+
+#### 6.2.5 Business-Layer Boundaries
+
+When used as a library, the Business layer provides parsing, extraction, detection, and callback hooks only. Your application remains responsible for:
+
+- HTTP routing and request lifecycle.
+- Forwarding requests to upstream providers.
+- Returning or streaming responses to clients.
+- Persisting usage records.
+- Billing, quota, audit, or reporting side effects.
+- Choosing whether matched sensitive text rejects, warns, logs, or triggers another policy.
+- Logging and error handling around your own storage or policy systems.
+
+Fabric's integrated gateway wires these pieces to `internal/router/`, `internal/storage/`, and management APIs. Downstream projects that import only `business/...` packages do not need to use Fabric's PostgreSQL schema, Admin Server, or integrated gateway process.
 
 ### 6.3 Use the Integrated Gateway
 

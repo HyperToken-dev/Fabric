@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"fabric/business/usage"
+	"github.com/HyperToken-dev/fabric/business/usage"
 
 	"github.com/andybalholm/brotli"
 )
@@ -27,37 +27,37 @@ func TestExtractNonStreaming(t *testing.T) {
 			want: &usage.Usage{PromptTokens: 12, CompletionTokens: 34},
 		},
 		{
-			name: "responses usage identity with whitespace encoding",
-			body: []byte(`{"usage":{"input_tokens":5,"output_tokens":8}}`),
+			name:     "responses usage identity with whitespace encoding",
+			body:     []byte(`{"usage":{"input_tokens":5,"output_tokens":8}}`),
 			encoding: " identity ",
-			want: &usage.Usage{PromptTokens: 5, CompletionTokens: 8},
+			want:     &usage.Usage{PromptTokens: 5, CompletionTokens: 8},
 		},
 		{
-			name: "gzip usage",
-			body: gzipBytes(t, []byte(`{"usage":{"prompt_tokens":7,"completion_tokens":9}}`)),
+			name:     "gzip usage",
+			body:     gzipBytes(t, []byte(`{"usage":{"prompt_tokens":7,"completion_tokens":9}}`)),
 			encoding: "gzip",
-			want: &usage.Usage{PromptTokens: 7, CompletionTokens: 9},
+			want:     &usage.Usage{PromptTokens: 7, CompletionTokens: 9},
 		},
 		{
-			name: "brotli usage",
-			body: brotliBytes(t, []byte(`{"usage":{"input_tokens":11,"output_tokens":13}}`)),
+			name:     "brotli usage",
+			body:     brotliBytes(t, []byte(`{"usage":{"input_tokens":11,"output_tokens":13}}`)),
 			encoding: "br",
-			want: &usage.Usage{PromptTokens: 11, CompletionTokens: 13},
+			want:     &usage.Usage{PromptTokens: 11, CompletionTokens: 13},
 		},
 		{
-			name: "missing usage",
-			body: []byte(`{"id":"resp"}`),
+			name:    "missing usage",
+			body:    []byte(`{"id":"resp"}`),
 			wantErr: true,
 		},
 		{
-			name: "unsupported encoding",
-			body: []byte(`{"usage":{"prompt_tokens":1,"completion_tokens":2}}`),
+			name:     "unsupported encoding",
+			body:     []byte(`{"usage":{"prompt_tokens":1,"completion_tokens":2}}`),
 			encoding: "deflate",
-			wantErr: true,
+			wantErr:  true,
 		},
 		{
-			name: "invalid json",
-			body: []byte(`{`),
+			name:    "invalid json",
+			body:    []byte(`{`),
 			wantErr: true,
 		},
 	}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"fabric/business/usage"
+	"github.com/HyperToken-dev/fabric/business/usage"
 
 	"github.com/andybalholm/brotli"
 	"go.uber.org/zap"
@@ -32,6 +32,7 @@ type openAIResponsesStreamEvent struct {
 	} `json:"response"`
 }
 
+// openai nonstream extract
 func ExtractNonStreaming(rawBody []byte, contentEncoding string) (*usage.Usage, error) {
 	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
 	if err != nil {
@@ -47,6 +48,7 @@ func ExtractNonStreaming(rawBody []byte, contentEncoding string) (*usage.Usage, 
 	return openAIUsageToUsage(&resp.Usage)
 }
 
+// openai SSE stream extract
 func NewTrackingReader(body io.ReadCloser, contentEncoding string, onUsage UsageCallback) io.ReadCloser {
 	return &responsesUsageTrackingReader{
 		reader:          body,

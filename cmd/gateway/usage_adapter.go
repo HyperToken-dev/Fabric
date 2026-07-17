@@ -6,9 +6,9 @@ import (
 	"io"
 	"time"
 
-	"fabric/business/usage"
-	openaiusage "fabric/business/usage/openai"
-	"fabric/internal/storage/postgres"
+	"github.com/HyperToken-dev/fabric/business/usage"
+	openaiusage "github.com/HyperToken-dev/fabric/business/usage/openai"
+	"github.com/HyperToken-dev/fabric/internal/storage/postgres"
 
 	"go.uber.org/zap"
 )

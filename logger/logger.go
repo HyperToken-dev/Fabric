@@ -1,7 +1,7 @@
 package logger
 
 import (
-	"fabric/internal/config"
+	"github.com/HyperToken-dev/fabric/internal/config"
 	"os"
 	"path/filepath"
 

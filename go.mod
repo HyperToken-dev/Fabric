@@ -1,4 +1,4 @@
-module fabric
+module github.com/HyperToken-dev/fabric
 
 go 1.26.4
 

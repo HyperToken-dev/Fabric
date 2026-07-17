@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	proto "fabric/gen"
-	"fabric/internal/repository"
+	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"go.uber.org/zap"
 )
