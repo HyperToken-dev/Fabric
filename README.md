@@ -1,10 +1,18 @@
-# Fabric
+<p align="center">
+  <img src="web/fabric/public/logo.png" alt="Fabric Logo" width="160" />
+</p>
+
+<h1 align="center">Fabric</h1>
+
+<p align="center">
+  A modular AI gateway framework for proxying, key management, model routing, and usage governance.
+</p>
 
 Fabric is a modular AI gateway framework. It can run as a pre-assembled OpenAI-compatible gateway, or you can selectively import the Core and Business layers as libraries and compose them into your own services.
 
 Fabric is not intended to be only a proxy service. Its goal is to provide reusable AI gateway primitives: transparent proxying, API key management, downstream-to-upstream key mapping, channel/model mapping, usage tracking, sensitive-word detection, and future governance modules such as quota and limit controls.
 
-## Why This Project Exists
+## 💡 Why This Project Exists
 
 Many AI gateway or AI application projects, such as new_api, axonhub, and similar systems, repeatedly need to maintain the same infrastructure:
 
@@ -17,7 +25,7 @@ Many AI gateway or AI application projects, such as new_api, axonhub, and simila
 
 Fabric exists to split these common capabilities into independent, composable, reusable layers. You can run the top-level integrated gateway directly, or you can extract only the Core or Business capabilities you need and embed them into your own service instead of rebuilding the same gateway foundation again.
 
-## Project Positioning
+## 🧭 Project Positioning
 
 Fabric currently implements an OpenAI-compatible gateway with:
 
@@ -33,7 +41,7 @@ Fabric currently implements an OpenAI-compatible gateway with:
 
 Future work will expand Fabric with more providers, more model types, and additional governance modules such as quota, limit, audit, and policy orchestration.
 
-## Feature Highlights
+## ✨ Feature Highlights
 
 Current distinctive features:
 
@@ -46,7 +54,7 @@ Planned capabilities:
 - **Limit**: rate limiting, concurrency limiting, and model-call frequency controls.
 - **Policy governance**: audit, risk control, safety rules, and enterprise workflow modules.
 
-## Architecture
+## 🏗️ Architecture
 
 Fabric is designed as reusable layers, not as a single fixed deployment shape. You can run the complete gateway, combine Business with Core, or reuse only the Business or Core layer inside your own system.
 
@@ -116,7 +124,7 @@ It is useful for:
 - Users who do not want to manually compose Core and Business modules.
 - Scenarios where writing a configuration file and running the gateway is enough.
 
-## Design Advantages
+## 🎯 Design Advantages
 
 - **Independent layers**: Core, Business, and Integrated Gateway have clear boundaries and can evolve independently.
 - **Independent deployment**: each layer can be deployed as its own service and composed by team or business boundaries.
@@ -126,7 +134,7 @@ It is useful for:
 - **Gateway key and provider key isolation**: callers use Fabric-issued gateway API keys, while upstream provider keys stay in channels and are injected by the gateway.
 - **Multi-provider evolution**: providers can be added through adapters so the business layer does not bind directly to one vendor's protocol.
 
-## Supported and Planned Providers / Models
+## 🌐 Supported and Planned Providers / Models
 
 Fabric currently focuses on OpenAI-compatible APIs. The Core Layer will continue to add provider adapters so models from different vendors can be connected through the same gateway primitives.
 
@@ -163,7 +171,7 @@ Planned provider/model vendors include:
 
 **More than 300+ providers would be supported.**
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Clone and Start with Docker Compose
 
@@ -205,11 +213,11 @@ make generate
 make run
 ```
 
-## Detailed Usage
+## 📖 Detailed Usage
 
 See [how_to_use.md](./how_to_use.md) for detailed configuration, management APIs, proxy examples, and library integration guidance.
 
-## Development Commands
+## 🛠️ Development Commands
 
 ```bash
 go build ./...              # build all packages
@@ -228,7 +236,7 @@ make test                   # go test ./...
 make sqlc-check             # sqlc compile
 ```
 
-## Roadmap
+## 🗺️ Roadmap
 
 - Add more provider adapters.
 - Support more model types and protocol forms.
