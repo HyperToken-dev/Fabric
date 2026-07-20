@@ -129,7 +129,7 @@ func main() {
 	apiKeySvc := service.NewApiKeyService(db)
 	channelSvc := service.NewChannelService(db)
 	modelSvc := service.NewModelService(db)
-	usageSvc := service.NewUsageService(db)
+	usageSvc := service.NewUsageService(db, cfg.Location)
 	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc)
 
 	// register proxy

@@ -2,6 +2,8 @@ proxyAddr: 3002
 adminAddr: 9090
 logLevel: info
 
+timeZone: Asia/Shanghai
+
 sensitiveWordDetect: false # When this is set to true, the configuration items below must be valid.
 sensitiveWordDictionaries:
   - name: example_name

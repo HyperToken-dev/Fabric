@@ -10,6 +10,7 @@ service UsageService {
     rpc GetUsageByModelID(GetUsageByModelIDRequest) returns(GetUsageResponse);
     rpc GetUsageByDeadlineAndKeyHash(GetUsageByDeadlineAndKeyHashRequest) returns(GetUsageResponse);
     rpc GetUsageSummary(GetUsageSummaryRequest) returns(GetUsageResponse);
+    rpc GetUsageDashboard(GetUsageDashboardRequest) returns(GetUsageDashboardResponse);
     rpc LogUsage(LogUsageRequest) returns(LogUsageResponse);
 }
 
@@ -49,6 +50,29 @@ message GetUsageResponse {
 }
 
 message GetUsageSummaryRequest {}
+
+message UsageTotals {
+    int64 prompt_tokens = 1;
+    int64 completion_tokens = 2;
+    int64 total_tokens = 3;
+    int64 request_count = 4;
+}
+
+message UsageTimelinePoint {
+    string date = 1;
+    int64 prompt_tokens = 2;
+    int64 completion_tokens = 3;
+    int64 total_tokens = 4;
+    int64 request_count = 5;
+}
+
+message GetUsageDashboardRequest {}
+
+message GetUsageDashboardResponse {
+    string time_zone = 1;
+    UsageTotals today = 2;
+    repeated UsageTimelinePoint recent_days = 3;
+}
 
 message LogUsageRequest {
     UsageLog usage_log = 1;

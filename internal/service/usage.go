@@ -15,11 +15,16 @@ import (
 )
 
 type UsageService struct {
-	queries *repository.Queries
+	queries  *repository.Queries
+	location *time.Location
+	now      func() time.Time
 }
 
-func NewUsageService(db *sql.DB) *UsageService {
-	return &UsageService{queries: repository.New(db)}
+func NewUsageService(db *sql.DB, location *time.Location) *UsageService {
+	if location == nil {
+		location = time.UTC
+	}
+	return &UsageService{queries: repository.New(db), location: location, now: time.Now}
 }
 
 func (s *UsageService) GetUsageByKeyID(ctx context.Context, req *proto.GetUsageByKeyIDRequest) (*proto.GetUsageResponse, error) {
@@ -125,6 +130,61 @@ func (s *UsageService) GetUsageSummary(ctx context.Context, req *proto.GetUsageS
 			PromptTokens:     fmt.Sprintf("%d", totalPrompt),
 			CompletionTokens: fmt.Sprintf("%d", totalCompletion),
 		}},
+	}, nil
+}
+
+func (s *UsageService) GetUsageDashboard(ctx context.Context, req *proto.GetUsageDashboardRequest) (*proto.GetUsageDashboardResponse, error) {
+	now := s.now().In(s.location)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, s.location)
+	tomorrowStart := todayStart.AddDate(0, 0, 1)
+	timelineStart := todayStart.AddDate(0, 0, -6)
+
+	totals, err := s.queries.GetUsageDashboardTotals(ctx, repository.GetUsageDashboardTotalsParams{
+		StartAt: todayStart.UTC(),
+		EndAt:   tomorrowStart.UTC(),
+	})
+	if err != nil {
+		zap.L().Error("get usage dashboard totals failed", zap.Error(err))
+		return nil, err
+	}
+
+	rows, err := s.queries.GetUsageDashboardTimeline(ctx, repository.GetUsageDashboardTimelineParams{
+		TimeZone: s.location.String(),
+		StartAt:  timelineStart.UTC(),
+		EndAt:    tomorrowStart.UTC(),
+	})
+	if err != nil {
+		zap.L().Error("get usage dashboard timeline failed", zap.Error(err))
+		return nil, err
+	}
+
+	byDate := make(map[string]repository.GetUsageDashboardTimelineRow, len(rows))
+	for _, row := range rows {
+		byDate[row.Date.Format("2006-01-02")] = row
+	}
+
+	recentDays := make([]*proto.UsageTimelinePoint, 0, 7)
+	for day := timelineStart; day.Before(tomorrowStart); day = day.AddDate(0, 0, 1) {
+		date := day.Format("2006-01-02")
+		row := byDate[date]
+		recentDays = append(recentDays, &proto.UsageTimelinePoint{
+			Date:             date,
+			PromptTokens:     row.TotalPromptTokens,
+			CompletionTokens: row.TotalCompletionTokens,
+			TotalTokens:      row.TotalPromptTokens + row.TotalCompletionTokens,
+			RequestCount:     row.RequestCount,
+		})
+	}
+
+	return &proto.GetUsageDashboardResponse{
+		TimeZone: s.location.String(),
+		Today: &proto.UsageTotals{
+			PromptTokens:     totals.TotalPromptTokens,
+			CompletionTokens: totals.TotalCompletionTokens,
+			TotalTokens:      totals.TotalPromptTokens + totals.TotalCompletionTokens,
+			RequestCount:     totals.RequestCount,
+		},
+		RecentDays: recentDays,
 	}, nil
 }
 

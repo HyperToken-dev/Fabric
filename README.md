@@ -1,16 +1,18 @@
-<p align="center">
-  <img src="web/fabric/public/logo.png" alt="Fabric Logo" width="160" />
-</p>
+<div align="center">
 
-<h1 align="center">Fabric</h1>
+![Fabric Logo](web/fabric/public/logo.png)
 
-<p align="center">
+<h1 align="center" style="margin: 0;">Fabric</h1>
+
+<p align="center" style="margin: 0;">
   A modular AI gateway framework for proxying, key management, model routing, and usage governance.
 </p>
 
 Fabric is a modular AI gateway framework. It can run as a pre-assembled OpenAI-compatible gateway, or you can selectively import the Core and Business layers as libraries and compose them into your own services.
 
 Fabric is not intended to be only a proxy service. Its goal is to provide reusable AI gateway primitives: transparent proxying, API key management, downstream-to-upstream key mapping, channel/model mapping, usage tracking, sensitive-word detection, and future governance modules such as quota and limit controls.
+
+</div>
 
 ## 💡 Why This Project Exists
 
