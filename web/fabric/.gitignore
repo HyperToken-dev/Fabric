@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+web/fabric/node_modules
+web/fabric/dist
+web/fabric/dist-ssr
+web/fabric/.vite
+web/fabric/*.local
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

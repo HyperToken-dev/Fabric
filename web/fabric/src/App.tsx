@@ -1,25 +1,29 @@
 import { useState } from "react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
+import ChannelsPage from "./components/ChannelsPage";
+import ModelsPage from "./components/ModelsPage";
+import ApiKeysPage from "./components/ApiKeysPage";
+import UsageLogsPage from "./components/UsageLogsPage";
+
+const pages = {
+  dashboard: Dashboard,
+  channels: ChannelsPage,
+  models: ModelsPage,
+  'api-keys': ApiKeysPage,
+  usage: UsageLogsPage,
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const ActivePage = pages[activeTab as keyof typeof pages] ?? Dashboard;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex font-sans">
+    <div className="min-h-screen bg-slate-50 font-sans md:flex">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      <main className="flex-1 ml-64 overflow-y-auto h-screen bg-slate-50">
-        {activeTab === 'dashboard' ? (
-          <Dashboard />
-        ) : (
-          <div className="p-8 flex items-center justify-center h-full text-slate-400">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold mb-2 text-slate-600">Coming Soon</h2>
-              <p>The {activeTab} view is currently under construction.</p>
-            </div>
-          </div>
-        )}
+      <main className="min-w-0 flex-1 bg-slate-50 md:ml-64 md:h-screen md:overflow-y-auto">
+        <ActivePage />
       </main>
     </div>
   );

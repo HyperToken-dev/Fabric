@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { parseInteger, postConnect } from './connect';
 
 type IntegerValue = string | number;
 
@@ -36,42 +36,20 @@ export type UsageDashboard = {
   recentDays: UsageTimelinePoint[];
 };
 
-function parseInteger(value: IntegerValue | undefined, field: string): number {
-  if (value === undefined) {
-    return 0;
-  }
-  if ((typeof value !== 'string' && typeof value !== 'number') || String(value).trim() === '') {
-    throw new Error(`Invalid dashboard field: ${field}`);
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(`Invalid dashboard field: ${field}`);
-  }
-  return parsed;
-}
-
 function parseTotals(value: UsageTotalsResponse | undefined, prefix: string): UsageTotals {
   if (!value || typeof value !== 'object') {
     throw new Error(`Invalid dashboard field: ${prefix}`);
   }
   return {
-    promptTokens: parseInteger(value.promptTokens, `${prefix}.promptTokens`),
-    completionTokens: parseInteger(value.completionTokens, `${prefix}.completionTokens`),
-    totalTokens: parseInteger(value.totalTokens, `${prefix}.totalTokens`),
-    requestCount: parseInteger(value.requestCount, `${prefix}.requestCount`),
+    promptTokens: value.promptTokens === undefined ? 0 : parseInteger(value.promptTokens, `${prefix}.promptTokens`),
+    completionTokens: value.completionTokens === undefined ? 0 : parseInteger(value.completionTokens, `${prefix}.completionTokens`),
+    totalTokens: value.totalTokens === undefined ? 0 : parseInteger(value.totalTokens, `${prefix}.totalTokens`),
+    requestCount: value.requestCount === undefined ? 0 : parseInteger(value.requestCount, `${prefix}.requestCount`),
   };
 }
 
 export async function getUsageDashboard(signal?: AbortSignal): Promise<UsageDashboard> {
-  const response = await axios.post<DashboardResponse>(
-    '/admin-api/proto.UsageService/GetUsageDashboard',
-    {},
-    {
-      signal,
-      headers: { 'Content-Type': 'application/json' },
-    },
-  );
-  const payload = response.data;
+  const payload = await postConnect<DashboardResponse>('UsageService', 'GetUsageDashboard', {}, signal);
   if (!payload || typeof payload.timeZone !== 'string' || !Array.isArray(payload.recentDays)) {
     throw new Error('Invalid dashboard response');
   }

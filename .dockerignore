@@ -12,3 +12,8 @@ README.md
 how_to_use.md
 tmp
 coverage
+web/fabric/node_modules
+web/fabric/dist
+web/fabric/dist-ssr
+web/fabric/.vite
+web/fabric/*.local

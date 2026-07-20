@@ -16,6 +16,7 @@ import (
 	"github.com/HyperToken-dev/fabric/internal/server"
 	"github.com/HyperToken-dev/fabric/internal/service"
 	"github.com/HyperToken-dev/fabric/internal/storage/postgres"
+	webui "github.com/HyperToken-dev/fabric/internal/web"
 	"github.com/HyperToken-dev/fabric/logger"
 
 	pbconnect "github.com/HyperToken-dev/fabric/gen/protoconnect"
@@ -171,7 +172,7 @@ func main() {
 	)
 
 	zap.S().Infof("Admin server listening on %s", cfg.AdminAddr)
-	if err := http.ListenAndServe(cfg.AdminAddr, adminMux); err != nil {
+	if err := http.ListenAndServe(cfg.AdminAddr, webui.Handler(adminMux)); err != nil {
 		zap.S().Fatalf("admin server: %v", err)
 	}
 }
