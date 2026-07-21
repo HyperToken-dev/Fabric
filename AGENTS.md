@@ -65,6 +65,7 @@ Startup flow in `cmd/gateway/main.go`:
 - Handle every returned error. Ignoring errors is prohibited.
 - Keep changes small and localized. Prefer the existing package boundaries and patterns.
 - Do not add source files under generated-code directories.
+- Keep handwritten frontend source human-readable with four-space indentation; run `pnpm format` in `web/fabric` after editing and never format generated files under `web/fabric/src/gen/`.
 - Do not edit generated files directly; update schema/query/proto inputs and regenerate.
 
 ## Key concepts
