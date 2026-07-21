@@ -105,6 +105,9 @@ Startup flow in `cmd/gateway/main.go`:
 | `internal/router/`     | HTTP route registration and proxy client logic |
 | `internal/storage/`    | Storage adapters used by gateway/proxy logic   |
 | `internal/config/`     | Environment-based configuration                |
+| `internal/web/`        | Bundled web UI handler for the admin server    |
+| `web/fabric/`          | React/Vite management console source           |
+| `web/fabric/src/gen/`  | Generated TypeScript protobuf/connect code     |
 
 ## Generated Code Rules
 
