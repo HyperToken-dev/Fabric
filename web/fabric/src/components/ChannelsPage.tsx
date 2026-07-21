@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Check, Pencil, Plus, X } from 'lucide-react';
 import { API_FORMATS, CHANNEL_STATUSES, createChannel, listChannels, updateChannelApiFormat, updateChannelBaseUrl, updateChannelName, updateChannelProviderKey, updateChannelStatus, type Channel } from '../api/channels';
-import { enumLabel } from '../api/connect';
+import { enumLabel } from '../api/format';
 import { buttonClass, EmptyState, ErrorState, inputClass, LoadingCards, PageHeader, RefreshWarning } from './PageState';
 
 type Draft = { channelName: string; baseUrl: string; status: number; apiFormat: number; providerKey: string };

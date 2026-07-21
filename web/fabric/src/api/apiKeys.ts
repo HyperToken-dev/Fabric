@@ -1,4 +1,7 @@
-import { parseArray, parseObject, parseString, parseTimestamp, postConnect } from './connect';
+import type { ApiKey as ProtoApiKey } from '../gen/apiKey_pb';
+import { apiKeyClient } from '../rpc/clients';
+import { callAdminRpc } from '../rpc/errors';
+import { requireString, timestampToIso } from '../rpc/values';
 
 export type ApiKey = {
   keyName: string;
@@ -8,26 +11,32 @@ export type ApiKey = {
 
 export type CreatedApiKey = ApiKey & { rawKey: string };
 
-function parseApiKey(value: unknown, field: string, requireRawKey = false): ApiKey | CreatedApiKey {
-  const key = parseObject(value, field);
-  const parsed: ApiKey = {
-    keyName: parseString(key.keyName, `${field}.keyName`),
-    keyHash: parseString(key.keyHash, `${field}.keyHash`),
-    createdAt: parseTimestamp(key.createdAt, `${field}.createdAt`),
+function toApiKey(key: ProtoApiKey, field: string): ApiKey {
+  return {
+    keyName: requireString(key.keyName, `${field}.keyName`),
+    keyHash: requireString(key.keyHash, `${field}.keyHash`),
+    createdAt: timestampToIso(key.createdAt, `${field}.createdAt`),
   };
-  return requireRawKey ? { ...parsed, rawKey: parseString(key.rawKey, `${field}.rawKey`) } : parsed;
+}
+
+function toCreatedApiKey(key: ProtoApiKey | undefined): CreatedApiKey {
+  if (!key) throw new Error('Invalid response field: apiKey');
+  const parsed: ApiKey = {
+    ...toApiKey(key, 'apiKey'),
+  };
+  return { ...parsed, rawKey: requireString(key.rawKey, 'apiKey.rawKey') };
 }
 
 export async function listApiKeys(channelId: number, signal?: AbortSignal): Promise<ApiKey[]> {
-  const response = await postConnect<{ apiKeys?: unknown }>('ManageApiKeyService', 'ListApiKeysByChannelID', { channelId }, signal);
-  return parseArray(response.apiKeys, 'apiKeys').map((key, index) => parseApiKey(key, `apiKeys[${index}]`) as ApiKey);
+  const response = await callAdminRpc(() => apiKeyClient.listApiKeysByChannelID({ channelId }, { signal }));
+  return response.apiKeys.map((key, index) => toApiKey(key, `apiKeys[${index}]`));
 }
 
 export async function createApiKey(keyName: string, channelId: number): Promise<CreatedApiKey> {
-  const response = await postConnect<{ apiKey?: unknown }>('ManageApiKeyService', 'CreateApiKey', { keyName, channelId });
-  return parseApiKey(response.apiKey, 'apiKey', true) as CreatedApiKey;
+  const response = await callAdminRpc(() => apiKeyClient.createApiKey({ keyName, channelId }));
+  return toCreatedApiKey(response.apiKey);
 }
 
 export async function revokeApiKey(keyHash: string): Promise<void> {
-  await postConnect('ManageApiKeyService', 'RevokeApiKey', { keyHash });
+  await callAdminRpc(() => apiKeyClient.revokeApiKey({ keyHash }));
 }

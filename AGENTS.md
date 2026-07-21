@@ -112,3 +112,4 @@ Startup flow in `cmd/gateway/main.go`:
 - For DB changes, edit `db/migrations/` and `db/queries/`, then run `sqlc generate`.
 - For API changes, edit `proto/`, then run `buf generate`.
 - If both DB and API generation are needed, run `sqlc generate` first, then `buf generate`.
+- TypeScript protobuf and service descriptors are generated into `web/fabric/src/gen/`; do not edit files in that directory manually.

@@ -1,22 +1,12 @@
-import { parseInteger, postConnect } from './connect';
+import { usageClient } from '../rpc/clients';
+import { callAdminRpc } from '../rpc/errors';
+import { safeInteger } from '../rpc/values';
 
-type IntegerValue = string | number;
-
-type UsageTotalsResponse = {
-  promptTokens?: IntegerValue;
-  completionTokens?: IntegerValue;
-  totalTokens?: IntegerValue;
-  requestCount?: IntegerValue;
-};
-
-type UsageTimelinePointResponse = UsageTotalsResponse & {
-  date?: unknown;
-};
-
-type DashboardResponse = {
-  timeZone?: unknown;
-  today?: UsageTotalsResponse;
-  recentDays?: UsageTimelinePointResponse[];
+type ProtoTotals = {
+  promptTokens: bigint;
+  completionTokens: bigint;
+  totalTokens: bigint;
+  requestCount: bigint;
 };
 
 export type UsageTotals = {
@@ -36,34 +26,34 @@ export type UsageDashboard = {
   recentDays: UsageTimelinePoint[];
 };
 
-function parseTotals(value: UsageTotalsResponse | undefined, prefix: string): UsageTotals {
-  if (!value || typeof value !== 'object') {
+function toTotals(value: ProtoTotals | undefined, prefix: string): UsageTotals {
+  if (!value) {
     throw new Error(`Invalid dashboard field: ${prefix}`);
   }
   return {
-    promptTokens: value.promptTokens === undefined ? 0 : parseInteger(value.promptTokens, `${prefix}.promptTokens`),
-    completionTokens: value.completionTokens === undefined ? 0 : parseInteger(value.completionTokens, `${prefix}.completionTokens`),
-    totalTokens: value.totalTokens === undefined ? 0 : parseInteger(value.totalTokens, `${prefix}.totalTokens`),
-    requestCount: value.requestCount === undefined ? 0 : parseInteger(value.requestCount, `${prefix}.requestCount`),
+    promptTokens: safeInteger(value.promptTokens, `${prefix}.promptTokens`),
+    completionTokens: safeInteger(value.completionTokens, `${prefix}.completionTokens`),
+    totalTokens: safeInteger(value.totalTokens, `${prefix}.totalTokens`),
+    requestCount: safeInteger(value.requestCount, `${prefix}.requestCount`),
   };
 }
 
 export async function getUsageDashboard(signal?: AbortSignal): Promise<UsageDashboard> {
-  const payload = await postConnect<DashboardResponse>('UsageService', 'GetUsageDashboard', {}, signal);
-  if (!payload || typeof payload.timeZone !== 'string' || !Array.isArray(payload.recentDays)) {
+  const payload = await callAdminRpc(() => usageClient.getUsageDashboard({}, { signal }));
+  if (!payload.timeZone) {
     throw new Error('Invalid dashboard response');
   }
 
   return {
     timeZone: payload.timeZone,
-    today: parseTotals(payload.today, 'today'),
+    today: toTotals(payload.today, 'today'),
     recentDays: payload.recentDays.map((point, index) => {
-      if (typeof point.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(point.date)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(point.date)) {
         throw new Error(`Invalid dashboard field: recentDays[${index}].date`);
       }
       return {
         date: point.date,
-        ...parseTotals(point, `recentDays[${index}]`),
+        ...toTotals(point, `recentDays[${index}]`),
       };
     }),
   };

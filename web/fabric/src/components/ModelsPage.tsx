@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { listChannels, type Channel } from '../api/channels';
-import { enumLabel } from '../api/connect';
+import { enumLabel } from '../api/format';
 import { createModel, listModels, MODEL_STATUSES, MODEL_TYPES, type Model } from '../api/models';
 import { buttonClass, EmptyState, ErrorState, inputClass, LoadingCards, PageHeader, RefreshWarning } from './PageState';
 

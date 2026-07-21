@@ -10,8 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "2.12.1",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-web": "2.1.2",
     "@tailwindcss/vite": "^4.3.2",
-    "axios": "^1.18.1",
     "lucide-react": "^1.25.0",
     "motion": "^12.42.2",
     "react": "^19.2.7",
