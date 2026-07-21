@@ -32,7 +32,7 @@ func TestLoadSensitiveDictionaries(t *testing.T) {
 	}
 }
 
-func TestLoadUsageTimeZone(t *testing.T) {
+func TestLoadTimeZone(t *testing.T) {
 	tests := []struct {
 		name     string
 		value    string
@@ -42,7 +42,7 @@ func TestLoadUsageTimeZone(t *testing.T) {
 		{name: "configured", value: "Asia/Shanghai", wantName: "Asia/Shanghai"},
 		{name: "blank defaults to UTC", value: "  ", wantName: "UTC"},
 		{name: "missing defaults to UTC", wantName: "UTC"},
-		{name: "invalid", value: "Not/A-Time-Zone", wantErr: "invalid usageTimeZone"},
+		{name: "invalid", value: "Not/A-Time-Zone", wantErr: "invalid TimeZone"},
 	}
 
 	for _, tt := range tests {
@@ -52,7 +52,7 @@ func TestLoadUsageTimeZone(t *testing.T) {
 			viper.Set("proxyAddr", 3002)
 			viper.Set("adminAddr", 9090)
 			if tt.value != "" {
-				viper.Set("usageTimeZone", tt.value)
+				viper.Set("timeZone", tt.value)
 			}
 
 			cfg, err := Load("work", "run")
@@ -66,10 +66,10 @@ func TestLoadUsageTimeZone(t *testing.T) {
 				t.Fatal(err)
 			}
 			if cfg.TimeZone != tt.wantName {
-				t.Fatalf("UsageTimeZone = %q, want %q", cfg.TimeZone, tt.wantName)
+				t.Fatalf("TimeZone = %q, want %q", cfg.TimeZone, tt.wantName)
 			}
 			if cfg.Location == nil || cfg.Location.String() != tt.wantName {
-				t.Fatalf("UsageLocation = %v, want %q", cfg.Location, tt.wantName)
+				t.Fatalf("Location = %v, want %q", cfg.Location, tt.wantName)
 			}
 		})
 	}

@@ -151,6 +151,14 @@ func (s *Server) ListModels(ctx context.Context, req *connect.Request[gen.ListMo
 	return connect.NewResponse(resp), nil
 }
 
+func (s *Server) ListCatalogModels(ctx context.Context, req *connect.Request[gen.ListCatalogModelsRequest]) (*connect.Response[gen.ListCatalogModelsResponse], error) {
+	resp, err := s.modelSvc.ListCatalogModels(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
 func (s *Server) GetUsageByKeyHash(ctx context.Context, req *connect.Request[gen.GetUsageByKeyHashRequest]) (*connect.Response[gen.GetUsageResponse], error) {
 	resp, err := s.usageSvc.GetUsageByKeyHash(ctx, req.Msg)
 	if err != nil {

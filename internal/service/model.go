@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/models"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"go.uber.org/zap"
@@ -75,6 +76,19 @@ func (m *ModelService) ListModels(ctx context.Context, req *proto.ListModelsRequ
 	return &proto.ListModelsResponse{
 		Models: modelProtos,
 	}, nil
+}
+
+func (m *ModelService) ListCatalogModels(ctx context.Context, req *proto.ListCatalogModelsRequest) (*proto.ListCatalogModelsResponse, error) {
+	catalog := models.List(req.ApiFormat)
+	modelProtos := make([]*proto.CatalogModel, len(catalog))
+	for idx, model := range catalog {
+		modelProtos[idx] = &proto.CatalogModel{
+			ModelName: model.Name,
+			ModelType: model.Type,
+		}
+	}
+	zap.L().Info("catalog models listed", zap.Int32("api_format", req.ApiFormat), zap.Int("count", len(modelProtos)))
+	return &proto.ListCatalogModelsResponse{Models: modelProtos}, nil
 }
 
 func modelToProto(model repository.Model) *proto.Model {

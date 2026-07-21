@@ -39,7 +39,7 @@ func Load(workDir, runPath string) (*Config, error) {
 	}
 	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
-		return nil, fmt.Errorf("invalid usageTimeZone %q: %w", cfg.TimeZone, err)
+		return nil, fmt.Errorf("invalid TimeZone %q: %w", cfg.TimeZone, err)
 	}
 	cfg.Location = location
 	cfg.WorkDir, cfg.RunPath = workDir, runPath

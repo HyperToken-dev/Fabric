@@ -1,4 +1,4 @@
-import type { Model as ProtoModel } from '../gen/model_pb';
+import type { CatalogModel as ProtoCatalogModel, Model as ProtoModel } from '../gen/model_pb';
 import { modelClient } from '../rpc/clients';
 import { callAdminRpc } from '../rpc/errors';
 import { requireString, safeInteger } from '../rpc/values';
@@ -13,6 +13,18 @@ export type Model = {
     status: number;
     modelType: number;
 };
+
+export type CatalogModel = {
+    modelName: string;
+    modelType: number;
+};
+
+function toCatalogModel(model: ProtoCatalogModel, field: string): CatalogModel {
+    return {
+        modelName: requireString(model.modelName, `${field}.modelName`),
+        modelType: safeInteger(model.modelType, `${field}.modelType`),
+    };
+}
 
 function toModel(model: ProtoModel, field: string): Model {
     return {
@@ -32,6 +44,16 @@ function requireModel(model: ProtoModel | undefined): Model {
 export async function listModels(channelId: number, signal?: AbortSignal): Promise<Model[]> {
     const response = await callAdminRpc(() => modelClient.listModels({ channelId }, { signal }));
     return response.models.map((model, index) => toModel(model, `models[${index}]`));
+}
+
+export async function listCatalogModels(
+    apiFormat: number,
+    signal?: AbortSignal,
+): Promise<CatalogModel[]> {
+    const response = await callAdminRpc(() =>
+        modelClient.listCatalogModels({ apiFormat }, { signal }),
+    );
+    return response.models.map((model, index) => toCatalogModel(model, `models[${index}]`));
 }
 
 export async function createModel(input: {

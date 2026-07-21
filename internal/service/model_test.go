@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/models"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
@@ -47,5 +48,21 @@ func TestModelServiceGetCreateAndList(t *testing.T) {
 	}
 	if len(list.Models) != 1 || list.Models[0].ModelId != 11 {
 		t.Fatalf("models = %+v", list.Models)
+	}
+
+	catalog, err := svc.ListCatalogModels(context.Background(), &proto.ListCatalogModelsRequest{ApiFormat: models.APIFormatOpenAI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) == 0 || catalog.Models[0].ModelName == "" || catalog.Models[0].ModelType != modelTypeText {
+		t.Fatalf("catalog models = %+v", catalog.Models)
+	}
+
+	emptyCatalog, err := svc.ListCatalogModels(context.Background(), &proto.ListCatalogModelsRequest{ApiFormat: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(emptyCatalog.Models) != 0 {
+		t.Fatalf("unsupported catalog models = %+v", emptyCatalog.Models)
 	}
 }
