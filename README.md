@@ -1,16 +1,18 @@
-<p align="center">
-  <img src="web/fabric/public/logo.png" alt="Fabric Logo" width="160" />
-</p>
+<div align="center">
 
-<h1 align="center">Fabric</h1>
+![Fabric Logo](web/fabric/public/logo.png)
 
-<p align="center">
+<h1 align="center" style="margin: 0;">Fabric</h1>
+
+<p align="center" style="margin: 0;">
   A modular AI gateway framework for proxying, key management, model routing, and usage governance.
 </p>
 
 Fabric is a modular AI gateway framework. It can run as a pre-assembled OpenAI-compatible gateway, or you can selectively import the Core and Business layers as libraries and compose them into your own services.
 
 Fabric is not intended to be only a proxy service. Its goal is to provide reusable AI gateway primitives: transparent proxying, API key management, downstream-to-upstream key mapping, channel/model mapping, usage tracking, sensitive-word detection, and future governance modules such as quota and limit controls.
+
+</div>
 
 ## 💡 Why This Project Exists
 
@@ -184,7 +186,7 @@ docker compose up -d
 Docker Compose builds the gateway image from `Dockerfile`, starts PostgreSQL, and exposes:
 
 - Proxy Server: `http://localhost:3002`
-- Admin Server: `http://localhost:9090`
+- Admin Server and Web Console: `http://localhost:9090`
 
 The tracked `configs/config.docker.yaml` is used by Docker Compose. It is mounted into the container as `/app/configs/config.yaml`, so Docker users do not need to create a separate `configs/config.yaml` before starting Fabric.
 
@@ -234,6 +236,19 @@ make run                    # go run ./cmd/gateway
 make lint                   # go vet ./...
 make test                   # go test ./...
 make sqlc-check             # sqlc compile
+```
+
+### Frontend Development
+
+The management console is a React and Vite application under `web/fabric/`. The gateway serves its bundled production build from the Admin Server. TypeScript protobuf and connect service descriptors under `web/fabric/src/gen/` are generated code and should not be edited manually.
+
+```bash
+cd web/fabric
+pnpm install
+pnpm dev                    # start the Vite development server
+pnpm build                  # type-check and build the frontend
+pnpm lint                   # run oxlint
+pnpm format                 # format handwritten frontend source
 ```
 
 ## 🗺️ Roadmap

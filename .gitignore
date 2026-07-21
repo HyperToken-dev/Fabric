@@ -1,5 +1,6 @@
 configs/config.yaml
 gen/
+web/fabric/src/gen/*
 openspec/
 repository/
 .codegraph/

@@ -124,3 +124,24 @@ WHERE ($1::timestamptz IS NULL OR created_at >= $1)
   AND ($2::timestamptz IS NULL OR created_at <= $2)
 GROUP BY DATE(created_at)
 ORDER BY date;
+
+-- name: GetUsageDashboardTotals :one
+SELECT
+    COALESCE(SUM(prompt_tokens), 0)::bigint AS total_prompt_tokens,
+    COALESCE(SUM(completion_tokens), 0)::bigint AS total_completion_tokens,
+    COUNT(*)::bigint AS request_count
+FROM usage_logs
+WHERE created_at >= sqlc.arg(start_at)
+  AND created_at < sqlc.arg(end_at);
+
+-- name: GetUsageDashboardTimeline :many
+SELECT
+    DATE(created_at AT TIME ZONE sqlc.arg(time_zone)::text)::date AS date,
+    SUM(prompt_tokens)::bigint AS total_prompt_tokens,
+    SUM(completion_tokens)::bigint AS total_completion_tokens,
+    COUNT(*)::bigint AS request_count
+FROM usage_logs
+WHERE created_at >= sqlc.arg(start_at)
+  AND created_at < sqlc.arg(end_at)
+GROUP BY DATE(created_at AT TIME ZONE sqlc.arg(time_zone)::text)
+ORDER BY date;

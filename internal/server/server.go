@@ -150,3 +150,67 @@ func (s *Server) ListModels(ctx context.Context, req *connect.Request[gen.ListMo
 	}
 	return connect.NewResponse(resp), nil
 }
+
+func (s *Server) ListCatalogModels(ctx context.Context, req *connect.Request[gen.ListCatalogModelsRequest]) (*connect.Response[gen.ListCatalogModelsResponse], error) {
+	resp, err := s.modelSvc.ListCatalogModels(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetUsageByKeyHash(ctx context.Context, req *connect.Request[gen.GetUsageByKeyHashRequest]) (*connect.Response[gen.GetUsageResponse], error) {
+	resp, err := s.usageSvc.GetUsageByKeyHash(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetUsageByKeyID(ctx context.Context, req *connect.Request[gen.GetUsageByKeyIDRequest]) (*connect.Response[gen.GetUsageResponse], error) {
+	resp, err := s.usageSvc.GetUsageByKeyID(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetUsageByChannelID(ctx context.Context, req *connect.Request[gen.GetUsageByChannelIDRequest]) (*connect.Response[gen.GetUsageResponse], error) {
+	resp, err := s.usageSvc.GetUsageByChannelID(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetUsageByModelID(ctx context.Context, req *connect.Request[gen.GetUsageByModelIDRequest]) (*connect.Response[gen.GetUsageResponse], error) {
+	resp, err := s.usageSvc.GetUsageByModelID(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *connect.Request[gen.GetUsageByDeadlineAndKeyHashRequest]) (*connect.Response[gen.GetUsageResponse], error) {
+	resp, err := s.usageSvc.GetUsageByDeadlineAndKeyHash(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetUsageSummary(ctx context.Context, req *connect.Request[gen.GetUsageSummaryRequest]) (*connect.Response[gen.GetUsageResponse], error) {
+	resp, err := s.usageSvc.GetUsageSummary(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetUsageDashboard(ctx context.Context, req *connect.Request[gen.GetUsageDashboardRequest]) (*connect.Response[gen.GetUsageDashboardResponse], error) {
+	resp, err := s.usageSvc.GetUsageDashboard(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}

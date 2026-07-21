@@ -6,6 +6,7 @@ service ModelService {
     rpc GetModelInfo(GetModelInfoRequest) returns(GetModelInfoResponse);
     rpc CreateModel(CreateModelRequest) returns(CreateModelResponse);
     rpc ListModels(ListModelsRequest) returns(ListModelsResponse);
+    rpc ListCatalogModels(ListCatalogModelsRequest) returns(ListCatalogModelsResponse);
 }
 
 message Model {
@@ -14,6 +15,11 @@ message Model {
     int32 channel_id = 3;
     int32 status = 4;
     int32 model_type = 5;
+}
+
+message CatalogModel {
+    string model_name = 1;
+    int32 model_type = 2;
 }
 
 message GetModelInfoRequest {
@@ -30,6 +36,14 @@ message ListModelsRequest {
 
 message ListModelsResponse {
     repeated Model models = 1;
+}
+
+message ListCatalogModelsRequest {
+    int32 api_format = 1;
+}
+
+message ListCatalogModelsResponse {
+    repeated CatalogModel models = 1;
 }
 
 message CreateModelRequest {

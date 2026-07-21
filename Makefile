@@ -2,7 +2,7 @@
 
 generate:
 	sqlc generate
-	buf generate
+	buf --timeout 5m generate
 
 build: generate
 	go build ./...

@@ -65,6 +65,7 @@ Startup flow in `cmd/gateway/main.go`:
 - Handle every returned error. Ignoring errors is prohibited.
 - Keep changes small and localized. Prefer the existing package boundaries and patterns.
 - Do not add source files under generated-code directories.
+- Keep handwritten frontend source human-readable with four-space indentation; run `pnpm format` in `web/fabric` after editing and never format generated files under `web/fabric/src/gen/`.
 - Do not edit generated files directly; update schema/query/proto inputs and regenerate.
 
 ## Key concepts
@@ -104,6 +105,9 @@ Startup flow in `cmd/gateway/main.go`:
 | `internal/router/`     | HTTP route registration and proxy client logic |
 | `internal/storage/`    | Storage adapters used by gateway/proxy logic   |
 | `internal/config/`     | Environment-based configuration                |
+| `internal/web/`        | Bundled web UI handler for the admin server    |
+| `web/fabric/`          | React/Vite management console source           |
+| `web/fabric/src/gen/`  | Generated TypeScript protobuf/connect code     |
 
 ## Generated Code Rules
 
@@ -112,3 +116,4 @@ Startup flow in `cmd/gateway/main.go`:
 - For DB changes, edit `db/migrations/` and `db/queries/`, then run `sqlc generate`.
 - For API changes, edit `proto/`, then run `buf generate`.
 - If both DB and API generation are needed, run `sqlc generate` first, then `buf generate`.
+- TypeScript protobuf and service descriptors are generated into `web/fabric/src/gen/`; do not edit files in that directory manually.
