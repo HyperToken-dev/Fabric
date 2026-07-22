@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Sparkles } from 'lucide-react';
-import { listChannels, type Channel } from '../api/channels';
+import { API_FORMATS, CATALOG_API_FORMATS, listChannels, type Channel } from '../api/channels';
 import { enumLabel } from '../api/format';
 import {
     createModel,
@@ -36,7 +36,12 @@ export default function ModelsPage() {
     const [addingCatalog, setAddingCatalog] = useState(false);
 
     const selectedChannel = channels?.find((channel) => channel.channelId === channelId) ?? null;
-    const supportsCatalog = selectedChannel?.apiFormat === 1;
+    const providerLabel = selectedChannel
+        ? enumLabel(selectedChannel.apiFormat, API_FORMATS)
+        : 'No provider';
+    const supportsCatalog = selectedChannel
+        ? CATALOG_API_FORMATS.has(selectedChannel.apiFormat)
+        : false;
     const availableCatalogModels =
         catalogModels?.filter(
             (catalogModel) => !models?.some((model) => model.modelName === catalogModel.modelName),
@@ -233,7 +238,7 @@ export default function ModelsPage() {
                                         {selectedChannel?.channelName ?? 'No channel'}
                                     </span>
                                     <span className="mx-2 text-slate-300">/</span>
-                                    {supportsCatalog ? 'OpenAI-compatible' : 'Custom API format'}
+                                    {providerLabel}
                                 </div>
                             </div>
                         </div>
@@ -251,7 +256,7 @@ export default function ModelsPage() {
                                                     Official catalog
                                                 </div>
                                                 <h2 className="text-lg font-black text-emerald-950">
-                                                    Pick a known OpenAI model
+                                                    Pick a known {providerLabel} model
                                                 </h2>
                                                 <p className="mt-1 max-w-xl text-sm text-emerald-800">
                                                     Add official model names to this channel without

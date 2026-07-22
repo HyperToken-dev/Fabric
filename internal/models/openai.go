@@ -1,20 +1,5 @@
 package models
 
-import (
-	"sort"
-	"strings"
-)
-
-const (
-	APIFormatOpenAI int32 = 1
-	ModelTypeText   int32 = 1
-)
-
-type CatalogModel struct {
-	Name string
-	Type int32
-}
-
 var openAI = map[string]CatalogModel{
 	"babbage-002":                {Name: "babbage-002", Type: ModelTypeText},
 	"chat-latest":                {Name: "chat-latest", Type: ModelTypeText},
@@ -57,32 +42,4 @@ var openAI = map[string]CatalogModel{
 	"o3":                         {Name: "o3", Type: ModelTypeText},
 	"o3-mini":                    {Name: "o3-mini", Type: ModelTypeText},
 	"o4-mini":                    {Name: "o4-mini", Type: ModelTypeText},
-}
-
-func Lookup(apiFormat int32, modelName string) (CatalogModel, bool) {
-	if apiFormat != APIFormatOpenAI {
-		return CatalogModel{}, false
-	}
-
-	model, ok := openAI[strings.TrimSpace(modelName)]
-	return model, ok
-}
-
-func List(apiFormat int32) []CatalogModel {
-	if apiFormat != APIFormatOpenAI {
-		return nil
-	}
-
-	models := make([]CatalogModel, 0, len(openAI))
-	for _, model := range openAI {
-		models = append(models, model)
-	}
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].Name < models[j].Name
-	})
-	return models
-}
-
-func IsRestrictedAPIFormat(apiFormat int32) bool {
-	return apiFormat == APIFormatOpenAI
 }

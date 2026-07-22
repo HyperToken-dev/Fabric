@@ -4,7 +4,7 @@ import { callAdminRpc } from '../rpc/errors';
 import { requireString, safeInteger } from '../rpc/values';
 
 export const MODEL_STATUSES = { 1: 'Active', 2: 'Banned' } as const;
-export const MODEL_TYPES = { 1: 'Text' } as const;
+export const MODEL_TYPES = { 1: 'Text', 2: 'Video' } as const;
 
 export type Model = {
     modelId: number;

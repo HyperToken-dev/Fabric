@@ -9,7 +9,8 @@ import (
 type Provider string
 
 const (
-	ProviderOpenAI Provider = "openai"
+	ProviderOpenAI  Provider = "openai"
+	ProviderAlibaba Provider = "alibaba"
 )
 
 type contextKey string
@@ -46,7 +47,11 @@ var errModelDisabled = errors.New("model disabled")
 var errModelUnsupported = errors.New("model unsupported")
 
 func (p *OpenAIProxy) resolveModel(ctx context.Context, channelID int32, modelName string) (int32, error) {
-	model, err := p.modelStore.ResolveModel(ctx, channelID, modelName)
+	return resolveModelFromStore(ctx, p.modelStore, channelID, modelName)
+}
+
+func resolveModelFromStore(ctx context.Context, store ModelStore, channelID int32, modelName string) (int32, error) {
+	model, err := store.ResolveModel(ctx, channelID, modelName)
 	if err != nil {
 		return 0, err
 	}
