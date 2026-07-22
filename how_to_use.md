@@ -34,7 +34,7 @@ Fabric runs migrations from `db/migrations/` during startup. The current migrati
 - `models`
 - `usage_logs`
 
-The migrations also seed an OpenAI channel and a set of OpenAI-compatible models. In real deployments, configure or create a channel with a real `provider_key` through the management API.
+The migrations do not seed default provider channels or models. In real deployments, configure or create a channel with a real `provider_key` and add required models through the management API or Admin Console.
 
 ### 1.3 Configuration Files
 
@@ -183,7 +183,7 @@ Fabric runs migrations from `db/migrations/` during startup. The current migrati
 - `models`
 - `usage_logs`
 
-The migrations also seed an OpenAI channel and a set of OpenAI-compatible models. In real deployments, configure or create a channel with a real `provider_key` through the management API.
+The migrations do not seed default provider channels or models. In real deployments, configure or create a channel with a real `provider_key` and add required models through the management API or Admin Console.
 
 #### Local Start
 
@@ -245,8 +245,8 @@ Methods:
 `CreateChannelRequest` fields:
 
 - `channel_name`: channel name.
-- `base_url`: upstream service URL, for example `https://api.openai.com`.
-- `api_format`: API format. The current OpenAI-compatible format is `1`.
+- `base_url`: upstream service URL, for example `https://api.openai.com` (OpenAI) or `https://dashscope.aliyuncs.com` (Alibaba Bailian).
+- `api_format`: API format. `1` for OpenAI, `2` for Alibaba Bailian.
 - `provider_key`: upstream provider API key.
 
 Update request fields:
@@ -254,12 +254,12 @@ Update request fields:
 - `UpdateChannelNameRequest`: `channel_id`, `channel_name`.
 - `UpdateChannelStatusRequest`: `channel_id`, `status`. Current status values are `1` active, `2` banned, and `3` pending.
 - `UpdateChannelBaseURLRequest`: `channel_id`, `base_url`.
-- `UpdateChannelAPIFormatRequest`: `channel_id`, `api_format`. The current OpenAI-compatible format is `1`.
+- `UpdateChannelAPIFormatRequest`: `channel_id`, `api_format`.
 - `UpdateChannelProviderKeyRequest`: `channel_id`, `provider_key`.
 
 `UpdateChannelProviderKey` updates the stored upstream provider credential. `Channel` responses do not expose `provider_key`.
 
-Example:
+Example for OpenAI:
 
 ```bash
 curl http://localhost:9090/proto.ChannelService/CreateChannel \
@@ -269,6 +269,19 @@ curl http://localhost:9090/proto.ChannelService/CreateChannel \
     "baseUrl": "https://api.openai.com",
     "apiFormat": 1,
     "providerKey": "sk-your-provider-key"
+  }'
+```
+
+Example for Alibaba Bailian:
+
+```bash
+curl http://localhost:9090/proto.ChannelService/CreateChannel \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channelName": "Bailian",
+    "baseUrl": "https://dashscope.aliyuncs.com",
+    "apiFormat": 2,
+    "providerKey": "sk-your-dashscope-key"
   }'
 ```
 
@@ -336,13 +349,14 @@ Methods:
 - `GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse)`
 - `CreateModel(CreateModelRequest) returns (CreateModelResponse)`
 - `ListModels(ListModelsRequest) returns (ListModelsResponse)`
+- `ListCatalogModels(ListCatalogModelsRequest) returns (ListCatalogModelsResponse)`
 
 `CreateModelRequest` fields:
 
-- `model_name`: model name, for example `gpt-5.5`.
+- `model_name`: model name, for example `gpt-5.5` or `wan2.7-t2v-2026-06-12`.
 - `channel_id`: owning channel ID.
 - `status`: model status. The current active status is `1`.
-- `model_type`: model type. The current text model type is `1`.
+- `model_type`: model type. Text is `1`, Video is `2`.
 
 Example:
 
@@ -412,7 +426,7 @@ curl http://localhost:9090/proto.UsageService/GetUsageSummary \
 
 Clients call the Fabric Proxy Server with a Fabric-issued Gateway API Key. Fabric resolves the bound Channel and injects the provider key when forwarding the request upstream.
 
-### 3.1 Chat Completions
+### 3.1 OpenAI Chat Completions
 
 ```bash
 curl http://localhost:3002/v1/chat/completions \
@@ -433,7 +447,7 @@ Notes:
 - The provider key is stored in the Channel and injected by Fabric during forwarding.
 - The requested `model` must exist under the bound Channel and must be enabled.
 
-### 3.2 Streaming Chat Completions
+### 3.2 OpenAI Streaming Chat Completions
 
 ```bash
 curl http://localhost:3002/v1/chat/completions \
@@ -460,9 +474,44 @@ For streaming chat completions, Fabric injects:
 
 This allows Fabric to capture usage from the streaming response.
 
+### 3.3 Alibaba Bailian Text-to-Video Task Creation
+
+```bash
+curl http://localhost:3002/api/v1/services/aigc/video-generation/video-synthesis \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "wan2.7-t2v-2026-06-12",
+    "input": {
+      "prompt": "A cat running under moonlight"
+    },
+    "parameters": {
+      "resolution": "720P",
+      "ratio": "16:9",
+      "duration": 5
+    }
+  }'
+```
+
+Notes:
+- The `Authorization` header expects a Gateway API Key bound to an Alibaba Bailian API format channel.
+- Fabric automatically injects `X-DashScope-Async: enable` and the provider key when forwarding.
+- The `model` must be configured under the bound channel.
+
+### 3.4 Alibaba Bailian Task Fetch
+
+```bash
+curl http://localhost:3002/api/v1/tasks/<task_id> \
+  -H "Authorization: Bearer hy_xxx"
+```
+
+Notes:
+- Replace `<task_id>` with the ID returned by the task creation request.
+- The same Gateway API Key must be used.
+
 ## 4. Usage Logging
 
-Fabric currently supports OpenAI-compatible usage logging.
+Fabric currently supports OpenAI-compatible usage logging. Alibaba Bailian text-to-video requests are proxied but video usage is not recorded yet.
 
 For non-streaming responses:
 
@@ -566,8 +615,8 @@ Relevant directories:
 Reusable capabilities:
 
 - OpenAI-compatible reverse proxy.
-- Provider request rewrite.
-- Provider response hooks.
+- Alibaba Bailian task API proxy.
+- Provider request rewrite hooks.
 - Upstream base URL and provider key injection.
 
 ### 6.2 Use Only the Business Layer
@@ -757,7 +806,15 @@ The bound Channel does not have an upstream provider key. Provide `provider_key`
 
 ### Proxy returns `unsupported model`
 
-The requested model is not configured under the current Channel, or the model is disabled. Create or inspect model configuration through `ModelService`.
+The requested model is not configured under the current Channel, or the model is disabled. Create or inspect model configuration through `ModelService`. Official catalog models are only candidates; you must explicitly add a model to your channel before clients can request it.
+
+### Proxy returns `unsupported alibaba bailian path`
+
+The requested path is not `video-synthesis` or `tasks/`. Fabric restricts the Alibaba Bailian proxy surface to explicitly supported task paths.
+
+### Bailian Video Usage is not shown
+
+Alibaba Bailian text-to-video requests are proxied successfully, but Fabric does not currently record video usage. This is a known limitation.
 
 ### Proxy returns `invalid api key`
 

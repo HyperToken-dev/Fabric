@@ -8,11 +8,17 @@
   A modular AI gateway framework for proxying, key management, model routing, and usage governance.
 </p>
 
-Fabric is a modular AI gateway framework. It can run as a pre-assembled OpenAI-compatible gateway, or you can selectively import the Core and Business layers as libraries and compose them into your own services.
+Fabric is a modular AI gateway framework. You can run as full AI gateway service or selectively import the Core and Business layers as libraries and compose them into your own services.
 
 Fabric is not intended to be only a proxy service. Its goal is to provide reusable AI gateway primitives: transparent proxying, API key management, downstream-to-upstream key mapping, channel/model mapping, usage tracking, sensitive-word detection, and future governance modules such as quota and limit controls.
 
 </div>
+
+<p align="center">
+    <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="LICENSE"></img>
+    <img src="https://img.shields.io/badge/Go-1.26-aqua?logo=go&logoColor=white" alt="go 1.26"></img>
+    <img src="https://img.shields.io/badge/React-19.2.7-aqua?logo=react&logoColor=blue" alit="React 19.2.7"></img>
+</p>
 
 ## 💡 Why This Project Exists
 
@@ -29,13 +35,15 @@ Fabric exists to split these common capabilities into independent, composable, r
 
 ## 🧭 Project Positioning
 
-Fabric currently implements an OpenAI-compatible gateway with:
+Fabric currently implements a provider-routed gateway with:
 
 - Transparent OpenAI API proxying.
+- Alibaba Bailian text-to-video task creation and fetch proxying.
 - Gateway API key authentication.
-- Channel management.
-- Model management.
-- Usage logging and querying.
+- Channel management with provider-aware base URL routing.
+- Model management with provider-aware catalog selection.
+- Text, Audio and Video model types.
+- Usage logging and querying (for OpenAI-compatible endpoints).
 - Model-scoped sensitive-word detection.
 - PostgreSQL-backed persistence.
 - Startup database migrations.
@@ -47,7 +55,8 @@ Future work will expand Fabric with more providers, more model types, and additi
 
 Current distinctive features:
 
-- **Usage logging**: records the key, channel, model, prompt tokens, and completion tokens for requests, then exposes the data for later querying and aggregation.
+- **Provider-aware routing**: dispatch traffic to upstream providers based on channel API format.
+- **Usage logging**: records the key, channel, model, prompt tokens, and completion tokens for OpenAI-compatible requests, then exposes the data for later querying and aggregation.
 - **Model-scoped sensitive-word detection**: dictionaries can be scoped to specific models, allowing different models to use different detection policies.
 
 Planned capabilities:
@@ -138,7 +147,7 @@ It is useful for:
 
 ## 🌐 Supported and Planned Providers / Models
 
-Fabric currently focuses on OpenAI-compatible APIs. The Core Layer will continue to add provider adapters so models from different vendors can be connected through the same gateway primitives.
+Fabric currently focuses on OpenAI-compatible APIs and Alibaba Bailian asynchronous text-to-video APIs. The Core Layer will continue to add provider adapters so models from different vendors can be connected through the same gateway primitives.
 
 Planned provider/model vendors include:
 
@@ -190,7 +199,7 @@ Docker Compose builds the gateway image from `Dockerfile`, starts PostgreSQL, an
 
 The tracked `configs/config.docker.yaml` is used by Docker Compose. It is mounted into the container as `/app/configs/config.yaml`, so Docker users do not need to create a separate `configs/config.yaml` before starting Fabric.
 
-The gateway runs database migrations from `db/migrations/` during startup. After startup, configure a real upstream provider key through the Admin API before proxying production traffic.
+The gateway runs database migrations from `db/migrations/` during startup. After startup, create a channel for your desired provider (e.g. OpenAI or Alibaba Bailian), add a model, and configure a real upstream provider key through the Admin API or Web Console before proxying production traffic.
 
 ### 2. Optional Sensitive-Word Detection
 
