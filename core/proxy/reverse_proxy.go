@@ -18,7 +18,7 @@ const (
 
 var ErrRewriteFailed = errors.New("rewrite request failed")
 
-type RewriteFunc func(pr *httputil.ProxyRequest, upstream Upstream) error
+type RewriteFunc func(pr *httputil.ProxyRequest) error
 
 type ModifyResponseFunc func(resp *http.Response) error
 
@@ -63,7 +63,7 @@ func New(opts Options) *Proxy {
 			authInjector(pr.Out, upstream)
 
 			if opts.Rewrite != nil {
-				if err := opts.Rewrite(pr, upstream); err != nil {
+				if err := opts.Rewrite(pr); err != nil {
 					pr.Out = pr.Out.WithContext(context.WithValue(pr.Out.Context(), ctxRewriteError, err))
 				}
 			}

@@ -20,7 +20,7 @@ func New(opts coreproxy.Options) *coreproxy.Proxy {
 	return coreproxy.New(opts)
 }
 
-func defaultRewrite(pr *httputil.ProxyRequest, upstream coreproxy.Upstream) error {
+func defaultRewrite(pr *httputil.ProxyRequest) error {
 	if pr.Out.URL.Path != "/v1/chat/completions" {
 		return nil
 	}

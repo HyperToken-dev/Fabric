@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httputil"
 	"strconv"
 	"strings"
 
@@ -18,8 +17,6 @@ import (
 const (
 	bailianVideoSynthesisPath = "/api/v1/services/aigc/video-generation/video-synthesis"
 	bailianTasksPathPrefix    = "/api/v1/tasks/"
-	bailianAsyncHeader        = "X-DashScope-Async"
-	bailianAsyncHeaderValue   = "enable"
 )
 
 type AlibabaBailianProxy struct {
@@ -40,10 +37,7 @@ func NewAlibabaBailianProxy(opts AlibabaBailianProxyOptions) (*AlibabaBailianPro
 		opts.ModelStore = NoopModelStore{}
 	}
 	p := &AlibabaBailianProxy{modelStore: opts.ModelStore}
-	coreProxy, err := corealibaba.New(coreproxy.Options{Rewrite: p.rewrite})
-	if err != nil {
-		return nil, err
-	}
+	coreProxy := corealibaba.New(coreproxy.Options{})
 	p.coreProxy = coreProxy
 	return p, nil
 }
@@ -100,13 +94,6 @@ func (p *AlibabaBailianProxy) prepareVideoSynthesisRequest(r *http.Request, chan
 		return "", err
 	}
 	return modelName, nil
-}
-
-func (p *AlibabaBailianProxy) rewrite(pr *httputil.ProxyRequest, upstream coreproxy.Upstream) error {
-	if isBailianVideoSynthesisRequest(pr.Out) {
-		pr.Out.Header.Set(bailianAsyncHeader, bailianAsyncHeaderValue)
-	}
-	return nil
 }
 
 func (p *AlibabaBailianProxy) writeModelError(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, err error) {

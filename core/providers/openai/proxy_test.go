@@ -27,7 +27,7 @@ func TestOpenAIProxyUsesBearerAuthAndRewriteHook(t *testing.T) {
 	defer upstream.Close()
 
 	p := New(coreproxy.Options{
-		Rewrite: func(pr *httputil.ProxyRequest, upstream coreproxy.Upstream) error {
+		Rewrite: func(pr *httputil.ProxyRequest) error {
 			rewriteCalled = true
 			pr.Out.Header.Set("X-Rewrite", "yes")
 			return nil
@@ -223,7 +223,7 @@ func TestOpenAIProxyCustomRewriteOverridesDefaultRewrite(t *testing.T) {
 	defer upstream.Close()
 
 	p := New(coreproxy.Options{
-		Rewrite: func(pr *httputil.ProxyRequest, upstream coreproxy.Upstream) error {
+		Rewrite: func(pr *httputil.ProxyRequest) error {
 			pr.Out.Header.Set("X-Custom-Rewrite", "yes")
 			return nil
 		},

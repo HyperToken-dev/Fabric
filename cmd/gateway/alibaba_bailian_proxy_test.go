@@ -25,8 +25,8 @@ func TestAlibabaBailianProxyCreateTaskForwardsWithProviderAuthAndAsyncHeader(t *
 		if got := r.Header.Get("Authorization"); got != "Bearer provider-key" {
 			t.Errorf("Authorization = %q, want provider key", got)
 		}
-		if got := r.Header.Get(bailianAsyncHeader); got != bailianAsyncHeaderValue {
-			t.Errorf("%s = %q, want %q", bailianAsyncHeader, got, bailianAsyncHeaderValue)
+		if got := r.Header.Get("X-DashScope-Async"); got != "enable" {
+			t.Errorf("X-DashScope-Async = %q, want %q", got, "enable")
 		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -104,8 +104,8 @@ func TestAlibabaBailianProxyFetchTaskForwardsWithoutModelValidation(t *testing.T
 		if got := r.Header.Get("Authorization"); got != "Bearer provider-key" {
 			t.Errorf("Authorization = %q, want provider key", got)
 		}
-		if got := r.Header.Get(bailianAsyncHeader); got != "" {
-			t.Errorf("%s = %q, want empty", bailianAsyncHeader, got)
+		if got := r.Header.Get("X-DashScope-Async"); got != "" {
+			t.Errorf("X-DashScope-Async = %q, want empty", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"output":{"task_id":"task-1","task_status":"SUCCEEDED"},"usage":{"duration":10}}`))

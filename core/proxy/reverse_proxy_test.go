@@ -43,11 +43,8 @@ func TestProxyServeHTTPForwardsToUpstream(t *testing.T) {
 	upstreamHost = upstreamURL.Host
 
 	p := New(Options{
-		Rewrite: func(pr *httputil.ProxyRequest, upstream Upstream) error {
+		Rewrite: func(pr *httputil.ProxyRequest) error {
 			rewriteCalled = true
-			if upstream.APIKey != "provider-key" {
-				t.Errorf("upstream APIKey = %q, want provider-key", upstream.APIKey)
-			}
 			pr.Out.Header.Set("X-Rewrite", "yes")
 			return nil
 		},
@@ -151,7 +148,7 @@ func TestProxyServeHTTPReturnsBadGatewayForRewriteError(t *testing.T) {
 
 	rewriteErr := errors.New("custom rewrite error")
 	p := New(Options{
-		Rewrite: func(pr *httputil.ProxyRequest, upstream Upstream) error {
+		Rewrite: func(pr *httputil.ProxyRequest) error {
 			return rewriteErr
 		},
 	})
