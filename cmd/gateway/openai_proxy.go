@@ -3,11 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
-	"net/http/httputil"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +17,7 @@ import (
 )
 
 type OpenAIProxy struct {
-	coreProxy    *coreopenai.Proxy
+	coreProxy    *coreproxy.Proxy
 	modelStore   ModelStore
 	usageHandler UsageHandler
 	textPolicy   TextPolicy
@@ -30,11 +27,6 @@ type OpenAIProxyOptions struct {
 	ModelStore   ModelStore
 	UsageHandler UsageHandler
 	TextPolicy   TextPolicy
-}
-
-type openaiChatRequest struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
 }
 
 func NewOpenAIProxy(opts OpenAIProxyOptions) (*OpenAIProxy, error) {
@@ -52,72 +44,11 @@ func NewOpenAIProxy(opts OpenAIProxyOptions) (*OpenAIProxy, error) {
 		usageHandler: opts.UsageHandler,
 		textPolicy:   opts.TextPolicy,
 	}
-	coreProxy, err := coreopenai.New(coreopenai.Options{
-		Rewrite:        p.rewrite,
+	coreProxy := coreopenai.New(coreproxy.Options{
 		ModifyResponse: p.modifyResponse,
 	})
-	if err != nil {
-		return nil, err
-	}
 	p.coreProxy = coreProxy
 	return p, nil
-}
-
-func (p *OpenAIProxy) rewrite(pr *httputil.ProxyRequest) {
-	if pr.Out.URL.Path == "/v1/chat/completions" && getContextBool(pr.In, ctxStreamKey) {
-		if err := injectOpenAIChatStreamOptions(pr.Out); err != nil {
-			zap.L().Error("inject openai chat stream options failed", zap.Error(err))
-		}
-	}
-}
-
-// if stream = true and /v1/chat/com we need insert a new field "include_usage"
-func injectOpenAIChatStreamOptions(req *http.Request) error {
-	if req.Body == nil {
-		return nil
-	}
-
-	body, err := io.ReadAll(req.Body)
-	closeErr := req.Body.Close()
-	if err != nil {
-		if closeErr != nil {
-			return errors.Join(err, closeErr)
-		}
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		restoreOpenAIRequestBody(req, body)
-		return err
-	}
-
-	streamOptions, ok := payload["stream_options"].(map[string]any)
-	if !ok {
-		streamOptions = make(map[string]any)
-	}
-	streamOptions["include_usage"] = true
-	payload["stream_options"] = streamOptions
-
-	newBody, err := json.Marshal(payload)
-	if err != nil {
-		restoreOpenAIRequestBody(req, body)
-		return err
-	}
-	restoreOpenAIRequestBody(req, newBody)
-	return nil
-}
-
-func restoreOpenAIRequestBody(req *http.Request, body []byte) {
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
-	}
-	req.ContentLength = int64(len(body))
-	req.Header.Set("Content-Length", strconv.Itoa(len(body)))
 }
 
 func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
@@ -300,6 +231,5 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	r = setContextInt32(r, ctxChannelID, channelID)
 	r = setContextString(r, ctxModel, modelName)
 	r = setContextInt32(r, ctxModelID, modelID)
-	r = setContextBool(r, ctxStreamKey, parsedReq.Stream)
 	p.coreProxy.ServeHTTP(w, r, coreproxy.Upstream{BaseURL: baseURL, APIKey: providerKey})
 }

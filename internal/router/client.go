@@ -11,21 +11,20 @@ import (
 )
 
 type Router struct {
-	queries     *repository.Queries
-	openaiProxy OpenAIProxy
+	queries *repository.Queries
+	proxies map[int32]Proxy
 }
 
-type OpenAIProxy interface {
+type Proxy interface {
 	ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string)
 }
 
 const (
 	channelStatusEnabled int16 = 1
-	apiFormatOpenAI      int32 = 1
 )
 
-func New(queries *repository.Queries, openaiProxy OpenAIProxy) *Router {
-	return &Router{queries: queries, openaiProxy: openaiProxy}
+func New(queries *repository.Queries, proxies map[int32]Proxy) *Router {
+	return &Router{queries: queries, proxies: proxies}
 }
 
 func (rt *Router) AuthMiddleware() gin.HandlerFunc {

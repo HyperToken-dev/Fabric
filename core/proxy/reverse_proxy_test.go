@@ -1,0 +1,171 @@
+package proxy
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"strings"
+	"testing"
+)
+
+func TestProxyServeHTTPForwardsToUpstream(t *testing.T) {
+	rewriteCalled := false
+	modifyCalled := false
+	var upstreamHost string
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.RawQuery != "foo=bar" {
+			t.Errorf("query = %q", r.URL.RawQuery)
+		}
+		if got, want := r.Header.Get("Authorization"), "Bearer provider-key"; got != want {
+			t.Errorf("Authorization = %q, want %q", got, want)
+		}
+		if r.Host != upstreamHost {
+			t.Errorf("Host = %q, want %q", r.Host, upstreamHost)
+		}
+		if got := r.Header.Get("X-Rewrite"); got != "yes" {
+			t.Errorf("X-Rewrite = %q, want yes", got)
+		}
+		w.Header().Set("X-Upstream", "ok")
+		_, _ = w.Write([]byte("proxied"))
+	}))
+	defer upstreamServer.Close()
+	upstreamURL, err := url.Parse(upstreamServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstreamHost = upstreamURL.Host
+
+	p := New(Options{
+		Rewrite: func(pr *httputil.ProxyRequest, upstream Upstream) error {
+			rewriteCalled = true
+			if upstream.APIKey != "provider-key" {
+				t.Errorf("upstream APIKey = %q, want provider-key", upstream.APIKey)
+			}
+			pr.Out.Header.Set("X-Rewrite", "yes")
+			return nil
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			modifyCalled = true
+			resp.Header.Set("X-Modified", "yes")
+			return nil
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://client.example/v1/chat/completions?foo=bar", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer client-key")
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req, Upstream{BaseURL: upstreamServer.URL, APIKey: "provider-key"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Modified"); got != "yes" {
+		t.Fatalf("X-Modified = %q, want yes", got)
+	}
+	body, err := io.ReadAll(rec.Result().Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "proxied" {
+		t.Fatalf("body = %q, want proxied", body)
+	}
+	if !rewriteCalled {
+		t.Fatal("rewrite callback was not called")
+	}
+	if !modifyCalled {
+		t.Fatal("modify response callback was not called")
+	}
+}
+
+func TestProxyServeHTTPRejectsInvalidBaseURL(t *testing.T) {
+	p := New(Options{})
+
+	tests := []string{"", "example.com", "http://", "http://example.com/base"}
+	for _, baseURL := range tests {
+		t.Run(baseURL, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			p.ServeHTTP(rec, req, Upstream{BaseURL: baseURL, APIKey: "provider-key"})
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+			}
+		})
+	}
+}
+
+func TestParseBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		wantErr bool
+	}{
+		{name: "root without slash", baseURL: "https://api.openai.com"},
+		{name: "root with slash", baseURL: "https://api.openai.com/"},
+		{name: "trim spaces", baseURL: " https://api.openai.com "},
+		{name: "empty", baseURL: "", wantErr: true},
+		{name: "missing scheme", baseURL: "api.openai.com", wantErr: true},
+		{name: "missing host", baseURL: "https://", wantErr: true},
+		{name: "path", baseURL: "https://api.openai.com/v1", wantErr: true},
+		{name: "path with slash", baseURL: "https://api.openai.com/v1/", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseBaseURL(tt.baseURL)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestProxyServeHTTPReturnsBadGatewayForUpstreamError(t *testing.T) {
+	p := New(Options{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	p.ServeHTTP(rec, req, Upstream{BaseURL: "http://127.0.0.1:1", APIKey: "provider-key"})
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+func TestProxyServeHTTPReturnsBadGatewayForRewriteError(t *testing.T) {
+	upstreamCalled := false
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstreamServer.Close()
+
+	rewriteErr := errors.New("custom rewrite error")
+	p := New(Options{
+		Rewrite: func(pr *httputil.ProxyRequest, upstream Upstream) error {
+			return rewriteErr
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	p.ServeHTTP(rec, req, Upstream{BaseURL: upstreamServer.URL, APIKey: "provider-key"})
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if !strings.Contains(rec.Body.String(), rewriteErr.Error()) {
+		t.Fatalf("body = %q, want rewrite error", rec.Body.String())
+	}
+	if upstreamCalled {
+		t.Fatal("upstream was called after rewrite error")
+	}
+}

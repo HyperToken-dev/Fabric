@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	coreopenai "github.com/HyperToken-dev/fabric/core/providers/openai"
+	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 	proto "github.com/HyperToken-dev/fabric/gen"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 
@@ -176,7 +176,7 @@ func validateChannelBaseURL(baseURL string) error {
 	if len(baseURL) > channelBaseURLMaxLength {
 		return fmt.Errorf("base_url must be at most %d characters", channelBaseURLMaxLength)
 	}
-	if _, err := coreopenai.ParseBaseURL(baseURL); err != nil {
+	if _, err := coreproxy.ParseBaseURL(baseURL); err != nil {
 		return fmt.Errorf("invalid base_url: %w", err)
 	}
 	return nil

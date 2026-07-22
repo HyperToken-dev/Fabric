@@ -30,12 +30,13 @@ func (rt *Router) ProxyHandler(c *gin.Context) {
 		return
 	}
 
-	switch apiFormat {
-	case apiFormatOpenAI:
-		zap.L().Info("proxy request routed", zap.String("provider", "openai"), zap.String("method", c.Request.Method), zap.String("path", c.Request.URL.Path), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("api_format", apiFormat))
-		rt.openaiProxy.ServeHTTP(c.Writer, c.Request, keyID, channelID, baseURL, providerKey)
-	default:
+	proxy, ok := rt.proxies[apiFormat]
+	if !ok {
 		zap.L().Warn("unsupported api format", zap.String("method", c.Request.Method), zap.String("path", c.Request.URL.Path), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("api_format", apiFormat))
 		c.JSON(http.StatusNotFound, gin.H{"error": "unsupported api format"})
+		return
 	}
+
+	zap.L().Info("proxy request routed", zap.String("method", c.Request.Method), zap.String("path", c.Request.URL.Path), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("api_format", apiFormat))
+	proxy.ServeHTTP(c.Writer, c.Request, keyID, channelID, baseURL, providerKey)
 }

@@ -20,7 +20,6 @@ const (
 	ctxModel     contextKey = "model"
 	ctxModelID   contextKey = "model_id"
 	ctxProvider  contextKey = "provider"
-	ctxStreamKey contextKey = "stream"
 )
 
 func setContextInt32(r *http.Request, key contextKey, val int32) *http.Request {
@@ -33,11 +32,6 @@ func setContextString(r *http.Request, key contextKey, val string) *http.Request
 	return r.WithContext(ctx)
 }
 
-func setContextBool(r *http.Request, key contextKey, val bool) *http.Request {
-	ctx := context.WithValue(r.Context(), key, val)
-	return r.WithContext(ctx)
-}
-
 func getContextInt32(r *http.Request, key contextKey) int32 {
 	v, _ := r.Context().Value(key).(int32)
 	return v
@@ -45,11 +39,6 @@ func getContextInt32(r *http.Request, key contextKey) int32 {
 
 func getContextString(r *http.Request, key contextKey) string {
 	v, _ := r.Context().Value(key).(string)
-	return v
-}
-
-func getContextBool(r *http.Request, key contextKey) bool {
-	v, _ := r.Context().Value(key).(bool)
 	return v
 }
 

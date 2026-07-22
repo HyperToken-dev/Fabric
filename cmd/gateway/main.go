@@ -11,6 +11,7 @@ import (
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
 	"github.com/HyperToken-dev/fabric/internal/config"
+	"github.com/HyperToken-dev/fabric/internal/models"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 	"github.com/HyperToken-dev/fabric/internal/router"
 	"github.com/HyperToken-dev/fabric/internal/server"
@@ -144,7 +145,9 @@ func main() {
 		zap.S().Fatalf("create openai proxy error: %v", err)
 	}
 
-	rt := router.New(queries, openaiProxy)
+	rt := router.New(queries, map[int32]router.Proxy{
+		models.APIFormatOpenAI: openaiProxy,
+	})
 	proxyMux := rt.RegisterProxyRoutes()
 	zap.L().Info("proxy routes registered")
 
