@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Check, Pencil, Plus, X } from 'lucide-react';
 import {
+    API_FORMAT_DEFAULT_BASE_URLS,
     API_FORMATS,
     CHANNEL_STATUSES,
     createChannel,
@@ -31,6 +32,22 @@ type Draft = {
     providerKey: string;
 };
 
+const defaultAPIFormat = 1;
+
+function defaultBaseUrl(apiFormat: number): string {
+    return API_FORMAT_DEFAULT_BASE_URLS[apiFormat] ?? '';
+}
+
+function newDraft(): Draft {
+    return {
+        channelName: '',
+        baseUrl: defaultBaseUrl(defaultAPIFormat),
+        status: 1,
+        apiFormat: defaultAPIFormat,
+        providerKey: '',
+    };
+}
+
 export default function ChannelsPage() {
     const [channels, setChannels] = useState<Channel[] | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -38,13 +55,7 @@ export default function ChannelsPage() {
     const [creating, setCreating] = useState(false);
     const [editing, setEditing] = useState<number | null>(null);
     const [saving, setSaving] = useState(false);
-    const [draft, setDraft] = useState<Draft>({
-        channelName: '',
-        baseUrl: 'https://api.openai.com',
-        status: 1,
-        apiFormat: 1,
-        providerKey: '',
-    });
+    const [draft, setDraft] = useState<Draft>(newDraft);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -88,13 +99,7 @@ export default function ChannelsPage() {
             const channel = await createChannel(draft);
             setChannels((current) => [...(current ?? []), channel]);
             setCreating(false);
-            setDraft({
-                channelName: '',
-                baseUrl: 'https://api.openai.com',
-                status: 1,
-                apiFormat: 1,
-                providerKey: '',
-            });
+            setDraft(newDraft());
         } catch (requestError) {
             setError(
                 requestError instanceof Error ? requestError.message : 'Unable to create channel',
@@ -188,9 +193,14 @@ export default function ChannelsPage() {
                 <select
                     className={inputClass}
                     value={draft.apiFormat}
-                    onChange={(event) =>
-                        setDraft({ ...draft, apiFormat: Number(event.target.value) })
-                    }
+                    onChange={(event) => {
+                        const apiFormat = Number(event.target.value);
+                        setDraft({
+                            ...draft,
+                            apiFormat,
+                            baseUrl: defaultBaseUrl(apiFormat),
+                        });
+                    }}
                 >
                     {Object.entries(API_FORMATS).map(([value, label]) => (
                         <option key={value} value={value}>
@@ -243,13 +253,7 @@ export default function ChannelsPage() {
                         onClick={() => {
                             setCreating(true);
                             setEditing(null);
-                            setDraft({
-                                channelName: '',
-                                baseUrl: 'https://api.openai.com',
-                                status: 1,
-                                apiFormat: 1,
-                                providerKey: '',
-                            });
+                            setDraft(newDraft());
                         }}
                         className={buttonClass}
                     >

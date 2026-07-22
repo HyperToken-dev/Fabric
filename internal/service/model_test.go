@@ -58,7 +58,7 @@ func TestModelServiceGetCreateAndList(t *testing.T) {
 		t.Fatalf("catalog models = %+v", catalog.Models)
 	}
 
-	emptyCatalog, err := svc.ListCatalogModels(context.Background(), &proto.ListCatalogModelsRequest{ApiFormat: 2})
+	emptyCatalog, err := svc.ListCatalogModels(context.Background(), &proto.ListCatalogModelsRequest{ApiFormat: 999})
 	if err != nil {
 		t.Fatal(err)
 	}

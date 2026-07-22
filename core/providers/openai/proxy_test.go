@@ -1,106 +1,243 @@
 package openai
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
-	"net/url"
 	"strings"
 	"testing"
 
 	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 )
 
-func TestProxyServeHTTPForwardsToUpstream(t *testing.T) {
+func TestOpenAIProxyUsesBearerAuthAndRewriteHook(t *testing.T) {
 	rewriteCalled := false
-	modifyCalled := false
-	var upstreamHost string
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if r.URL.RawQuery != "foo=bar" {
-			t.Errorf("query = %q", r.URL.RawQuery)
-		}
 		if got, want := r.Header.Get("Authorization"), "Bearer provider-key"; got != want {
 			t.Errorf("Authorization = %q, want %q", got, want)
-		}
-		if r.Host != upstreamHost {
-			t.Errorf("Host = %q, want %q", r.Host, upstreamHost)
 		}
 		if got := r.Header.Get("X-Rewrite"); got != "yes" {
 			t.Errorf("X-Rewrite = %q, want yes", got)
 		}
-		w.Header().Set("X-Upstream", "ok")
-		_, _ = w.Write([]byte("proxied"))
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	upstreamURL, err := url.Parse(upstream.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	upstreamHost = upstreamURL.Host
 
-	p, err := New(Options{
-		Rewrite: func(pr *httputil.ProxyRequest) {
+	p := New(coreproxy.Options{
+		Rewrite: func(pr *httputil.ProxyRequest) error {
 			rewriteCalled = true
 			pr.Out.Header.Set("X-Rewrite", "yes")
-		},
-		ModifyResponse: func(resp *http.Response) error {
-			modifyCalled = true
-			resp.Header.Set("X-Modified", "yes")
 			return nil
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	req := httptest.NewRequest(http.MethodPost, "http://client.example/v1/chat/completions?foo=bar", strings.NewReader(`{}`))
-	req.Header.Set("Authorization", "Bearer client-key")
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	rec := httptest.NewRecorder()
 
 	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: upstream.URL, APIKey: "provider-key"})
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("X-Modified"); got != "yes" {
-		t.Fatalf("X-Modified = %q, want yes", got)
-	}
-	body, err := io.ReadAll(rec.Result().Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(body) != "proxied" {
-		t.Fatalf("body = %q, want proxied", body)
 	}
 	if !rewriteCalled {
 		t.Fatal("rewrite callback was not called")
 	}
-	if !modifyCalled {
-		t.Fatal("modify response callback was not called")
+}
+
+func TestOpenAIProxyDefaultRewriteInjectsChatStreamUsageOption(t *testing.T) {
+	var forwarded map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read upstream body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Errorf("close upstream body: %v", err)
+		}
+		if err := json.Unmarshal(body, &forwarded); err != nil {
+			t.Errorf("unmarshal upstream body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p := New(coreproxy.Options{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","stream":true}`))
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: upstream.URL, APIKey: "provider-key"})
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	streamOptions, ok := forwarded["stream_options"].(map[string]any)
+	if !ok {
+		t.Fatalf("stream_options = %#v, want object", forwarded["stream_options"])
+	}
+	if got, want := streamOptions["include_usage"], true; got != want {
+		t.Fatalf("include_usage = %#v, want true", got)
 	}
 }
 
-func TestProxyServeHTTPRejectsInvalidBaseURL(t *testing.T) {
-	p, err := New(Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestOpenAIProxyDefaultRewriteDoesNotInjectNonStreamChatCompletion(t *testing.T) {
+	var forwarded map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read upstream body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Errorf("close upstream body: %v", err)
+		}
+		if err := json.Unmarshal(body, &forwarded); err != nil {
+			t.Errorf("unmarshal upstream body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
 
-	tests := []string{"", "example.com", "http://", "http://example.com/base"}
-	for _, baseURL := range tests {
-		t.Run(baseURL, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-			p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: baseURL, APIKey: "provider-key"})
-			if rec.Code != http.StatusBadGateway {
-				t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
-			}
-		})
+	p := New(coreproxy.Options{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","stream":false}`))
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: upstream.URL, APIKey: "provider-key"})
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if _, ok := forwarded["stream_options"]; ok {
+		t.Fatalf("stream_options = %#v, want absent", forwarded["stream_options"])
+	}
+}
+
+func TestOpenAIProxyDefaultRewriteSkipsNonChatCompletion(t *testing.T) {
+	var forwarded map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read upstream body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Errorf("close upstream body: %v", err)
+		}
+		if err := json.Unmarshal(body, &forwarded); err != nil {
+			t.Errorf("unmarshal upstream body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p := New(coreproxy.Options{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":true}`))
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: upstream.URL, APIKey: "provider-key"})
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if _, ok := forwarded["stream_options"]; ok {
+		t.Fatalf("stream_options = %#v, want absent", forwarded["stream_options"])
+	}
+}
+
+func TestOpenAIProxyDefaultRewritePreservesExistingStreamOptions(t *testing.T) {
+	var forwarded map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read upstream body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Errorf("close upstream body: %v", err)
+		}
+		if err := json.Unmarshal(body, &forwarded); err != nil {
+			t.Errorf("unmarshal upstream body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p := New(coreproxy.Options{})
+	body := `{"model":"gpt-5","stream":true,"stream_options":{"foo":"bar"}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: upstream.URL, APIKey: "provider-key"})
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	streamOptions, ok := forwarded["stream_options"].(map[string]any)
+	if !ok {
+		t.Fatalf("stream_options = %#v, want object", forwarded["stream_options"])
+	}
+	if got, want := streamOptions["foo"], "bar"; got != want {
+		t.Fatalf("foo = %#v, want %q", got, want)
+	}
+	if got, want := streamOptions["include_usage"], true; got != want {
+		t.Fatalf("include_usage = %#v, want true", got)
+	}
+}
+
+func TestOpenAIProxyDefaultRewriteReturnsInvalidJSONError(t *testing.T) {
+	called := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p := New(coreproxy.Options{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{invalid`))
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: upstream.URL, APIKey: "provider-key"})
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatal("upstream was called after rewrite error")
+	}
+}
+
+func TestOpenAIProxyCustomRewriteOverridesDefaultRewrite(t *testing.T) {
+	var forwarded map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read upstream body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Errorf("close upstream body: %v", err)
+		}
+		if err := json.Unmarshal(body, &forwarded); err != nil {
+			t.Errorf("unmarshal upstream body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p := New(coreproxy.Options{
+		Rewrite: func(pr *httputil.ProxyRequest) error {
+			pr.Out.Header.Set("X-Custom-Rewrite", "yes")
+			return nil
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","stream":true}`))
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: upstream.URL, APIKey: "provider-key"})
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if _, ok := forwarded["stream_options"]; ok {
+		t.Fatalf("stream_options = %#v, want absent", forwarded["stream_options"])
 	}
 }
 
@@ -122,7 +259,7 @@ func TestParseBaseURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseBaseURL(tt.baseURL)
+			_, err := coreproxy.ParseBaseURL(tt.baseURL)
 			if tt.wantErr && err == nil {
 				t.Fatal("expected error")
 			}
@@ -130,19 +267,5 @@ func TestParseBaseURL(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestProxyServeHTTPReturnsBadGatewayForUpstreamError(t *testing.T) {
-	p, err := New(Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	p.ServeHTTP(rec, req, coreproxy.Upstream{BaseURL: "http://127.0.0.1:1", APIKey: "provider-key"})
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
 	}
 }

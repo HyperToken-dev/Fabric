@@ -9,7 +9,8 @@ import (
 type Provider string
 
 const (
-	ProviderOpenAI Provider = "openai"
+	ProviderOpenAI  Provider = "openai"
+	ProviderAlibaba Provider = "alibaba"
 )
 
 type contextKey string
@@ -20,7 +21,6 @@ const (
 	ctxModel     contextKey = "model"
 	ctxModelID   contextKey = "model_id"
 	ctxProvider  contextKey = "provider"
-	ctxStreamKey contextKey = "stream"
 )
 
 func setContextInt32(r *http.Request, key contextKey, val int32) *http.Request {
@@ -29,11 +29,6 @@ func setContextInt32(r *http.Request, key contextKey, val int32) *http.Request {
 }
 
 func setContextString(r *http.Request, key contextKey, val string) *http.Request {
-	ctx := context.WithValue(r.Context(), key, val)
-	return r.WithContext(ctx)
-}
-
-func setContextBool(r *http.Request, key contextKey, val bool) *http.Request {
 	ctx := context.WithValue(r.Context(), key, val)
 	return r.WithContext(ctx)
 }
@@ -48,16 +43,15 @@ func getContextString(r *http.Request, key contextKey) string {
 	return v
 }
 
-func getContextBool(r *http.Request, key contextKey) bool {
-	v, _ := r.Context().Value(key).(bool)
-	return v
-}
-
 var errModelDisabled = errors.New("model disabled")
 var errModelUnsupported = errors.New("model unsupported")
 
 func (p *OpenAIProxy) resolveModel(ctx context.Context, channelID int32, modelName string) (int32, error) {
-	model, err := p.modelStore.ResolveModel(ctx, channelID, modelName)
+	return resolveModelFromStore(ctx, p.modelStore, channelID, modelName)
+}
+
+func resolveModelFromStore(ctx context.Context, store ModelStore, channelID int32, modelName string) (int32, error) {
+	model, err := store.ResolveModel(ctx, channelID, modelName)
 	if err != nil {
 		return 0, err
 	}

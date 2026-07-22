@@ -1,84 +1,79 @@
 package openai
 
 import (
-	"context"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
-	"strings"
+	"strconv"
 
 	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 )
 
-type contextKey string
+func New(opts coreproxy.Options) *coreproxy.Proxy {
+	if opts.Rewrite == nil {
+		opts.Rewrite = defaultRewrite
+	}
 
-const ctxUpstream contextKey = "upstream"
-
-type RewriteFunc func(pr *httputil.ProxyRequest)
-
-type ModifyResponseFunc func(resp *http.Response) error
-
-type Proxy struct {
-	proxy *httputil.ReverseProxy
+	return coreproxy.New(opts)
 }
 
-type Options struct {
-	Rewrite        RewriteFunc
-	ModifyResponse ModifyResponseFunc
+func defaultRewrite(pr *httputil.ProxyRequest) error {
+	if pr.Out.URL.Path != "/v1/chat/completions" {
+		return nil
+	}
+	return injectChatStreamOptions(pr.Out)
 }
 
-func New(opts Options) (*Proxy, error) {
-	rewrite := opts.Rewrite
-	return &Proxy{proxy: &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			upstream, ok := pr.In.Context().Value(ctxUpstream).(coreproxy.Upstream)
-			if !ok {
-				return
-			}
-			target, ok := pr.In.Context().Value(ctxUpstreamTarget).(*url.URL)
-			if !ok {
-				return
-			}
+func injectChatStreamOptions(req *http.Request) error {
+	if req.Body == nil {
+		return nil
+	}
 
-			pr.SetURL(target)
-			pr.Out.Host = target.Host
-			pr.Out.Header.Set("Authorization", "Bearer "+upstream.APIKey)
-
-			if rewrite != nil {
-				rewrite(pr)
-			}
-		},
-		ModifyResponse: opts.ModifyResponse,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-		},
-	}}, nil
-}
-
-const ctxUpstreamTarget contextKey = "upstream_target"
-
-func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request, upstream coreproxy.Upstream) {
-	target, err := ParseBaseURL(upstream.BaseURL)
+	body, err := io.ReadAll(req.Body)
+	closeErr := req.Body.Close()
 	if err != nil {
-		http.Error(w, "invalid upstream base url: "+err.Error(), http.StatusBadGateway)
-		return
+		if closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
+	}
+	restoreRequestBody(req, body)
+	if closeErr != nil {
+		return closeErr
 	}
 
-	ctx := context.WithValue(r.Context(), ctxUpstream, upstream)
-	ctx = context.WithValue(ctx, ctxUpstreamTarget, target)
-	p.proxy.ServeHTTP(w, r.WithContext(ctx))
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return err
+	}
+	stream, ok := payload["stream"].(bool)
+	if !ok || !stream {
+		return nil
+	}
+
+	streamOptions, ok := payload["stream_options"].(map[string]any)
+	if !ok {
+		streamOptions = make(map[string]any)
+	}
+	streamOptions["include_usage"] = true
+	payload["stream_options"] = streamOptions
+
+	newBody, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	restoreRequestBody(req, newBody)
+	return nil
 }
 
-func ParseBaseURL(baseURL string) (*url.URL, error) {
-	target, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
-		return nil, err
+func restoreRequestBody(req *http.Request, body []byte) {
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
 	}
-	if target.Scheme == "" || target.Host == "" {
-		return nil, url.InvalidHostError(baseURL)
-	}
-	if target.Path != "" && target.Path != "/" {
-		return nil, url.InvalidHostError("base_url must not include path")
-	}
-	return target, nil
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Length", strconv.Itoa(len(body)))
 }

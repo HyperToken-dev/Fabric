@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/HyperToken-dev/fabric/internal/auth"
+	"github.com/HyperToken-dev/fabric/internal/models"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -17,7 +18,7 @@ func TestRouterAuthMiddlewareRejectsMissingOrInvalidKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, mock, cleanup := newRouterMock(t)
 	defer cleanup()
-	rt := New(repository.New(db), &fakeOpenAIProxy{})
+	rt := New(repository.New(db), map[int32]Proxy{models.APIFormatOpenAI: &fakeProxy{}})
 	engine := rt.RegisterProxyRoutes()
 
 	rec := httptest.NewRecorder()
@@ -53,12 +54,12 @@ func TestRouterAuthMiddlewareRejectsDisabledChannel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, mock, cleanup := newRouterMock(t)
 	defer cleanup()
-	rt := New(repository.New(db), &fakeOpenAIProxy{})
+	rt := New(repository.New(db), map[int32]Proxy{models.APIFormatOpenAI: &fakeProxy{}})
 	engine := rt.RegisterProxyRoutes()
 
 	mock.ExpectQuery("FROM api_keys").
 		WithArgs(sql.NullString{String: auth.HashKey("key"), Valid: true}).
-		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(apiFormatOpenAI), int16(2)))
+		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(models.APIFormatOpenAI), int16(2)))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -73,13 +74,13 @@ func TestRouterProxyHandlerDispatchesOpenAI(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, mock, cleanup := newRouterMock(t)
 	defer cleanup()
-	proxy := &fakeOpenAIProxy{}
-	rt := New(repository.New(db), proxy)
+	proxy := &fakeProxy{}
+	rt := New(repository.New(db), map[int32]Proxy{models.APIFormatOpenAI: proxy})
 	engine := rt.RegisterProxyRoutes()
 
 	mock.ExpectQuery("FROM api_keys").
 		WithArgs(sql.NullString{String: auth.HashKey("key"), Valid: true}).
-		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(apiFormatOpenAI), int16(channelStatusEnabled)))
+		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(models.APIFormatOpenAI), int16(channelStatusEnabled)))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -97,7 +98,7 @@ func TestRouterProxyHandlerRejectsUnsupportedAPIFormat(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, mock, cleanup := newRouterMock(t)
 	defer cleanup()
-	rt := New(repository.New(db), &fakeOpenAIProxy{})
+	rt := New(repository.New(db), map[int32]Proxy{models.APIFormatOpenAI: &fakeProxy{}})
 	engine := rt.RegisterProxyRoutes()
 
 	mock.ExpectQuery("FROM api_keys").
@@ -126,7 +127,7 @@ func newRouterMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock, func()) {
 	return db, mock, func() { _ = db.Close() }
 }
 
-type fakeOpenAIProxy struct {
+type fakeProxy struct {
 	called      bool
 	keyID       int32
 	channelID   int32
@@ -134,7 +135,7 @@ type fakeOpenAIProxy struct {
 	providerKey string
 }
 
-func (p *fakeOpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string) {
+func (p *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string) {
 	p.called = true
 	p.keyID = keyID
 	p.channelID = channelID

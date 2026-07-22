@@ -2,14 +2,14 @@
 
 ## Project
 
-Fabric is a modular AI gateway framework. The current implementation is an OpenAI-compatible gateway with:
+Fabric is a modular AI gateway framework. The current implementation supports OpenAI-compatible proxying and Alibaba Bailian text-to-video proxying with:
 
-- Transparent OpenAI API proxying.
+- Provider-routed transparent proxying.
 - API key, channel, model, and usage-log management APIs.
 - PostgreSQL-backed storage with startup migrations.
 - Optional sensitive-word detection for OpenAI chat completion requests.
 
-Future provider support is planned, but current proxy code is OpenAI-focused.
+Future provider support is planned, but current proxy code focuses on OpenAI and Alibaba Bailian.
 
 ## Commands
 
@@ -43,7 +43,7 @@ buf generate                 # .proto -> Go (gen/)
 
 Two ports in one binary:
 
-- **Proxy** (`proxyAddr`) - OpenAI-compatible proxy routes. Clients send gateway API keys via `Authorization: Bearer <key>`; the gateway resolves the configured channel/model credentials and forwards to upstream.
+- **Proxy** (`proxyAddr`) - provider-routed proxy routes. Clients send gateway API keys via `Authorization: Bearer <key>`; the gateway resolves the configured channel/model credentials, dispatches to the provider implementation based on `channel.api_format`, and forwards to upstream.
 - **Admin** (`adminAddr`) - connect-go management APIs for API keys, channels, models, and usage logs.
 
 Configuration paths depend on startup mode:
@@ -67,12 +67,16 @@ Startup flow in `cmd/gateway/main.go`:
 - Do not add source files under generated-code directories.
 - Keep handwritten frontend source human-readable with four-space indentation; run `pnpm format` in `web/fabric` after editing and never format generated files under `web/fabric/src/gen/`.
 - Do not edit generated files directly; update schema/query/proto inputs and regenerate.
+- Do not place provider-specific model catalogs into unrelated provider files; `internal/models/openai.go` and `internal/models/alibaba.go` are separate.
 
 ## Key concepts
 
 - Module path: `fabric`.
 - Go version: 1.26.4.
 - Configuration is YAML-based via Viper. Local runs use `configs/config.yaml`; Docker Compose uses `configs/config.docker.yaml` mounted as container `configs/config.yaml`.
+- API formats: `models.APIFormatOpenAI = 1`, `models.APIFormatAlibabaBailian = 2`.
+- Model types: `models.ModelTypeText = 1`, `models.ModelTypeVideo = 2`.
+- Alibaba Bailian proxying uses `https://dashscope.aliyuncs.com` as the default base URL. It supports text-to-video task creation and task status fetching. Video usage logging is not currently recorded.
 - The OpenAI proxy injects `stream_options.include_usage=true` for streaming chat completions so usage can be captured.
 - Sensitive-word detection is controlled by `sensitiveWordDetect` in config.
 
