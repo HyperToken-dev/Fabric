@@ -15,19 +15,22 @@ type Server struct {
 	protoconnect.UnimplementedUsageServiceHandler
 	protoconnect.UnimplementedChannelServiceHandler
 	protoconnect.UnimplementedModelServiceHandler
+	protoconnect.UnimplementedIntegralLogServiceHandler
 
-	apiKeySvc  *service.ApiKeyService
-	modelSvc   *service.ModelService
-	channelSvc *service.ChannelService
-	usageSvc   *service.UsageService
+	apiKeySvc      *service.ApiKeyService
+	modelSvc       *service.ModelService
+	channelSvc     *service.ChannelService
+	usageSvc       *service.UsageService
+	integralLogSvc *service.IntegralLogService
 }
 
-func NewServer(apiKeySvc *service.ApiKeyService, channelSvc *service.ChannelService, modelSvc *service.ModelService, usageSvc *service.UsageService) *Server {
+func NewServer(apiKeySvc *service.ApiKeyService, channelSvc *service.ChannelService, modelSvc *service.ModelService, usageSvc *service.UsageService, integralLogSvc *service.IntegralLogService) *Server {
 	return &Server{
-		apiKeySvc:  apiKeySvc,
-		channelSvc: channelSvc,
-		modelSvc:   modelSvc,
-		usageSvc:   usageSvc,
+		apiKeySvc:      apiKeySvc,
+		channelSvc:     channelSvc,
+		modelSvc:       modelSvc,
+		usageSvc:       usageSvc,
+		integralLogSvc: integralLogSvc,
 	}
 }
 
@@ -209,6 +212,46 @@ func (s *Server) GetUsageSummary(ctx context.Context, req *connect.Request[gen.G
 
 func (s *Server) GetUsageDashboard(ctx context.Context, req *connect.Request[gen.GetUsageDashboardRequest]) (*connect.Response[gen.GetUsageDashboardResponse], error) {
 	resp, err := s.usageSvc.GetUsageDashboard(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) CreateIntegralLog(ctx context.Context, req *connect.Request[gen.CreateIntegralLogRequest]) (*connect.Response[gen.IntegralLogResponse], error) {
+	resp, err := s.integralLogSvc.CreateIntegralLog(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) GetIntegralLog(ctx context.Context, req *connect.Request[gen.GetIntegralLogRequest]) (*connect.Response[gen.IntegralLogResponse], error) {
+	resp, err := s.integralLogSvc.GetIntegralLog(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) ListIntegralLogs(ctx context.Context, req *connect.Request[gen.ListIntegralLogsRequest]) (*connect.Response[gen.ListIntegralLogsResponse], error) {
+	resp, err := s.integralLogSvc.ListIntegralLogs(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) UpdateIntegralLog(ctx context.Context, req *connect.Request[gen.UpdateIntegralLogRequest]) (*connect.Response[gen.IntegralLogResponse], error) {
+	resp, err := s.integralLogSvc.UpdateIntegralLog(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Server) DeleteIntegralLog(ctx context.Context, req *connect.Request[gen.DeleteIntegralLogRequest]) (*connect.Response[gen.DeleteIntegralLogResponse], error) {
+	resp, err := s.integralLogSvc.DeleteIntegralLog(ctx, req.Msg)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}

@@ -1,0 +1,57 @@
+syntax = "proto3";
+package proto;
+option go_package = "github.com/HyperToken-dev/fabric/gen;proto";
+import "google/protobuf/timestamp.proto";
+
+service IntegralLogService {
+    rpc CreateIntegralLog(CreateIntegralLogRequest) returns(IntegralLogResponse);
+    rpc GetIntegralLog(GetIntegralLogRequest) returns(IntegralLogResponse);
+    rpc ListIntegralLogs(ListIntegralLogsRequest) returns(ListIntegralLogsResponse);
+    rpc UpdateIntegralLog(UpdateIntegralLogRequest) returns(IntegralLogResponse);
+    rpc DeleteIntegralLog(DeleteIntegralLogRequest) returns(DeleteIntegralLogResponse);
+}
+
+message IntegralLog {
+    int32 id = 1;
+    string context = 2;
+    string response = 3;
+    int32 key_id = 4;
+    google.protobuf.Timestamp created_at = 5;
+}
+
+message CreateIntegralLogRequest {
+    string context = 1;
+    string response = 2;
+    int32 key_id = 3;
+}
+
+message GetIntegralLogRequest {
+    int32 id = 1;
+}
+
+message ListIntegralLogsRequest {
+    int32 key_id = 1;
+    int32 limit = 2;
+    int32 offset = 3;
+}
+
+message ListIntegralLogsResponse {
+    repeated IntegralLog logs = 1;
+    int64 total = 2;
+}
+
+message UpdateIntegralLogRequest {
+    int32 id = 1;
+    string context = 2;
+    string response = 3;
+}
+
+message IntegralLogResponse {
+    IntegralLog log = 1;
+}
+
+message DeleteIntegralLogRequest {
+    int32 id = 1;
+}
+
+message DeleteIntegralLogResponse {}

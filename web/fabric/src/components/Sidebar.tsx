@@ -1,4 +1,4 @@
-import { Activity, Boxes, KeyRound, LayoutDashboard, Radio } from 'lucide-react';
+import { Activity, Boxes, FileJson, KeyRound, LayoutDashboard, Radio } from 'lucide-react';
 import type { NavigationItem } from '../types';
 
 interface SidebarProps {
@@ -12,6 +12,7 @@ const navItems: NavigationItem[] = [
     { id: 'models', label: 'Models', icon: Boxes },
     { id: 'api-keys', label: 'API Keys', icon: KeyRound },
     { id: 'usage', label: 'Usage Logs', icon: Activity },
+    { id: 'integral-logs', label: 'Integral Logs', icon: FileJson },
 ];
 
 export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {

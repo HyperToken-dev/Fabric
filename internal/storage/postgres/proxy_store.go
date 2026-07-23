@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 
 	"github.com/HyperToken-dev/fabric/internal/repository"
@@ -63,6 +64,15 @@ func (s *ProxyStore) InsertUsage(ctx context.Context, keyID, channelID, modelID 
 		ModelID:          modelID,
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
+	})
+	return err
+}
+
+func (s *ProxyStore) InsertIntegratedLog(ctx context.Context, keyID int32, context, response string) error {
+	_, err := s.queries.CreateIntegralLog(ctx, repository.CreateIntegralLogParams{
+		Context:  json.RawMessage(context),
+		Response: sql.NullString{String: response, Valid: true},
+		KeyID:    keyID,
 	})
 	return err
 }

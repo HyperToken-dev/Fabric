@@ -92,7 +92,7 @@ func TestNewTrackingReaderStreamsUsage(t *testing.T) {
 
 	reader := NewTrackingReader(io.NopCloser(strings.NewReader(sse)), "", func(u *usage.Usage) {
 		usageCh <- u
-	})
+	}, nil)
 	if _, err := io.Copy(io.Discard, reader); err != nil {
 		t.Fatalf("Copy() error = %v", err)
 	}
@@ -100,11 +100,51 @@ func TestNewTrackingReaderStreamsUsage(t *testing.T) {
 	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{PromptTokens: 21, CompletionTokens: 34})
 }
 
+func TestNewTrackingReaderCallsCompleteWithStreamBody(t *testing.T) {
+	sse := "data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4}}\n\n"
+	completeCh := make(chan []byte, 1)
+	reader := NewTrackingReader(io.NopCloser(strings.NewReader(sse)), "", nil, func(body []byte) {
+		completeCh <- body
+	})
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+
+	select {
+	case got := <-completeCh:
+		if string(got) != sse {
+			t.Fatalf("complete body = %q, want %q", got, sse)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for complete body")
+	}
+}
+
+func TestNewTrackingReaderCallsCompleteWithDecodedGzipBody(t *testing.T) {
+	sse := []byte("data: {\"response\":{\"usage\":{\"input_tokens\":6,\"output_tokens\":7}}}\n\n")
+	completeCh := make(chan []byte, 1)
+	reader := NewTrackingReader(io.NopCloser(bytes.NewReader(gzipBytes(t, sse))), "gzip", nil, func(body []byte) {
+		completeCh <- body
+	})
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+
+	select {
+	case got := <-completeCh:
+		if string(got) != string(sse) {
+			t.Fatalf("complete body = %q, want %q", got, sse)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for complete body")
+	}
+}
+
 func TestNewTrackingReaderStreamsTopLevelUsageAcrossChunks(t *testing.T) {
 	usageCh := make(chan *usage.Usage, 1)
 	reader := NewTrackingReader(io.NopCloser(strings.NewReader(`data: {"usage":{"prompt_tokens":3,"completion_tokens":4}}`)), "identity", func(u *usage.Usage) {
 		usageCh <- u
-	})
+	}, nil)
 	buf := make([]byte, 5)
 	for {
 		_, err := reader.Read(buf)
@@ -124,7 +164,7 @@ func TestNewTrackingReaderGzipStreamUsage(t *testing.T) {
 	body := gzipBytes(t, []byte("data: {\"response\":{\"usage\":{\"input_tokens\":6,\"output_tokens\":7}}}\n\n"))
 	reader := NewTrackingReader(io.NopCloser(bytes.NewReader(body)), "gzip", func(u *usage.Usage) {
 		usageCh <- u
-	})
+	}, nil)
 	if _, err := io.Copy(io.Discard, reader); err != nil {
 		t.Fatalf("Copy() error = %v", err)
 	}
@@ -134,7 +174,7 @@ func TestNewTrackingReaderGzipStreamUsage(t *testing.T) {
 
 func TestNewTrackingReaderNoUsageCallbackAndClose(t *testing.T) {
 	inner := &trackingReadCloser{Reader: strings.NewReader("data: [DONE]\n\n")}
-	reader := NewTrackingReader(inner, "", nil)
+	reader := NewTrackingReader(inner, "", nil, nil)
 	if _, err := io.Copy(io.Discard, reader); err != nil {
 		t.Fatalf("Copy() error = %v", err)
 	}

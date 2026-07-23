@@ -21,7 +21,7 @@ func newOpenAIUsageAdapter(store *postgres.ProxyStore) openAIUsageAdapter {
 	return openAIUsageAdapter{store: store}
 }
 
-func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext) io.ReadCloser {
+func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
 	return openaiusage.NewTrackingReader(body, contentEncoding, func(parsedUsage *usage.Usage) {
 		if info.ModelID == 0 {
 			zap.L().Error("missing resolved model id for streaming usage",
@@ -54,7 +54,7 @@ func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEnc
 			zap.Int64("prompt_tokens", parsedUsage.PromptTokens),
 			zap.Int64("completion_tokens", parsedUsage.CompletionTokens),
 		)
-	})
+	}, onComplete)
 }
 
 func (a openAIUsageAdapter) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
