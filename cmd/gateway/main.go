@@ -68,7 +68,10 @@ func main() {
 	}
 
 	// init zap
-	zapLogger := logger.NewLogger(cfg)
+	zapLogger, err := logger.NewLogger(cfg)
+	if err != nil {
+		log.Fatalf("init zap logger error: %v", err)
+	}
 	zap.ReplaceGlobals(zapLogger)
 	defer func() {
 		if err := zapLogger.Sync(); err != nil {

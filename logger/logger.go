@@ -1,16 +1,19 @@
 package logger
 
 import (
-	"github.com/HyperToken-dev/fabric/internal/config"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/HyperToken-dev/fabric/internal/config"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-func NewLogger(cfg *config.Config) *zap.Logger {
+func NewLogger(cfg *config.Config) (*zap.Logger, error) {
 	// 初始化编码器配置
 	encoderConfig := zap.NewProductionEncoderConfig()
 	// 修改时间编码器为人类可读的 ISO8601 格式
@@ -34,12 +37,18 @@ func NewLogger(cfg *config.Config) *zap.Logger {
 	)
 
 	// 设定最低日志级别
-	levelEnabler := zap.InfoLevel
+	level := zapcore.InfoLevel
+	logLevel := strings.TrimSpace(cfg.LogLevel)
+	if logLevel != "" {
+		if err := level.UnmarshalText([]byte(strings.ToLower(logLevel))); err != nil {
+			return nil, fmt.Errorf("invalid logLevel %q: %w", cfg.LogLevel, err)
+		}
+	}
 
 	// 组装 Core
-	core := zapcore.NewCore(encoder, writeSyncer, levelEnabler)
+	core := zapcore.NewCore(encoder, writeSyncer, level)
 
 	// 生成 Logger，并注入调用者信息选项
 	logger := zap.New(core, zap.AddCaller())
-	return logger
+	return logger, nil
 }
