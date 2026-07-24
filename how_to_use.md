@@ -536,13 +536,37 @@ Usage logs are associated with:
 
 ## 5. Model-Scoped Sensitive-Word Detection
 
-Sensitive-word detection is controlled by `sensitiveWordDetect`. It is disabled by default in `configs/config.docker.yaml`:
+Sensitive-word detection is controlled by `sensitiveWordDetect` and `sensitiveWordDictionaries`. It is disabled by default in `configs/config.docker.yaml`:
 
 ```yaml
 sensitiveWordDetect: false
 ```
 
-### 5.1 Create Dictionary Files
+### 5.1 Configure Detection Rules
+
+Edit `configs/config.docker.yaml` and enable detection:
+
+```yaml
+sensitiveWordDetect: true
+sensitiveWordDictionaries:
+  - name: default-block-list
+    effectModels: [gpt-5.5]
+    keywordFileList: [blocked-words]
+```
+
+Each entry under `sensitiveWordDictionaries` is a detection rule:
+
+- `name` is required and is used as a human-readable rule name in logs and match results.
+- `effectModels` controls which models the rule applies to. Use `effectModels: []` to apply the rule to all models.
+- `keywordFileList` is required and lists dictionary file base names under `configs/stwd/`.
+
+`keywordFileList` uses file base names without the `.txt` suffix. The example above loads:
+
+```text
+configs/stwd/blocked-words.txt
+```
+
+### 5.2 Create Dictionary Files
 
 Dictionary files live under `configs/stwd/`. Create one `.txt` file per dictionary and put one keyword on each line:
 
@@ -560,29 +584,7 @@ badword3
 
 Empty lines are ignored, and duplicate keywords are removed when the dictionary is loaded.
 
-### 5.2 Configure Docker Detection Rules
-
-Edit `configs/config.docker.yaml` and enable detection:
-
-```yaml
-sensitiveWordDetect: true
-sensitiveWordDictionaries:
-  - name: default-block-list
-    effectModels: [gpt-5.5]
-    keywordFileList: [blocked-words]
-```
-
-`keywordFileList` uses file base names without the `.txt` suffix. The example above loads:
-
-```text
-configs/stwd/blocked-words.txt
-```
-
-Each entry under `sensitiveWordDictionaries` is a detection rule:
-
-- `name` is required and is used as a human-readable rule name in logs and match results.
-- `effectModels` controls which models the rule applies to. Use `effectModels: []` to apply the rule to all models.
-- `keywordFileList` is required and lists dictionary file base names under `configs/stwd/`.
+### 5.3 Hot Reload Behavior
 
 The gateway hot-reloads sensitive-word settings and dictionary files while it is running. After changing `sensitiveWordDetect`, `sensitiveWordDictionaries`, or a referenced file under `configs/stwd/`, new proxy detections use the latest successfully loaded rules without restarting the service.
 
@@ -594,7 +596,7 @@ If you want to restart the service anyway, run:
 docker compose up -d
 ```
 
-### 5.3 Detection Behavior
+### 5.4 Detection Behavior
 
 - Fabric checks input prompts before forwarding requests upstream.
 - Fabric checks non-streaming model outputs before returning responses.
@@ -690,7 +692,9 @@ import "github.com/HyperToken-dev/fabric/business/usage"
 
 #### 6.2.3 Sensitive-Word Detection
 
-Use `business/sensitive` when you want Fabric's dictionary matching and model-scoped policy behavior inside your own request flow:
+Use `business/sensitive` when you want Fabric's dictionary matching and model-scoped policy behavior inside your own request flow.
+
+For static in-memory dictionaries, construct a detector directly:
 
 ```go
 detector, err := sensitive.NewDetector(
@@ -712,7 +716,7 @@ if result.Rejected() {
 
 `EffectModels` scopes a dictionary to specific model names. Leave it empty to apply that dictionary to every model passed to `Detect`. Dictionary names are included in match results so downstream systems can audit which rule matched.
 
-If your dictionaries are stored as one word per line, load them before constructing the detector:
+If your dictionaries are stored as one word per line, load a single file before constructing the detector:
 
 ```go
 dict, err := sensitive.LoadDictionary("default-block-list", "configs/stwd/blocked-words.txt", []string{"gpt-5.5"})
@@ -726,12 +730,27 @@ if err != nil {
 }
 ```
 
-For runtime updates, use the reloadable policy from `business/sensitive` and provide your own loader callback:
+For multiple dictionary files that use Fabric's `keywordFileList` convention, load a detector from file configs:
+
+```go
+detector, err := sensitive.LoadDetectorFromFiles("configs/stwd", []sensitive.DictionaryFileConfig{
+    {
+        Name:            "default-block-list",
+        EffectModels:    []string{"gpt-5.5"},
+        KeywordFileList: []string{"blocked-words"},
+    },
+})
+if err != nil {
+    return err
+}
+```
+
+For runtime updates, use the reloadable policy from `business/sensitive` and provide your own source callback:
 
 ```go
 policy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
 
-_, err := policy.Reload(ctx, func(ctx context.Context) (sensitive.SourceState, error) {
+source := func(ctx context.Context) (sensitive.SourceState, error) {
     detector, err := sensitive.LoadDetectorFromFiles("configs/stwd", []sensitive.DictionaryFileConfig{
         {
             Name:            "default-block-list",
@@ -743,13 +762,32 @@ _, err := policy.Reload(ctx, func(ctx context.Context) (sensitive.SourceState, e
         return sensitive.SourceState{}, err
     }
     return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: 1}, nil
-})
+}
+
+_, err := policy.Reload(ctx, source)
 if err != nil {
     return err
 }
 ```
 
-`Reload` publishes a new snapshot only after the loader succeeds. If a later reload fails, callers can keep the existing policy active and log the returned error.
+`Reload` publishes a new snapshot only after the source callback succeeds. If a later reload fails, callers can keep the existing policy active and log the returned error.
+
+To trigger reloads from file changes, use `Watch` with your source callback:
+
+```go
+go func() {
+    err := sensitive.Watch(ctx, sensitive.WatchOptions{
+        Paths: []string{"configs/stwd"},
+        Reload: func(ctx context.Context) error {
+            _, err := policy.Reload(ctx, source)
+            return err
+        },
+    })
+    if err != nil {
+        logReloadError(err)
+    }
+}()
+```
 
 #### 6.2.4 OpenAI Prompt and Output Extraction
 

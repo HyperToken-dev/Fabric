@@ -44,7 +44,7 @@ Fabric currently implements a provider-routed gateway with:
 - Model management with provider-aware catalog selection.
 - Text, Audio and Video model types.
 - Usage logging and querying (for OpenAI-compatible endpoints).
-- Model-scoped sensitive-word detection.
+- Model-scoped, hot-reloadable sensitive-word detection.
 - PostgreSQL-backed persistence.
 - Startup database migrations.
 - connect-go management APIs.
@@ -57,7 +57,7 @@ Current distinctive features:
 
 - **Provider-aware routing**: dispatch traffic to upstream providers based on channel API format.
 - **Usage logging**: records the key, channel, model, prompt tokens, and completion tokens for OpenAI-compatible requests, then exposes the data for later querying and aggregation.
-- **Model-scoped sensitive-word detection**: dictionaries can be scoped to specific models, allowing different models to use different detection policies.
+- **Model-scoped, hot-reloadable sensitive-word detection**: dictionaries can be scoped to specific models and updated at runtime.
 
 Planned capabilities:
 
@@ -213,7 +213,7 @@ sensitiveWordDictionaries:
     keywordFileList: [blocked-words]
 ```
 
-This example loads `configs/stwd/blocked-words.txt`. Each dictionary file contains one keyword per line. See [how_to_use.md](./how_to_use.md) for the full configuration and sensitive-word guide.
+This example loads `configs/stwd/blocked-words.txt`. Each dictionary file contains one keyword per line. Dictionary and sensitive-word config changes are hot-reloaded at runtime. See [how_to_use.md](./how_to_use.md) for the full configuration and sensitive-word guide.
 
 ### 3. Local Development Run
 
