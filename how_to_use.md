@@ -584,7 +584,11 @@ Each entry under `sensitiveWordDictionaries` is a detection rule:
 - `effectModels` controls which models the rule applies to. Use `effectModels: []` to apply the rule to all models.
 - `keywordFileList` is required and lists dictionary file base names under `configs/stwd/`.
 
-After changing `configs/config.docker.yaml` or dictionary files, restart the service:
+The gateway hot-reloads sensitive-word settings and dictionary files while it is running. After changing `sensitiveWordDetect`, `sensitiveWordDictionaries`, or a referenced file under `configs/stwd/`, new proxy detections use the latest successfully loaded rules without restarting the service.
+
+If you run Fabric with Docker Compose, the tracked compose file bind-mounts `configs/stwd/` into the container. File-based hot reload is per gateway instance and depends on filesystem event delivery from that mount, so multi-instance deployments must distribute dictionary files consistently to every instance.
+
+If you want to restart the service anyway, run:
 
 ```bash
 docker compose up -d
@@ -598,6 +602,7 @@ docker compose up -d
 - If a non-streaming model output matches, Fabric returns `422` with `model output rejected, please change your prompt`.
 - Streaming output sensitive-word detection is not currently applied to streamed response chunks.
 - If `sensitiveWordDetect: true` and a configured dictionary file is missing or contains no usable words, startup fails.
+- If a runtime reload fails because the updated config or dictionary files are invalid, Fabric keeps using the previous sensitive-word rules and logs the reload error.
 
 ## 6. Library Usage
 
@@ -720,6 +725,31 @@ if err != nil {
     return err
 }
 ```
+
+For runtime updates, use the reloadable policy from `business/sensitive` and provide your own loader callback:
+
+```go
+policy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
+
+_, err := policy.Reload(ctx, func(ctx context.Context) (sensitive.SourceState, error) {
+    detector, err := sensitive.LoadDetectorFromFiles("configs/stwd", []sensitive.DictionaryFileConfig{
+        {
+            Name:            "default-block-list",
+            EffectModels:    []string{"gpt-5.5"},
+            KeywordFileList: []string{"blocked-words"},
+        },
+    })
+    if err != nil {
+        return sensitive.SourceState{}, err
+    }
+    return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: 1}, nil
+})
+if err != nil {
+    return err
+}
+```
+
+`Reload` publishes a new snapshot only after the loader succeeds. If a later reload fails, callers can keep the existing policy active and log the returned error.
 
 #### 6.2.4 OpenAI Prompt and Output Extraction
 

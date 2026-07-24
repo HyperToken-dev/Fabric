@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
 	"github.com/HyperToken-dev/fabric/internal/config"
@@ -22,7 +22,6 @@ import (
 
 	pbconnect "github.com/HyperToken-dev/fabric/gen/protoconnect"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -54,12 +53,6 @@ func main() {
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalf("Can not read in config file: %v", err)
 	}
-	viper.OnConfigChange(func(in fsnotify.Event) {
-		if err := viper.ReadInConfig(); err != nil {
-			log.Fatalf("Can not read in config file when file content was change: %v", err)
-		}
-	})
-	viper.WatchConfig()
 
 	// init config
 	cfg, err := config.Load(workDir, runPath)
@@ -82,18 +75,23 @@ func main() {
 	)
 
 	// init sensitive word detect
-	var textPolicy TextPolicy = NoopTextPolicy{}
+	sensitiveSource := gatewaySensitiveSource{workDir: workDir, runPath: runPath}
+	textPolicy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
 	if cfg.SensitiveWD {
-		dictPath := sensitiveWordsPath(cfg.WorkDir, cfg.RunPath)
-		detector, err := loadSensitiveDetector(dictPath, cfg.SensitiveDictionaries)
+		loaded, err := sensitiveSource.State(context.Background())
 		if err != nil {
 			zap.S().Fatalf("load sensitive dictionaries error: %v", err)
 		}
-		textPolicy = sensitive.NewTextPolicy(detector)
-		zap.L().Info("sensitive dictionaries loaded", zap.String("path", dictPath), zap.Int("count", len(cfg.SensitiveDictionaries)))
+		textPolicy = sensitive.NewReloadablePolicy(sensitive.Snapshot{
+			Enabled:         loaded.Enabled,
+			Detector:        loaded.Detector,
+			DictionaryCount: loaded.DictionaryCount,
+		})
+		zap.L().Info("sensitive dictionaries loaded", zap.String("path", sensitiveWordsPath(cfg.WorkDir, cfg.RunPath)), zap.Int("count", loaded.DictionaryCount))
 	} else {
 		zap.L().Info("sensitive word detection disabled")
 	}
+	sensitiveSource.Watch(context.Background(), textPolicy, cfg)
 
 	// db con str
 	dsn := config.GetDSN(cfg.DB)
@@ -196,43 +194,4 @@ func runMigrations(databaseURL string) error {
 		return fmt.Errorf("migrate up: %w", err)
 	}
 	return nil
-}
-
-func sensitiveWordsPath(workDir, runPath string) string {
-	path := filepath.Join(workDir, "stwd")
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		return path
-	}
-	return filepath.Join(runPath, "configs", "stwd")
-}
-
-func loadSensitiveDetector(dir string, configs []config.SensitiveDictionaryConfig) (*sensitive.Detector, error) {
-	dictionaries := make([]sensitive.Dictionary, 0, len(configs))
-	for _, dictConfig := range configs {
-		name := strings.TrimSpace(dictConfig.Name)
-		if name == "" {
-			return nil, fmt.Errorf("sensitive dictionary name is required")
-		}
-		if len(dictConfig.KeywordFileList) == 0 {
-			return nil, fmt.Errorf("sensitive dictionary %q keywordFileList is required", name)
-		}
-
-		dict := sensitive.Dictionary{
-			Name:         name,
-			EffectModels: append([]string(nil), dictConfig.EffectModels...),
-		}
-		for _, fileName := range dictConfig.KeywordFileList {
-			fileName = strings.TrimSpace(fileName)
-			if fileName == "" || filepath.Base(fileName) != fileName || fileName == "." || fileName == ".." {
-				return nil, fmt.Errorf("invalid sensitive keyword file name %q", fileName)
-			}
-			loaded, err := sensitive.LoadDictionary(name, filepath.Join(dir, fileName+".txt"), dictConfig.EffectModels)
-			if err != nil {
-				return nil, err
-			}
-			dict.Words = append(dict.Words, loaded.Words...)
-		}
-		dictionaries = append(dictionaries, dict)
-	}
-	return sensitive.NewDetector(dictionaries...)
 }

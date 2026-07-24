@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/HyperToken-dev/fabric/internal/config"
+	"github.com/HyperToken-dev/fabric/business/sensitive"
 )
 
 func TestLoadSensitiveDetectorLoadsOnlyConfiguredFiles(t *testing.T) {
@@ -14,7 +14,7 @@ func TestLoadSensitiveDetectorLoadsOnlyConfiguredFiles(t *testing.T) {
 	writeTestDictionary(t, filepath.Join(dir, "configured-b.txt"), "configured-b-word\n")
 	writeTestDictionary(t, filepath.Join(dir, "ignored.txt"), "ignored-word\n")
 
-	detector, err := loadSensitiveDetector(dir, []config.SensitiveDictionaryConfig{{
+	detector, err := sensitive.LoadDetectorFromFiles(dir, []sensitive.DictionaryFileConfig{{
 		Name:            "configured rule",
 		EffectModels:    []string{"gpt-5.5"},
 		KeywordFileList: []string{"configured-a", "configured-b"},
@@ -37,12 +37,12 @@ func TestLoadSensitiveDetectorLoadsOnlyConfiguredFiles(t *testing.T) {
 }
 
 func TestLoadSensitiveDetectorFailsForMissingConfiguredFile(t *testing.T) {
-	_, err := loadSensitiveDetector(t.TempDir(), []config.SensitiveDictionaryConfig{{
+	_, err := sensitive.LoadDetectorFromFiles(t.TempDir(), []sensitive.DictionaryFileConfig{{
 		Name:            "missing rule",
 		KeywordFileList: []string{"missing"},
 	}})
 	if err == nil {
-		t.Fatal("loadSensitiveDetector() error = nil")
+		t.Fatal("LoadDetectorFromFiles() error = nil")
 	}
 }
 
@@ -52,26 +52,26 @@ func TestLoadSensitiveDetectorValidatesConfig(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		config  config.SensitiveDictionaryConfig
+		config  sensitive.DictionaryFileConfig
 		wantErr bool
 	}{
-		{name: "missing rule name", config: config.SensitiveDictionaryConfig{KeywordFileList: []string{"valid"}}, wantErr: true},
-		{name: "blank rule name", config: config.SensitiveDictionaryConfig{Name: " ", KeywordFileList: []string{"valid"}}, wantErr: true},
-		{name: "missing keyword files", config: config.SensitiveDictionaryConfig{Name: "rule"}, wantErr: true},
-		{name: "path separator", config: config.SensitiveDictionaryConfig{Name: "rule", KeywordFileList: []string{"../valid"}}, wantErr: true},
-		{name: "dot", config: config.SensitiveDictionaryConfig{Name: "rule", KeywordFileList: []string{"."}}, wantErr: true},
-		{name: "dot dot", config: config.SensitiveDictionaryConfig{Name: "rule", KeywordFileList: []string{".."}}, wantErr: true},
-		{name: "valid", config: config.SensitiveDictionaryConfig{Name: "rule", KeywordFileList: []string{"valid"}}},
+		{name: "missing rule name", config: sensitive.DictionaryFileConfig{KeywordFileList: []string{"valid"}}, wantErr: true},
+		{name: "blank rule name", config: sensitive.DictionaryFileConfig{Name: " ", KeywordFileList: []string{"valid"}}, wantErr: true},
+		{name: "missing keyword files", config: sensitive.DictionaryFileConfig{Name: "rule"}, wantErr: true},
+		{name: "path separator", config: sensitive.DictionaryFileConfig{Name: "rule", KeywordFileList: []string{"../valid"}}, wantErr: true},
+		{name: "dot", config: sensitive.DictionaryFileConfig{Name: "rule", KeywordFileList: []string{"."}}, wantErr: true},
+		{name: "dot dot", config: sensitive.DictionaryFileConfig{Name: "rule", KeywordFileList: []string{".."}}, wantErr: true},
+		{name: "valid", config: sensitive.DictionaryFileConfig{Name: "rule", KeywordFileList: []string{"valid"}}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := loadSensitiveDetector(dir, []config.SensitiveDictionaryConfig{tt.config})
+			_, err := sensitive.LoadDetectorFromFiles(dir, []sensitive.DictionaryFileConfig{tt.config})
 			if tt.wantErr && err == nil {
-				t.Fatal("loadSensitiveDetector() error = nil")
+				t.Fatal("LoadDetectorFromFiles() error = nil")
 			}
 			if !tt.wantErr && err != nil {
-				t.Fatalf("loadSensitiveDetector() error = %v", err)
+				t.Fatalf("LoadDetectorFromFiles() error = %v", err)
 			}
 		})
 	}
