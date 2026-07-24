@@ -5,6 +5,7 @@ import ChannelsPage from './components/ChannelsPage';
 import ModelsPage from './components/ModelsPage';
 import ApiKeysPage from './components/ApiKeysPage';
 import UsageLogsPage from './components/UsageLogsPage';
+import IntegralLogsPage from './components/IntegralLogsPage';
 
 const pages = {
     dashboard: Dashboard,
@@ -12,6 +13,7 @@ const pages = {
     models: ModelsPage,
     'api-keys': ApiKeysPage,
     usage: UsageLogsPage,
+    'integral-logs': IntegralLogsPage,
 };
 
 export default function App() {

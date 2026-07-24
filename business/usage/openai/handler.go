@@ -17,6 +17,7 @@ import (
 )
 
 type UsageCallback func(*usage.Usage)
+type StreamCompleteCallback func([]byte)
 
 type openAIUsage struct {
 	InputTokens      int `json:"input_tokens"`
@@ -49,11 +50,12 @@ func ExtractNonStreaming(rawBody []byte, contentEncoding string) (*usage.Usage, 
 }
 
 // openai SSE stream extract
-func NewTrackingReader(body io.ReadCloser, contentEncoding string, onUsage UsageCallback) io.ReadCloser {
+func NewTrackingReader(body io.ReadCloser, contentEncoding string, onUsage UsageCallback, onComplete StreamCompleteCallback) io.ReadCloser {
 	return &responsesUsageTrackingReader{
 		reader:          body,
 		contentEncoding: strings.ToLower(strings.TrimSpace(contentEncoding)),
 		onUsage:         onUsage,
+		onComplete:      onComplete,
 	}
 }
 
@@ -76,23 +78,23 @@ func openAIUsageToUsage(openaiUsage *openAIUsage) (*usage.Usage, error) {
 type responsesUsageTrackingReader struct {
 	reader          io.ReadCloser
 	parser          responsesSSEUsageParser
-	compressedBody  bytes.Buffer
+	body            bytes.Buffer
 	contentEncoding string
 	onUsage         UsageCallback
+	onComplete      StreamCompleteCallback
 	once            sync.Once
 }
 
 func (r *responsesUsageTrackingReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if n > 0 {
+		if _, writeErr := r.body.Write(p[:n]); writeErr != nil {
+			zap.L().Error("buffer responses stream body failed", zap.Error(writeErr))
+		}
 		switch r.contentEncoding {
 		case "", "identity":
 			if parseErr := r.parser.Write(p[:n]); parseErr != nil {
 				zap.L().Error("parse responses stream usage failed", zap.Error(parseErr))
-			}
-		case "gzip":
-			if _, writeErr := r.compressedBody.Write(p[:n]); writeErr != nil {
-				zap.L().Error("buffer gzip responses stream usage data failed", zap.Error(writeErr))
 			}
 		}
 	}
@@ -103,12 +105,13 @@ func (r *responsesUsageTrackingReader) Read(p []byte) (int, error) {
 }
 
 func (r *responsesUsageTrackingReader) Close() error {
+	r.once.Do(r.processUsage)
 	return r.reader.Close()
 }
 
 func (r *responsesUsageTrackingReader) processUsage() {
 	if r.contentEncoding != "" && r.contentEncoding != "identity" {
-		compressedBody := append([]byte(nil), r.compressedBody.Bytes()...)
+		compressedBody := append([]byte(nil), r.body.Bytes()...)
 		go r.processEncodedUsage(compressedBody)
 		return
 	}
@@ -117,6 +120,7 @@ func (r *responsesUsageTrackingReader) processUsage() {
 		zap.L().Error("finish responses stream usage parser failed", zap.Error(err))
 	}
 	r.emitUsage(r.parser.Usage())
+	r.emitComplete(append([]byte(nil), r.body.Bytes()...))
 }
 
 func (r *responsesUsageTrackingReader) processEncodedUsage(compressedBody []byte) {
@@ -134,6 +138,7 @@ func (r *responsesUsageTrackingReader) processEncodedUsage(compressedBody []byte
 		zap.L().Error("finish encoded responses stream usage parser failed", zap.Error(err), zap.String("content_encoding", r.contentEncoding))
 	}
 	r.emitUsage(parser.Usage())
+	r.emitComplete(body)
 }
 
 func (r *responsesUsageTrackingReader) emitUsage(parsedUsage *usage.Usage) {
@@ -143,6 +148,12 @@ func (r *responsesUsageTrackingReader) emitUsage(parsedUsage *usage.Usage) {
 	}
 	if r.onUsage != nil {
 		r.onUsage(parsedUsage)
+	}
+}
+
+func (r *responsesUsageTrackingReader) emitComplete(body []byte) {
+	if r.onComplete != nil {
+		r.onComplete(body)
 	}
 }
 

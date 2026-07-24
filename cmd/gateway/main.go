@@ -132,14 +132,16 @@ func main() {
 	channelSvc := service.NewChannelService(db)
 	modelSvc := service.NewModelService(db)
 	usageSvc := service.NewUsageService(db, cfg.Location)
-	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc)
+	integralLogSvc := service.NewIntegralLogService(db)
+	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc, integralLogSvc)
 
 	// register proxy
 	proxyStore := postgres.NewProxyStore(queries)
 	openaiProxy, err := NewOpenAIProxy(OpenAIProxyOptions{
-		ModelStore:   newModelStoreAdapter(proxyStore),
-		UsageHandler: newOpenAIUsageAdapter(proxyStore),
-		TextPolicy:   textPolicy,
+		ModelStore:         newModelStoreAdapter(proxyStore),
+		UsageHandler:       newOpenAIUsageAdapter(proxyStore),
+		IntegralLogHandler: newOpenAIIntegralLogAdapter(proxyStore),
+		TextPolicy:         textPolicy,
 	})
 	if err != nil {
 		zap.S().Fatalf("create openai proxy error: %v", err)
@@ -170,15 +172,18 @@ func main() {
 	usagePath, usageHandler := pbconnect.NewUsageServiceHandler(srv)
 	channelPath, channelHandler := pbconnect.NewChannelServiceHandler(srv)
 	modelPath, modelHandler := pbconnect.NewModelServiceHandler(srv)
+	integralLogPath, integralLogHandler := pbconnect.NewIntegralLogServiceHandler(srv)
 	adminMux.Handle(apiKeyPath, apiKeyHandler)
 	adminMux.Handle(usagePath, usageHandler)
 	adminMux.Handle(channelPath, channelHandler)
 	adminMux.Handle(modelPath, modelHandler)
+	adminMux.Handle(integralLogPath, integralLogHandler)
 	zap.L().Info("admin handlers registered",
 		zap.String("api_key_path", apiKeyPath),
 		zap.String("usage_path", usagePath),
 		zap.String("channel_path", channelPath),
 		zap.String("model_path", modelPath),
+		zap.String("integral_log_path", integralLogPath),
 	)
 
 	zap.S().Infof("Admin server listening on %s", cfg.AdminAddr)

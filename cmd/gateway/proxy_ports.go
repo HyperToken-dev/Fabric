@@ -30,8 +30,12 @@ type UsageContext struct {
 }
 
 type UsageHandler interface {
-	WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext) io.ReadCloser
+	WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser
 	ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error
+}
+
+type IntegralLogHandler interface {
+	InsertIntegralLog(ctx context.Context, keyID int32, context string, response string) error
 }
 
 type NoopModelStore struct{}
@@ -42,10 +46,16 @@ func (NoopModelStore) ResolveModel(ctx context.Context, channelID int32, modelNa
 
 type NoopUsageHandler struct{}
 
-func (NoopUsageHandler) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext) io.ReadCloser {
+func (NoopUsageHandler) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
 	return body
 }
 
 func (NoopUsageHandler) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
+	return nil
+}
+
+type NoopIntegralLogHandler struct{}
+
+func (NoopIntegralLogHandler) InsertIntegralLog(ctx context.Context, keyID int32, context string, response string) error {
 	return nil
 }

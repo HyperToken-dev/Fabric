@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -149,6 +150,103 @@ func TestOpenAIProxyModifyResponseWrapsStreamingUsage(t *testing.T) {
 	}
 }
 
+func TestOpenAIProxyModifyResponseRecordsStreamingIntegralLog(t *testing.T) {
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1)}
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, IntegralLogHandler: integralLogs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"model":"gpt-5.5","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	req = setContextInt32(req, ctxKeyID, 11)
+	req = setContextInt32(req, ctxChannelID, 12)
+	req = setContextInt32(req, ctxModelID, 13)
+	req = setContextString(req, ctxModel, "gpt-5.5")
+	streamBody := "event: response.completed\ndata: {\"response\":{\"usage\":{\"input_tokens\":2,\"output_tokens\":3}}}\n\ndata: [DONE]\n\n"
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(streamBody)), Request: req}
+	resp.Header.Set("Content-Type", "text/event-stream")
+
+	if err := proxy.modifyResponse(resp); err != nil {
+		t.Fatal(err)
+	}
+	gotBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotBody) != streamBody {
+		t.Fatalf("stream body = %q, want %q", gotBody, streamBody)
+	}
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if got.keyID != 11 {
+		t.Fatalf("keyID = %d, want 11", got.keyID)
+	}
+	if got.response != streamBody {
+		t.Fatalf("response = %q, want %q", got.response, streamBody)
+	}
+	var loggedContext struct {
+		Model     string          `json:"model"`
+		ModelID   int32           `json:"model_id"`
+		ChannelID int32           `json:"channel_id"`
+		Request   json.RawMessage `json:"request"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Model != "gpt-5.5" || loggedContext.ModelID != 13 || loggedContext.ChannelID != 12 {
+		t.Fatalf("context = %+v", loggedContext)
+	}
+	if string(loggedContext.Request) != string(body) {
+		t.Fatalf("request = %s, want %s", loggedContext.Request, body)
+	}
+}
+
+func TestOpenAIProxyModifyResponseRecordsNonStreamingIntegralLog(t *testing.T) {
+	usageHandler := &recordingUsageHandler{nonStreamingCh: make(chan UsageContext, 1)}
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, IntegralLogHandler: integralLogs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	req = setContextInt32(req, ctxKeyID, 21)
+	req = setContextInt32(req, ctxChannelID, 22)
+	req = setContextInt32(req, ctxModelID, 23)
+	req = setContextString(req, ctxModel, "gpt-5.5")
+	responseBody := `{"usage":{"prompt_tokens":4,"completion_tokens":5},"choices":[{"message":{"content":"safe"}}]}`
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(responseBody)), Request: req}
+	resp.Header.Set("Content-Type", "application/json")
+
+	if err := proxy.modifyResponse(resp); err != nil {
+		t.Fatal(err)
+	}
+	gotResponse, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotResponse) != responseBody {
+		t.Fatalf("response body = %q, want %q", gotResponse, responseBody)
+	}
+	info := receiveUsageContext(t, usageHandler.nonStreamingCh)
+	if info.KeyID != 21 || info.ChannelID != 22 || info.ModelID != 23 || info.Model != "gpt-5.5" {
+		t.Fatalf("usage context = %+v", info)
+	}
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if got.keyID != 21 {
+		t.Fatalf("keyID = %d, want 21", got.keyID)
+	}
+	if got.response != responseBody {
+		t.Fatalf("integral response = %q, want %q", got.response, responseBody)
+	}
+}
+
 func TestOpenAIProxyModifyResponseNon2xxPassthrough(t *testing.T) {
 	usageHandler := &recordingUsageHandler{nonStreamingCh: make(chan UsageContext, 1)}
 	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, TextPolicy: rejectingPolicy{}})
@@ -239,12 +337,38 @@ type recordingUsageHandler struct {
 	nonStreamingCh chan UsageContext
 }
 
-func (h *recordingUsageHandler) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext) io.ReadCloser {
+func (h *recordingUsageHandler) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
 	if h.streamingCh == nil {
 		h.streamingCh = make(chan UsageContext, 1)
 	}
 	h.streamingCh <- info
-	return body
+	return &completeCallbackReadCloser{ReadCloser: body, onComplete: onComplete}
+}
+
+type completeCallbackReadCloser struct {
+	io.ReadCloser
+	onComplete func([]byte)
+	buf        bytes.Buffer
+}
+
+func (r *completeCallbackReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if n > 0 {
+		_, _ = r.buf.Write(p[:n])
+	}
+	if err == io.EOF && r.onComplete != nil {
+		r.onComplete(append([]byte(nil), r.buf.Bytes()...))
+		r.onComplete = nil
+	}
+	return n, err
+}
+
+func (r *completeCallbackReadCloser) Close() error {
+	if r.onComplete != nil {
+		r.onComplete(append([]byte(nil), r.buf.Bytes()...))
+		r.onComplete = nil
+	}
+	return r.ReadCloser.Close()
 }
 
 func (h *recordingUsageHandler) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
@@ -263,5 +387,31 @@ func receiveUsageContext(t *testing.T, ch <-chan UsageContext) UsageContext {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for usage context")
 		return UsageContext{}
+	}
+}
+
+type recordedIntegralLog struct {
+	keyID    int32
+	context  string
+	response string
+}
+
+type recordingIntegralLogHandler struct {
+	ch chan recordedIntegralLog
+}
+
+func (h *recordingIntegralLogHandler) InsertIntegralLog(ctx context.Context, keyID int32, context string, response string) error {
+	h.ch <- recordedIntegralLog{keyID: keyID, context: context, response: response}
+	return nil
+}
+
+func receiveIntegralLog(t *testing.T, ch <-chan recordedIntegralLog) recordedIntegralLog {
+	t.Helper()
+	select {
+	case got := <-ch:
+		return got
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for integral log")
+		return recordedIntegralLog{}
 	}
 }
