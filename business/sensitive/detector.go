@@ -110,7 +110,7 @@ func (d *Detector) Detect(model, text string) Result {
 			}
 		}
 
-		indices := dict.matcher.Match([]byte(text))
+		indices := dict.matcher.MatchThreadSafe([]byte(text))
 		if len(indices) == 0 {
 			continue
 		}
