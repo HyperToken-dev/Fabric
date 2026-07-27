@@ -46,7 +46,9 @@ type openAIResponsesStreamEvent struct {
 	} `json:"response"`
 	Choices []struct {
 		Delta struct {
-			Content json.RawMessage `json:"content"`
+			Content      json.RawMessage `json:"content"`
+			ToolCalls    json.RawMessage `json:"tool_calls"`
+			FunctionCall json.RawMessage `json:"function_call"`
 		} `json:"delta"`
 	} `json:"choices"`
 }
@@ -58,9 +60,12 @@ type openAIContentPart struct {
 }
 
 type openAIMessage struct {
-	Role    string          `json:"role"`
-	Name    string          `json:"name"`
-	Content json.RawMessage `json:"content"`
+	Role         string          `json:"role"`
+	Name         string          `json:"name"`
+	Content      json.RawMessage `json:"content"`
+	ToolCallID   string          `json:"tool_call_id"`
+	ToolCalls    json.RawMessage `json:"tool_calls"`
+	FunctionCall json.RawMessage `json:"function_call"`
 }
 
 type openAIOutput struct {
@@ -282,6 +287,7 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 func estimateChatPromptTokens(requestBody []byte, encoding string) (int, error) {
 	var req struct {
 		Messages []openAIMessage `json:"messages"`
+		Tools    json.RawMessage `json:"tools"`
 	}
 	if err := json.Unmarshal(requestBody, &req); err != nil {
 		return 0, fmt.Errorf("decode chat completions request for usage fallback: %w", err)
@@ -307,7 +313,22 @@ func estimateChatPromptTokens(requestBody []byte, encoding string) (int, error) 
 			return 0, fmt.Errorf("count chat content tokens: %w", err)
 		}
 		tokens += contentTokens
+		toolCallIDTokens, err := textTokenIfPresent(message.ToolCallID, encoding)
+		if err != nil {
+			return 0, fmt.Errorf("count chat tool call id tokens: %w", err)
+		}
+		tokens += toolCallIDTokens
+		rawTokens, err := countRawJSONTokens([]json.RawMessage{message.ToolCalls, message.FunctionCall}, encoding)
+		if err != nil {
+			return 0, fmt.Errorf("count chat tool/function tokens: %w", err)
+		}
+		tokens += rawTokens
 	}
+	toolTokens, err := countRawJSONTokens([]json.RawMessage{req.Tools}, encoding)
+	if err != nil {
+		return 0, fmt.Errorf("count chat tools tokens: %w", err)
+	}
+	tokens += toolTokens
 	return tokens, nil
 }
 
@@ -351,6 +372,7 @@ func extractChatCompletionTexts(decodedBody []byte) ([]string, error) {
 	texts := make([]string, 0, len(resp.Choices))
 	for _, choice := range resp.Choices {
 		texts = append(texts, extractTextsFromRawContent(choice.Message.Content)...)
+		texts = append(texts, jsonTextFromRaw(choice.Message.ToolCalls), jsonTextFromRaw(choice.Message.FunctionCall))
 	}
 	return texts, nil
 }
@@ -367,10 +389,10 @@ func extractResponsesCompletionTexts(decodedBody []byte) ([]string, error) {
 }
 
 func responsesOutputTexts(outputText string, output []openAIOutput) []string {
-	var texts []string
 	if strings.TrimSpace(outputText) != "" {
-		texts = append(texts, outputText)
+		return []string{outputText}
 	}
+	var texts []string
 	for _, item := range output {
 		for _, part := range item.Content {
 			if strings.TrimSpace(part.Text) != "" {
@@ -380,6 +402,35 @@ func responsesOutputTexts(outputText string, output []openAIOutput) []string {
 		}
 	}
 	return texts
+}
+
+func textTokenIfPresent(text string, encoding string) (int, error) {
+	if strings.TrimSpace(text) == "" {
+		return 0, nil
+	}
+	return usage.GetTextToken(text, encoding)
+}
+
+func countRawJSONTokens(values []json.RawMessage, encoding string) (int, error) {
+	var texts []string
+	for _, raw := range values {
+		text := jsonTextFromRaw(raw)
+		if text != "" {
+			texts = append(texts, text)
+		}
+	}
+	return countTextTokens(texts, encoding)
+}
+
+func jsonTextFromRaw(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return buf.String()
 }
 
 func extractTextsFromRawContent(raw json.RawMessage) []string {
@@ -432,6 +483,20 @@ func countTextTokens(texts []string, encoding string) (int, error) {
 }
 
 func openAIEncoding(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.HasPrefix(model, "gpt-4o"),
+		strings.HasPrefix(model, "gpt-4.1"),
+		strings.HasPrefix(model, "gpt-5"),
+		strings.HasPrefix(model, "o1"),
+		strings.HasPrefix(model, "o3"),
+		strings.HasPrefix(model, "o4"):
+		return defaultOpenAIEncoding
+	case strings.HasPrefix(model, "gpt-3.5-turbo"),
+		strings.HasPrefix(model, "gpt-4-turbo"),
+		model == "gpt-4" || strings.HasPrefix(model, "gpt-4-"):
+		return "cl100k_base"
+	}
 	return defaultOpenAIEncoding
 }
 
@@ -447,6 +512,7 @@ type responsesSSEUsageParser struct {
 	data               bytes.Buffer
 	usage              *usage.Usage
 	chatBuilder        strings.Builder
+	chatStructuredText []string
 	responsesDeltas    strings.Builder
 	responsesFinalText []string
 }
@@ -496,11 +562,13 @@ func (p *responsesSSEUsageParser) Usage() *usage.Usage {
 func (p *responsesSSEUsageParser) CompletionTexts(path string) ([]string, error) {
 	switch {
 	case strings.Contains(path, "/v1/chat/completions"):
+		var texts []string
 		text := p.chatBuilder.String()
-		if strings.TrimSpace(text) == "" {
-			return nil, nil
+		if strings.TrimSpace(text) != "" {
+			texts = append(texts, text)
 		}
-		return []string{text}, nil
+		texts = append(texts, p.chatStructuredText...)
+		return texts, nil
 	case strings.Contains(path, "/v1/responses"):
 		if len(p.responsesFinalText) > 0 {
 			return p.responsesFinalText, nil
@@ -578,6 +646,7 @@ func (p *responsesSSEUsageParser) consumeEvent() error {
 		for _, text := range texts {
 			_, _ = p.chatBuilder.WriteString(text)
 		}
+		p.chatStructuredText = append(p.chatStructuredText, jsonTextFromRaw(choice.Delta.ToolCalls), jsonTextFromRaw(choice.Delta.FunctionCall))
 	}
 	if streamEvent.Delta != "" {
 		_, _ = p.responsesDeltas.WriteString(streamEvent.Delta)

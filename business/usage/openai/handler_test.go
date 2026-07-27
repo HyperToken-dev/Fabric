@@ -94,6 +94,26 @@ func TestExtractNonStreamingWithFallbackChatCompletions(t *testing.T) {
 	assertUsage(t, got, &usage.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens})
 }
 
+func TestExtractNonStreamingWithFallbackChatCompletionsCountsToolPayloads(t *testing.T) {
+	requestBody := `{"model":"gpt-5.5","messages":[{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"sunny"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`
+	req := newOpenAITestRequest(t, "/v1/chat/completions", requestBody)
+	responseBody := []byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"call_2","type":"function","function":{"name":"notify","arguments":"{\"ok\":true}"}}]}}]}`)
+	got, err := ExtractNonStreamingWithFallback(req, responseBody, "", "gpt-5.5")
+	if err != nil {
+		t.Fatalf("ExtractNonStreamingWithFallback() error = %v", err)
+	}
+
+	firstToolCall := `[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}}]`
+	tools := `[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]`
+	completionToolCall := `[{"id":"call_2","type":"function","function":{"name":"notify","arguments":"{\"ok\":true}"}}]`
+	promptTokens := int64(replyPrimingTokens +
+		tokensPerMessage + mustTokenCount(t, "assistant") + mustTokenCount(t, firstToolCall) +
+		tokensPerMessage + mustTokenCount(t, "tool") + mustTokenCount(t, "call_1") + mustTokenCount(t, "sunny") +
+		mustTokenCount(t, tools))
+	completionTokens := int64(mustTokenCount(t, completionToolCall))
+	assertUsage(t, got, &usage.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens})
+}
+
 func TestExtractNonStreamingWithFallbackResponses(t *testing.T) {
 	req := newOpenAITestRequest(t, "/v1/responses", `{"model":"gpt-5.5","instructions":"be brief","input":"hello"}`)
 	got, err := ExtractNonStreamingWithFallback(req, []byte(`{"output_text":"summary answer"}`), "", "gpt-5.5")
@@ -104,6 +124,45 @@ func TestExtractNonStreamingWithFallbackResponses(t *testing.T) {
 	promptTokens := int64(mustTokenCount(t, "be brief") + mustTokenCount(t, "hello"))
 	completionTokens := int64(mustTokenCount(t, "summary answer"))
 	assertUsage(t, got, &usage.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens})
+}
+
+func TestExtractNonStreamingWithFallbackResponsesPrefersOutputText(t *testing.T) {
+	req := newOpenAITestRequest(t, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`)
+	body := []byte(`{"output_text":"same answer","output":[{"content":[{"type":"output_text","text":"same answer"}]}]}`)
+	got, err := ExtractNonStreamingWithFallback(req, body, "", "gpt-5.5")
+	if err != nil {
+		t.Fatalf("ExtractNonStreamingWithFallback() error = %v", err)
+	}
+
+	assertUsage(t, got, &usage.Usage{
+		PromptTokens:     int64(mustTokenCount(t, "hello")),
+		CompletionTokens: int64(mustTokenCount(t, "same answer")),
+	})
+}
+
+func TestOpenAIEncoding(t *testing.T) {
+	tests := []struct {
+		model string
+		want  string
+	}{
+		{model: "gpt-5.5", want: "o200k_base"},
+		{model: "gpt-4o-mini", want: "o200k_base"},
+		{model: "gpt-4.1", want: "o200k_base"},
+		{model: "o3-mini", want: "o200k_base"},
+		{model: "gpt-4", want: "cl100k_base"},
+		{model: "gpt-4-0613", want: "cl100k_base"},
+		{model: "gpt-4-turbo", want: "cl100k_base"},
+		{model: "gpt-3.5-turbo", want: "cl100k_base"},
+		{model: "unknown-provider-model", want: "o200k_base"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := openAIEncoding(tt.model); got != tt.want {
+				t.Fatalf("openAIEncoding(%q) = %q, want %q", tt.model, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestExtractNonStreamingWithFallbackPrefersUpstreamUsage(t *testing.T) {
@@ -241,6 +300,30 @@ func TestNewTrackingReaderFallbackChatCompletions(t *testing.T) {
 	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens})
 }
 
+func TestNewTrackingReaderFallbackChatCompletionsCountsToolDeltas(t *testing.T) {
+	req := newOpenAITestRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"use a tool"}]}`)
+	sse := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}}]}}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	usageCh := make(chan *usage.Usage, 1)
+
+	reader := NewTrackingReaderWithFallback(req, io.NopCloser(strings.NewReader(sse)), "", "gpt-5.5", func(u *usage.Usage) {
+		usageCh <- u
+	}, nil)
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+
+	toolDelta := `[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}}]`
+	roleTokens := mustTokenCount(t, "user")
+	promptTokens := int64(replyPrimingTokens + tokensPerMessage + roleTokens + mustTokenCount(t, "use a tool"))
+	completionTokens := int64(mustTokenCount(t, toolDelta))
+	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens})
+}
+
 func TestNewTrackingReaderFallbackResponses(t *testing.T) {
 	req := newOpenAITestRequest(t, "/v1/responses", `{"model":"gpt-5.5","instructions":"be brief","input":"hello"}`)
 	sse := strings.Join([]string{
@@ -265,6 +348,30 @@ func TestNewTrackingReaderFallbackResponses(t *testing.T) {
 	promptTokens := int64(mustTokenCount(t, "be brief") + mustTokenCount(t, "hello"))
 	completionTokens := int64(mustTokenCount(t, "summary answer"))
 	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens})
+}
+
+func TestNewTrackingReaderFallbackResponsesPrefersFinalOutputText(t *testing.T) {
+	req := newOpenAITestRequest(t, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`)
+	sse := strings.Join([]string{
+		`event: response.completed`,
+		`data: {"response":{"output_text":"same answer","output":[{"content":[{"type":"output_text","text":"same answer"}]}]}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	usageCh := make(chan *usage.Usage, 1)
+
+	reader := NewTrackingReaderWithFallback(req, io.NopCloser(strings.NewReader(sse)), "", "gpt-5.5", func(u *usage.Usage) {
+		usageCh <- u
+	}, nil)
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+
+	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{
+		PromptTokens:     int64(mustTokenCount(t, "hello")),
+		CompletionTokens: int64(mustTokenCount(t, "same answer")),
+	})
 }
 
 func TestNewTrackingReaderNoUsageCallbackAndClose(t *testing.T) {
