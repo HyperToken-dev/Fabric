@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/HyperToken-dev/fabric/business/usage"
@@ -21,8 +22,8 @@ func newOpenAIUsageAdapter(store *postgres.ProxyStore) openAIUsageAdapter {
 	return openAIUsageAdapter{store: store}
 }
 
-func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
-	return openaiusage.NewTrackingReader(body, contentEncoding, func(parsedUsage *usage.Usage) {
+func (a openAIUsageAdapter) WrapStreamingResponse(req *http.Request, body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
+	return openaiusage.NewTrackingReaderWithFallback(req, body, contentEncoding, info.Model, func(parsedUsage *usage.Usage) {
 		if info.ModelID == 0 {
 			zap.L().Error("missing resolved model id for streaming usage",
 				zap.Int32("key_id", info.KeyID),
@@ -57,12 +58,12 @@ func (a openAIUsageAdapter) WrapStreamingResponse(body io.ReadCloser, contentEnc
 	}, onComplete)
 }
 
-func (a openAIUsageAdapter) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
+func (a openAIUsageAdapter) ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
 	if info.ModelID == 0 {
 		return fmt.Errorf("missing resolved model id for non-streaming usage: key_id=%d, channel_id=%d, model=%q", info.KeyID, info.ChannelID, info.Model)
 	}
 
-	parsedUsage, err := openaiusage.ExtractNonStreaming(rawBody, contentEncoding)
+	parsedUsage, err := openaiusage.ExtractNonStreamingWithFallback(req, rawBody, contentEncoding, info.Model)
 	if err != nil {
 		return err
 	}

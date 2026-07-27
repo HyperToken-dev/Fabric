@@ -76,7 +76,7 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 			zap.String("model", model),
 		)
 		contentEncoding := resp.Header.Get("Content-Encoding")
-		resp.Body = p.usageHandler.WrapStreamingResponse(resp.Body, contentEncoding, UsageContext{
+		resp.Body = p.usageHandler.WrapStreamingResponse(resp.Request, resp.Body, contentEncoding, UsageContext{
 			KeyID:     keyID,
 			ChannelID: channelID,
 			ModelID:   modelID,
@@ -136,7 +136,7 @@ func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
 	}
 
 	// async process can improve efficiency,make sure client get realtime response
-	go p.processUsageAsync(rawBody, contentEncoding, contentType, keyID, channelID, modelID, model)
+	go p.processUsageAsync(resp.Request, rawBody, contentEncoding, contentType, keyID, channelID, modelID, model)
 	go p.processIntegralLogAsync(resp.Request, integralResponseBody, keyID, channelID, modelID, model)
 
 	return nil
@@ -161,7 +161,7 @@ func isOpenAIUsageStream(req *http.Request, contentType string) bool {
 }
 
 // async usage processing
-func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, contentType string, keyID int32, channelID int32, modelID int32, model string) {
+func (p *OpenAIProxy) processUsageAsync(req *http.Request, rawBody []byte, contentEncoding string, contentType string, keyID int32, channelID int32, modelID int32, model string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -170,7 +170,7 @@ func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, 
 		return
 	}
 
-	if err := p.usageHandler.ProcessNonStreamingResponse(ctx, rawBody, contentEncoding, contentType, UsageContext{
+	if err := p.usageHandler.ProcessNonStreamingResponse(ctx, req, rawBody, contentEncoding, contentType, UsageContext{
 		KeyID:     keyID,
 		ChannelID: channelID,
 		ModelID:   modelID,

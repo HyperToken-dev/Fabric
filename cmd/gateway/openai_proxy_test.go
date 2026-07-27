@@ -337,7 +337,7 @@ type recordingUsageHandler struct {
 	nonStreamingCh chan UsageContext
 }
 
-func (h *recordingUsageHandler) WrapStreamingResponse(body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
+func (h *recordingUsageHandler) WrapStreamingResponse(req *http.Request, body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
 	if h.streamingCh == nil {
 		h.streamingCh = make(chan UsageContext, 1)
 	}
@@ -371,7 +371,7 @@ func (r *completeCallbackReadCloser) Close() error {
 	return r.ReadCloser.Close()
 }
 
-func (h *recordingUsageHandler) ProcessNonStreamingResponse(ctx context.Context, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
+func (h *recordingUsageHandler) ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
 	if h.nonStreamingCh == nil {
 		h.nonStreamingCh = make(chan UsageContext, 1)
 	}
