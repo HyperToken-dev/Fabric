@@ -23,7 +23,17 @@ func newOpenAIUsageAdapter(store *postgres.ProxyStore) openAIUsageAdapter {
 }
 
 func (a openAIUsageAdapter) WrapStreamingResponse(req *http.Request, body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
-	return openaiusage.NewTrackingReaderWithFallback(req, body, contentEncoding, info.Model, func(parsedUsage *usage.Usage) {
+	onError := func(err error) {
+		zap.L().Error("openai streaming usage processing failed",
+			zap.Error(err),
+			zap.Int32("key_id", info.KeyID),
+			zap.Int32("channel_id", info.ChannelID),
+			zap.Int32("model_id", info.ModelID),
+			zap.String("model", info.Model),
+			zap.String("content_encoding", contentEncoding),
+		)
+	}
+	return openaiusage.NewTrackingReaderWithFallbackAndErrors(req, body, contentEncoding, info.Model, func(parsedUsage *usage.Usage) {
 		if info.ModelID == 0 {
 			zap.L().Error("missing resolved model id for streaming usage",
 				zap.Int32("key_id", info.KeyID),
@@ -55,7 +65,7 @@ func (a openAIUsageAdapter) WrapStreamingResponse(req *http.Request, body io.Rea
 			zap.Int64("prompt_tokens", parsedUsage.PromptTokens),
 			zap.Int64("completion_tokens", parsedUsage.CompletionTokens),
 		)
-	}, onComplete)
+	}, onComplete, onError)
 }
 
 func (a openAIUsageAdapter) ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {

@@ -303,7 +303,11 @@ func TestNewTrackingReaderFallbackChatCompletions(t *testing.T) {
 func TestNewTrackingReaderFallbackChatCompletionsCountsToolDeltas(t *testing.T) {
 	req := newOpenAITestRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"use a tool"}]}`)
 	sse := strings.Join([]string{
-		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":""}}]}}]}`,
+		"",
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\""}}]}}]}`,
+		"",
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"Paris\"}"}}]}}]}`,
 		"",
 		"data: [DONE]",
 		"",
@@ -317,11 +321,39 @@ func TestNewTrackingReaderFallbackChatCompletionsCountsToolDeltas(t *testing.T) 
 		t.Fatalf("Copy() error = %v", err)
 	}
 
-	toolDelta := `[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}}]`
+	toolDelta := `[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}}]`
 	roleTokens := mustTokenCount(t, "user")
 	promptTokens := int64(replyPrimingTokens + tokensPerMessage + roleTokens + mustTokenCount(t, "use a tool"))
 	completionTokens := int64(mustTokenCount(t, toolDelta))
 	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens})
+}
+
+func TestNewTrackingReaderWithFallbackReportsFallbackErrors(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`))
+	req.GetBody = nil
+	errorCh := make(chan error, 1)
+	sse := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"safe answer"}}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	reader := NewTrackingReaderWithFallbackAndErrors(req, io.NopCloser(strings.NewReader(sse)), "", "gpt-5.5", nil, nil, func(err error) {
+		errorCh <- err
+	})
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+
+	select {
+	case err := <-errorCh:
+		if !strings.Contains(err.Error(), "missing openai request GetBody") {
+			t.Fatalf("error = %v, want missing GetBody", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for fallback error")
+	}
 }
 
 func TestNewTrackingReaderFallbackResponses(t *testing.T) {

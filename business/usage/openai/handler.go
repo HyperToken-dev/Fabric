@@ -18,6 +18,7 @@ import (
 
 type UsageCallback func(*usage.Usage)
 type StreamCompleteCallback func([]byte)
+type UsageErrorCallback func(error)
 
 const (
 	defaultOpenAIEncoding = "o200k_base"
@@ -44,13 +45,29 @@ type openAIResponsesStreamEvent struct {
 		OutputText string         `json:"output_text"`
 		Output     []openAIOutput `json:"output"`
 	} `json:"response"`
-	Choices []struct {
-		Delta struct {
-			Content      json.RawMessage `json:"content"`
-			ToolCalls    json.RawMessage `json:"tool_calls"`
-			FunctionCall json.RawMessage `json:"function_call"`
-		} `json:"delta"`
-	} `json:"choices"`
+	Choices []openAIChatStreamChoice `json:"choices"`
+}
+
+type openAIChatStreamChoice struct {
+	Delta openAIChatStreamDelta `json:"delta"`
+}
+
+type openAIChatStreamDelta struct {
+	Content      json.RawMessage                   `json:"content"`
+	ToolCalls    []openAIChatStreamToolCallDelta   `json:"tool_calls"`
+	FunctionCall openAIChatStreamFunctionCallDelta `json:"function_call"`
+}
+
+type openAIChatStreamToolCallDelta struct {
+	Index    int                               `json:"index"`
+	ID       string                            `json:"id"`
+	Type     string                            `json:"type"`
+	Function openAIChatStreamFunctionCallDelta `json:"function"`
+}
+
+type openAIChatStreamFunctionCallDelta struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type openAIContentPart struct {
@@ -110,6 +127,10 @@ func NewTrackingReader(body io.ReadCloser, contentEncoding string, onUsage Usage
 }
 
 func NewTrackingReaderWithFallback(req *http.Request, body io.ReadCloser, contentEncoding string, model string, onUsage UsageCallback, onComplete StreamCompleteCallback) io.ReadCloser {
+	return NewTrackingReaderWithFallbackAndErrors(req, body, contentEncoding, model, onUsage, onComplete, nil)
+}
+
+func NewTrackingReaderWithFallbackAndErrors(req *http.Request, body io.ReadCloser, contentEncoding string, model string, onUsage UsageCallback, onComplete StreamCompleteCallback, onError UsageErrorCallback) io.ReadCloser {
 	return &responsesUsageTrackingReader{
 		reader:          body,
 		req:             req,
@@ -117,6 +138,7 @@ func NewTrackingReaderWithFallback(req *http.Request, body io.ReadCloser, conten
 		contentEncoding: strings.ToLower(strings.TrimSpace(contentEncoding)),
 		onUsage:         onUsage,
 		onComplete:      onComplete,
+		onError:         onError,
 	}
 }
 
@@ -145,6 +167,7 @@ type responsesUsageTrackingReader struct {
 	contentEncoding string
 	onUsage         UsageCallback
 	onComplete      StreamCompleteCallback
+	onError         UsageErrorCallback
 	once            sync.Once
 }
 
@@ -154,7 +177,9 @@ func (r *responsesUsageTrackingReader) Read(p []byte) (int, error) {
 		_, _ = r.body.Write(p[:n])
 		switch r.contentEncoding {
 		case "", "identity":
-			_ = r.parser.Write(p[:n])
+			if parseErr := r.parser.Write(p[:n]); parseErr != nil {
+				r.emitError(fmt.Errorf("parse openai stream usage: %w", parseErr))
+			}
 		}
 	}
 	if err == io.EOF {
@@ -175,7 +200,9 @@ func (r *responsesUsageTrackingReader) processUsage() {
 		return
 	}
 
-	_ = r.parser.Finish()
+	if err := r.parser.Finish(); err != nil {
+		r.emitError(fmt.Errorf("finish openai stream usage parser: %w", err))
+	}
 	streamBody := append([]byte(nil), r.body.Bytes()...)
 	r.emitUsage(r.usageOrFallback(&r.parser))
 	r.emitComplete(streamBody)
@@ -184,12 +211,17 @@ func (r *responsesUsageTrackingReader) processUsage() {
 func (r *responsesUsageTrackingReader) processEncodedUsage(compressedBody []byte) {
 	body, err := decodeResponseBody(compressedBody, r.contentEncoding)
 	if err != nil {
+		r.emitError(fmt.Errorf("decode openai encoded stream usage body: %w", err))
 		return
 	}
 
 	var parser responsesSSEUsageParser
-	_ = parser.Write(body)
-	_ = parser.Finish()
+	if err := parser.Write(body); err != nil {
+		r.emitError(fmt.Errorf("parse openai encoded stream usage: %w", err))
+	}
+	if err := parser.Finish(); err != nil {
+		r.emitError(fmt.Errorf("finish openai encoded stream usage parser: %w", err))
+	}
 	r.emitUsage(r.usageOrFallback(&parser))
 	r.emitComplete(body)
 }
@@ -204,9 +236,16 @@ func (r *responsesUsageTrackingReader) usageOrFallback(parser *responsesSSEUsage
 	}
 	parsedUsage, err := fallbackUsage(r.req, nil, parser, r.model)
 	if err != nil {
+		r.emitError(fmt.Errorf("fallback openai stream usage: %w", err))
 		return nil
 	}
 	return parsedUsage
+}
+
+func (r *responsesUsageTrackingReader) emitError(err error) {
+	if err != nil && r.onError != nil {
+		r.onError(err)
+	}
 }
 
 func (r *responsesUsageTrackingReader) emitUsage(parsedUsage *usage.Usage) {
@@ -512,9 +551,34 @@ type responsesSSEUsageParser struct {
 	data               bytes.Buffer
 	usage              *usage.Usage
 	chatBuilder        strings.Builder
-	chatStructuredText []string
+	chatToolCalls      map[int]*streamedChatToolCall
+	chatToolCallOrder  []int
+	chatFunctionCall   streamedChatFunctionCall
 	responsesDeltas    strings.Builder
 	responsesFinalText []string
+}
+
+type streamedChatToolCall struct {
+	Index    int
+	ID       string
+	Type     string
+	Function streamedChatFunctionCall
+}
+
+type streamedChatFunctionCall struct {
+	Name      string
+	Arguments strings.Builder
+}
+
+type finalChatToolCall struct {
+	ID       string                `json:"id,omitempty"`
+	Type     string                `json:"type,omitempty"`
+	Function finalChatFunctionCall `json:"function,omitempty"`
+}
+
+type finalChatFunctionCall struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 func (p *responsesSSEUsageParser) Write(chunk []byte) error {
@@ -567,7 +631,7 @@ func (p *responsesSSEUsageParser) CompletionTexts(path string) ([]string, error)
 		if strings.TrimSpace(text) != "" {
 			texts = append(texts, text)
 		}
-		texts = append(texts, p.chatStructuredText...)
+		texts = append(texts, p.chatToolCallText(), p.chatFunctionCallText())
 		return texts, nil
 	case strings.Contains(path, "/v1/responses"):
 		if len(p.responsesFinalText) > 0 {
@@ -646,7 +710,8 @@ func (p *responsesSSEUsageParser) consumeEvent() error {
 		for _, text := range texts {
 			_, _ = p.chatBuilder.WriteString(text)
 		}
-		p.chatStructuredText = append(p.chatStructuredText, jsonTextFromRaw(choice.Delta.ToolCalls), jsonTextFromRaw(choice.Delta.FunctionCall))
+		p.mergeChatToolCalls(choice.Delta.ToolCalls)
+		p.mergeChatFunctionCall(choice.Delta.FunctionCall)
 	}
 	if streamEvent.Delta != "" {
 		_, _ = p.responsesDeltas.WriteString(streamEvent.Delta)
@@ -656,6 +721,80 @@ func (p *responsesSSEUsageParser) consumeEvent() error {
 	}
 	p.responsesFinalText = append(p.responsesFinalText, responsesOutputTexts(streamEvent.Response.OutputText, streamEvent.Response.Output)...)
 	return nil
+}
+
+func (p *responsesSSEUsageParser) mergeChatToolCalls(deltas []openAIChatStreamToolCallDelta) {
+	if len(deltas) == 0 {
+		return
+	}
+	if p.chatToolCalls == nil {
+		p.chatToolCalls = make(map[int]*streamedChatToolCall, len(deltas))
+	}
+	for _, delta := range deltas {
+		toolCall, ok := p.chatToolCalls[delta.Index]
+		if !ok {
+			toolCall = &streamedChatToolCall{Index: delta.Index}
+			p.chatToolCalls[delta.Index] = toolCall
+			p.chatToolCallOrder = append(p.chatToolCallOrder, delta.Index)
+		}
+		if toolCall.ID == "" {
+			toolCall.ID = delta.ID
+		}
+		if toolCall.Type == "" {
+			toolCall.Type = delta.Type
+		}
+		mergeStreamedFunctionCall(&toolCall.Function, delta.Function)
+	}
+}
+
+func (p *responsesSSEUsageParser) mergeChatFunctionCall(delta openAIChatStreamFunctionCallDelta) {
+	mergeStreamedFunctionCall(&p.chatFunctionCall, delta)
+}
+
+func mergeStreamedFunctionCall(dst *streamedChatFunctionCall, delta openAIChatStreamFunctionCallDelta) {
+	if dst.Name == "" {
+		dst.Name = delta.Name
+	}
+	if delta.Arguments != "" {
+		_, _ = dst.Arguments.WriteString(delta.Arguments)
+	}
+}
+
+func (p *responsesSSEUsageParser) chatToolCallText() string {
+	if len(p.chatToolCallOrder) == 0 {
+		return ""
+	}
+	toolCalls := make([]finalChatToolCall, 0, len(p.chatToolCallOrder))
+	for _, index := range p.chatToolCallOrder {
+		toolCall := p.chatToolCalls[index]
+		toolCalls = append(toolCalls, finalChatToolCall{
+			ID:   toolCall.ID,
+			Type: toolCall.Type,
+			Function: finalChatFunctionCall{
+				Name:      toolCall.Function.Name,
+				Arguments: toolCall.Function.Arguments.String(),
+			},
+		})
+	}
+	encoded, err := json.Marshal(toolCalls)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func (p *responsesSSEUsageParser) chatFunctionCallText() string {
+	if p.chatFunctionCall.Name == "" && p.chatFunctionCall.Arguments.Len() == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(finalChatFunctionCall{
+		Name:      p.chatFunctionCall.Name,
+		Arguments: p.chatFunctionCall.Arguments.String(),
+	})
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func decodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) {
