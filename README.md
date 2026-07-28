@@ -20,6 +20,10 @@ Fabric is not intended to be only a proxy service. Its goal is to provide reusab
     <img src="https://img.shields.io/badge/React-19.2.7-aqua?logo=react&logoColor=blue" alit="React 19.2.7"></img>
 </p>
 
+<p align="center">
+    English | <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
 ## 💡 Why This Project Exists
 
 Many AI gateway or AI application projects, such as new_api, axonhub, and similar systems, repeatedly need to maintain the same infrastructure:
