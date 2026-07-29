@@ -93,8 +93,9 @@ func (p *OpenAIProxy) onComplete(resp *http.Response, decodedBody []byte) {
 		integralResponseBody = nil
 	}
 	upstreamSuccess := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+	isStream := isOpenAIUsageStream(resp.Request, contentType)
 
-	if decodedBody != nil && upstreamSuccess {
+	if decodedBody != nil && upstreamSuccess && !isStream {
 		outputTexts, err := sensitiveopenai.ExtractOutputTexts(resp.Request, decodedBody)
 		if err != nil {
 			zap.L().Error("extract openai output texts failed", zap.Error(err), zap.String("content_type", contentType), zap.String("decoded_body_prefix", bodyPrefix(decodedBody, 128)))
@@ -110,7 +111,7 @@ func (p *OpenAIProxy) onComplete(resp *http.Response, decodedBody []byte) {
 	}
 
 	if decodedBody != nil && upstreamSuccess {
-		if isOpenAIUsageStream(resp.Request, contentType) {
+		if isStream {
 			go p.processStreamingUsageAsync(resp.Request, decodedBody, keyID, channelID, modelID, model)
 		} else {
 			go p.processUsageAsync(resp.Request, decodedBody, "identity", contentType, keyID, channelID, modelID, model)

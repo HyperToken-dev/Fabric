@@ -383,8 +383,11 @@ func TestNewTrackingReaderFallbackResponses(t *testing.T) {
 }
 
 func TestNewTrackingReaderFallbackResponsesPrefersFinalOutputText(t *testing.T) {
-	req := newOpenAITestRequest(t, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`)
+	req := newOpenAITestRequest(t, "/v1/responses", `{"model":"gpt-5.5","input":"hello","tools":[{"type":"file_search"}]}`)
 	sse := strings.Join([]string{
+		`event: response.output_text.delta`,
+		`data: {"delta":"ignore me"}`,
+		"",
 		`event: response.completed`,
 		`data: {"response":{"output_text":"same answer","output":[{"content":[{"type":"output_text","text":"same answer"}]}]}}`,
 		"",
@@ -401,7 +404,7 @@ func TestNewTrackingReaderFallbackResponsesPrefersFinalOutputText(t *testing.T) 
 	}
 
 	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{
-		PromptTokens:     int64(mustTokenCount(t, "hello")),
+		PromptTokens:     int64(mustTokenCount(t, "hello") + mustTokenCount(t, `[{"type":"file_search"}]`)),
 		CompletionTokens: int64(mustTokenCount(t, "same answer")),
 	})
 }

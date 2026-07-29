@@ -390,6 +390,10 @@ func estimateResponsesPromptTokens(requestBody []byte, encoding string) (int, er
 	var req struct {
 		Instructions string          `json:"instructions"`
 		Input        json.RawMessage `json:"input"`
+		Tools        json.RawMessage `json:"tools"`
+		ToolChoice   json.RawMessage `json:"tool_choice"`
+		Text         json.RawMessage `json:"text"`
+		Reasoning    json.RawMessage `json:"reasoning"`
 	}
 	if err := json.Unmarshal(requestBody, &req); err != nil {
 		return 0, fmt.Errorf("decode responses request for usage fallback: %w", err)
@@ -400,7 +404,15 @@ func estimateResponsesPromptTokens(requestBody []byte, encoding string) (int, er
 		texts = append(texts, req.Instructions)
 	}
 	texts = append(texts, extractTextsFromRawContent(req.Input)...)
-	return countTextTokens(texts, encoding)
+	textTokens, err := countTextTokens(texts, encoding)
+	if err != nil {
+		return 0, err
+	}
+	rawTokens, err := countRawJSONTokens([]json.RawMessage{req.Tools, req.ToolChoice, req.Text, req.Reasoning}, encoding)
+	if err != nil {
+		return 0, fmt.Errorf("count responses structured request tokens: %w", err)
+	}
+	return textTokens + rawTokens, nil
 }
 
 func extractNonStreamingCompletionTexts(path string, decodedBody []byte) ([]string, error) {
@@ -570,6 +582,7 @@ type responsesSSEUsageParser struct {
 	chatToolCallOrder  []int
 	chatFunctionCall   streamedChatFunctionCall
 	responsesDeltas    strings.Builder
+	responsesEventText []string
 	responsesFinalText []string
 }
 
@@ -652,6 +665,9 @@ func (p *responsesSSEUsageParser) CompletionTexts(path string) ([]string, error)
 		if len(p.responsesFinalText) > 0 {
 			return p.responsesFinalText, nil
 		}
+		if len(p.responsesEventText) > 0 {
+			return p.responsesEventText, nil
+		}
 		text := p.responsesDeltas.String()
 		if strings.TrimSpace(text) == "" {
 			return nil, nil
@@ -732,7 +748,7 @@ func (p *responsesSSEUsageParser) consumeEvent() error {
 		_, _ = p.responsesDeltas.WriteString(streamEvent.Delta)
 	}
 	if streamEvent.Text != "" {
-		p.responsesFinalText = append(p.responsesFinalText, streamEvent.Text)
+		p.responsesEventText = append(p.responsesEventText, streamEvent.Text)
 	}
 	p.responsesFinalText = append(p.responsesFinalText, responsesOutputTexts(streamEvent.Response.OutputText, streamEvent.Response.Output)...)
 	return nil

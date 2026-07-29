@@ -352,3 +352,51 @@ func TestProxyStreamingOnCompleteDoesNotBlockFirstChunk(t *testing.T) {
 		t.Fatal("timed out waiting for onComplete")
 	}
 }
+
+func TestProxyStreamingOnCompleteTriggeredByCloseBeforeEOF(t *testing.T) {
+	clientClosed := make(chan struct{})
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: first\n\n"))
+		flusher.Flush()
+		<-clientClosed // Keep server open until client closes
+	}))
+	defer upstreamServer.Close()
+
+	completeCh := make(chan string, 1)
+	p := New(Options{
+		OnComplete: func(resp *http.Response, decodedBody []byte) {
+			completeCh <- string(decodedBody)
+		},
+	})
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.ServeHTTP(w, r, Upstream{BaseURL: upstreamServer.URL, APIKey: "provider-key"})
+	}))
+	defer proxyServer.Close()
+
+	resp, err := http.Get(proxyServer.URL + "/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf := make([]byte, len("data: first\n\n"))
+	if _, err := io.ReadFull(resp.Body, buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(clientClosed)
+
+	select {
+	case got := <-completeCh:
+		if got != "data: first\n\n" {
+			t.Fatalf("decoded stream body = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for onComplete")
+	}
+}
