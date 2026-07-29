@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
+	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 )
 
 func TestOpenAIProxyServeHTTPValidationAndModelResolution(t *testing.T) {
@@ -51,6 +52,51 @@ func TestOpenAIProxyServeHTTPValidationAndModelResolution(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%q", rec.Code, tt.wantStatus, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestOpenAIProxyServeHTTPRecordsSensitiveInputRejectedIntegralLog(t *testing.T) {
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy:         rejectingPolicy{},
+		IntegralLogHandler: integralLogs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream should not be called")
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","messages":[{"role":"user","content":"blocked"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if got.keyID != 10 {
+		t.Fatalf("keyID = %d, want 10", got.keyID)
+	}
+	if got.response != "prompt rejected\n" {
+		t.Fatalf("response = %q, want prompt rejected", got.response)
+	}
+	var loggedContext struct {
+		Provider        string `json:"provider"`
+		Outcome         string `json:"outcome"`
+		RejectionStage  string `json:"rejection_stage"`
+		RejectionReason string `json:"rejection_reason"`
+		ResponseStatus  int    `json:"response_status"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Provider != "openai" || loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "input" || loggedContext.RejectionReason != "sensitive" || loggedContext.ResponseStatus != http.StatusForbidden {
+		t.Fatalf("context = %+v", loggedContext)
 	}
 }
 
@@ -123,7 +169,7 @@ func TestInjectOpenAIChatStreamOptionsDoesNotModifyNonStreamingRequest(t *testin
 	}
 }
 
-func TestOpenAIProxyModifyResponseWrapsStreamingUsage(t *testing.T) {
+func TestOpenAIProxyOnCompleteProcessesStreamingUsage(t *testing.T) {
 	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1)}
 	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler})
 	if err != nil {
@@ -138,7 +184,10 @@ func TestOpenAIProxyModifyResponseWrapsStreamingUsage(t *testing.T) {
 	resp.Header.Set("Content-Type", "text/event-stream")
 	resp.Header.Set("Content-Length", "99")
 
-	if err := proxy.modifyResponse(resp); err != nil {
+	if err := coreproxy.DefaultModifyResponse(proxy.onComplete)(resp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(resp.Body); err != nil {
 		t.Fatal(err)
 	}
 	info := receiveUsageContext(t, usageHandler.streamingCh)
@@ -170,7 +219,7 @@ func TestOpenAIProxyModifyResponseRecordsStreamingIntegralLog(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(streamBody)), Request: req}
 	resp.Header.Set("Content-Type", "text/event-stream")
 
-	if err := proxy.modifyResponse(resp); err != nil {
+	if err := coreproxy.DefaultModifyResponse(proxy.onComplete)(resp); err != nil {
 		t.Fatal(err)
 	}
 	gotBody, err := io.ReadAll(resp.Body)
@@ -188,6 +237,8 @@ func TestOpenAIProxyModifyResponseRecordsStreamingIntegralLog(t *testing.T) {
 		t.Fatalf("response = %q, want %q", got.response, streamBody)
 	}
 	var loggedContext struct {
+		Provider  string          `json:"provider"`
+		Outcome   string          `json:"outcome"`
 		Model     string          `json:"model"`
 		ModelID   int32           `json:"model_id"`
 		ChannelID int32           `json:"channel_id"`
@@ -196,7 +247,7 @@ func TestOpenAIProxyModifyResponseRecordsStreamingIntegralLog(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
 		t.Fatal(err)
 	}
-	if loggedContext.Model != "gpt-5.5" || loggedContext.ModelID != 13 || loggedContext.ChannelID != 12 {
+	if loggedContext.Provider != "openai" || loggedContext.Outcome != "ok" || loggedContext.Model != "gpt-5.5" || loggedContext.ModelID != 13 || loggedContext.ChannelID != 12 {
 		t.Fatalf("context = %+v", loggedContext)
 	}
 	if string(loggedContext.Request) != string(body) {
@@ -224,7 +275,7 @@ func TestOpenAIProxyModifyResponseRecordsNonStreamingIntegralLog(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(responseBody)), Request: req}
 	resp.Header.Set("Content-Type", "application/json")
 
-	if err := proxy.modifyResponse(resp); err != nil {
+	if err := coreproxy.DefaultModifyResponse(proxy.onComplete)(resp); err != nil {
 		t.Fatal(err)
 	}
 	gotResponse, err := io.ReadAll(resp.Body)
@@ -249,7 +300,8 @@ func TestOpenAIProxyModifyResponseRecordsNonStreamingIntegralLog(t *testing.T) {
 
 func TestOpenAIProxyModifyResponseNon2xxPassthrough(t *testing.T) {
 	usageHandler := &recordingUsageHandler{nonStreamingCh: make(chan UsageContext, 1)}
-	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, TextPolicy: rejectingPolicy{}})
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, TextPolicy: rejectingPolicy{}, IntegralLogHandler: integralLogs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +310,7 @@ func TestOpenAIProxyModifyResponseNon2xxPassthrough(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusBadRequest, Status: "400 Bad Request", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"blocked"}}]}`)), Request: req}
 	resp.Header.Set("Content-Type", "application/json")
 
-	if err := proxy.modifyResponse(resp); err != nil {
+	if err := coreproxy.DefaultModifyResponse(proxy.onComplete)(resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusBadRequest {
@@ -269,11 +321,22 @@ func TestOpenAIProxyModifyResponseNon2xxPassthrough(t *testing.T) {
 		t.Fatalf("unexpected usage processing: %+v", got)
 	default:
 	}
+	got := receiveIntegralLog(t, integralLogs.ch)
+	var loggedContext struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Outcome != "error" {
+		t.Fatalf("outcome = %q, want error", loggedContext.Outcome)
+	}
 }
 
 func TestOpenAIProxyModifyResponseRejectsOutputAndRestoresBody(t *testing.T) {
 	usageHandler := &recordingUsageHandler{nonStreamingCh: make(chan UsageContext, 1)}
-	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, TextPolicy: rejectingPolicy{}})
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, TextPolicy: rejectingPolicy{}, IntegralLogHandler: integralLogs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +355,7 @@ func TestOpenAIProxyModifyResponseRejectsOutputAndRestoresBody(t *testing.T) {
 	resp.Header.Set("Content-Type", "application/json")
 	resp.Header.Set("Content-Encoding", "identity")
 
-	if err := proxy.modifyResponse(resp); err != nil {
+	if err := coreproxy.DefaultModifyResponse(proxy.onComplete)(resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusUnprocessableEntity {
@@ -311,6 +374,22 @@ func TestOpenAIProxyModifyResponseRejectsOutputAndRestoresBody(t *testing.T) {
 	info := receiveUsageContext(t, usageHandler.nonStreamingCh)
 	if info.KeyID != 7 || info.ChannelID != 8 || info.ModelID != 9 || info.Model != "gpt-5.5" {
 		t.Fatalf("usage context = %+v", info)
+	}
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if !strings.Contains(got.response, "model output rejected") {
+		t.Fatalf("integral response = %q, want output rejection", got.response)
+	}
+	var loggedContext struct {
+		Outcome         string `json:"outcome"`
+		RejectionStage  string `json:"rejection_stage"`
+		RejectionReason string `json:"rejection_reason"`
+		ResponseStatus  int    `json:"response_status"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "output" || loggedContext.RejectionReason != "sensitive" || loggedContext.ResponseStatus != http.StatusUnprocessableEntity {
+		t.Fatalf("context = %+v", loggedContext)
 	}
 }
 
@@ -337,45 +416,19 @@ type recordingUsageHandler struct {
 	nonStreamingCh chan UsageContext
 }
 
-func (h *recordingUsageHandler) WrapStreamingResponse(req *http.Request, body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
-	if h.streamingCh == nil {
-		h.streamingCh = make(chan UsageContext, 1)
-	}
-	h.streamingCh <- info
-	return &completeCallbackReadCloser{ReadCloser: body, onComplete: onComplete}
-}
-
-type completeCallbackReadCloser struct {
-	io.ReadCloser
-	onComplete func([]byte)
-	buf        bytes.Buffer
-}
-
-func (r *completeCallbackReadCloser) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	if n > 0 {
-		_, _ = r.buf.Write(p[:n])
-	}
-	if err == io.EOF && r.onComplete != nil {
-		r.onComplete(append([]byte(nil), r.buf.Bytes()...))
-		r.onComplete = nil
-	}
-	return n, err
-}
-
-func (r *completeCallbackReadCloser) Close() error {
-	if r.onComplete != nil {
-		r.onComplete(append([]byte(nil), r.buf.Bytes()...))
-		r.onComplete = nil
-	}
-	return r.ReadCloser.Close()
-}
-
 func (h *recordingUsageHandler) ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
 	if h.nonStreamingCh == nil {
 		h.nonStreamingCh = make(chan UsageContext, 1)
 	}
 	h.nonStreamingCh <- info
+	return nil
+}
+
+func (h *recordingUsageHandler) ProcessStreamingResponse(ctx context.Context, req *http.Request, decodedBody []byte, info UsageContext) error {
+	if h.streamingCh == nil {
+		h.streamingCh = make(chan UsageContext, 1)
+	}
+	h.streamingCh <- info
 	return nil
 }
 

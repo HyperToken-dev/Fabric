@@ -121,6 +121,21 @@ func ExtractNonStreamingWithFallback(req *http.Request, rawBody []byte, contentE
 	return fallbackUsage(req, decodedBody, nil, model)
 }
 
+func ExtractStreamingWithFallback(req *http.Request, decodedBody []byte, model string) (*usage.Usage, error) {
+	var parser responsesSSEUsageParser
+	if err := parser.Write(decodedBody); err != nil {
+		return nil, fmt.Errorf("parse openai stream usage: %w", err)
+	}
+	if err := parser.Finish(); err != nil {
+		return nil, fmt.Errorf("finish openai stream usage parser: %w", err)
+	}
+	parsedUsage := parser.Usage()
+	if parsedUsage != nil {
+		return parsedUsage, nil
+	}
+	return fallbackUsage(req, nil, &parser, model)
+}
+
 // openai SSE stream extract
 func NewTrackingReader(body io.ReadCloser, contentEncoding string, onUsage UsageCallback, onComplete StreamCompleteCallback) io.ReadCloser {
 	return NewTrackingReaderWithFallback(nil, body, contentEncoding, "", onUsage, onComplete)

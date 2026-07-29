@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -10,7 +11,8 @@ import (
 )
 
 func TestAlibabaBailianProxyCreateTaskForwardsWithProviderAuthAndAsyncHeader(t *testing.T) {
-	proxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}}})
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}}, IntegralLogHandler: integralLogs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +50,26 @@ func TestAlibabaBailianProxyCreateTaskForwardsWithProviderAuthAndAsyncHeader(t *
 	}
 	if !strings.Contains(rec.Body.String(), "task-1") {
 		t.Fatalf("response body = %q, want upstream response", rec.Body.String())
+	}
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if got.keyID != 10 {
+		t.Fatalf("keyID = %d, want 10", got.keyID)
+	}
+	if got.response != `{"output":{"task_id":"task-1","task_status":"PENDING"}}` {
+		t.Fatalf("response = %q", got.response)
+	}
+	var loggedContext struct {
+		Provider  string `json:"provider"`
+		Outcome   string `json:"outcome"`
+		Model     string `json:"model"`
+		ModelID   int32  `json:"model_id"`
+		ChannelID int32  `json:"channel_id"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Provider != "alibaba" || loggedContext.Outcome != "ok" || loggedContext.Model != "wan2.7-t2v-2026-06-12" || loggedContext.ModelID != 42 || loggedContext.ChannelID != 20 {
+		t.Fatalf("context = %+v", loggedContext)
 	}
 }
 
@@ -89,7 +111,8 @@ func TestAlibabaBailianProxyCreateTaskValidation(t *testing.T) {
 }
 
 func TestAlibabaBailianProxyFetchTaskForwardsWithoutModelValidation(t *testing.T) {
-	proxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{ModelStore: fakeModelStore{err: errors.New("should not resolve model")}})
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{ModelStore: fakeModelStore{err: errors.New("should not resolve model")}, IntegralLogHandler: integralLogs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,10 +144,28 @@ func TestAlibabaBailianProxyFetchTaskForwardsWithoutModelValidation(t *testing.T
 	if !strings.Contains(rec.Body.String(), `"usage"`) {
 		t.Fatalf("response body = %q, want upstream usage payload passthrough", rec.Body.String())
 	}
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if got.response != `{"output":{"task_id":"task-1","task_status":"SUCCEEDED"},"usage":{"duration":10}}` {
+		t.Fatalf("response = %q", got.response)
+	}
+	var loggedContext struct {
+		Provider  string `json:"provider"`
+		Outcome   string `json:"outcome"`
+		Model     string `json:"model"`
+		ModelID   int32  `json:"model_id"`
+		ChannelID int32  `json:"channel_id"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Provider != "alibaba" || loggedContext.Outcome != "ok" || loggedContext.Model != "" || loggedContext.ModelID != 0 || loggedContext.ChannelID != 20 {
+		t.Fatalf("context = %+v", loggedContext)
+	}
 }
 
 func TestAlibabaBailianProxyRejectsUnsupportedPath(t *testing.T) {
-	proxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}}})
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}}, IntegralLogHandler: integralLogs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,5 +179,10 @@ func TestAlibabaBailianProxyRejectsUnsupportedPath(t *testing.T) {
 	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	select {
+	case got := <-integralLogs.ch:
+		t.Fatalf("unexpected integral log for unsupported path: %+v", got)
+	default:
 	}
 }

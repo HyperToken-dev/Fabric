@@ -141,14 +141,15 @@ func main() {
 	openaiProxy, err := NewOpenAIProxy(OpenAIProxyOptions{
 		ModelStore:         newModelStoreAdapter(proxyStore),
 		UsageHandler:       newOpenAIUsageAdapter(proxyStore),
-		IntegralLogHandler: newOpenAIIntegralLogAdapter(proxyStore),
+		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
 		TextPolicy:         textPolicy,
 	})
 	if err != nil {
 		zap.S().Fatalf("create openai proxy error: %v", err)
 	}
 	alibabaBailianProxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{
-		ModelStore: newModelStoreAdapter(proxyStore),
+		ModelStore:         newModelStoreAdapter(proxyStore),
+		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
 	})
 	if err != nil {
 		zap.S().Fatalf("create alibaba bailian proxy error: %v", err)

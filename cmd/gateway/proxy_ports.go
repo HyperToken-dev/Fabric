@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"net/http"
 )
 
@@ -31,8 +30,8 @@ type UsageContext struct {
 }
 
 type UsageHandler interface {
-	WrapStreamingResponse(req *http.Request, body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser
 	ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error
+	ProcessStreamingResponse(ctx context.Context, req *http.Request, decodedBody []byte, info UsageContext) error
 }
 
 type IntegralLogHandler interface {
@@ -47,11 +46,11 @@ func (NoopModelStore) ResolveModel(ctx context.Context, channelID int32, modelNa
 
 type NoopUsageHandler struct{}
 
-func (NoopUsageHandler) WrapStreamingResponse(req *http.Request, body io.ReadCloser, contentEncoding string, info UsageContext, onComplete func([]byte)) io.ReadCloser {
-	return body
+func (NoopUsageHandler) ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
+	return nil
 }
 
-func (NoopUsageHandler) ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
+func (NoopUsageHandler) ProcessStreamingResponse(ctx context.Context, req *http.Request, decodedBody []byte, info UsageContext) error {
 	return nil
 }
 
