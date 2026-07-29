@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
+	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -80,7 +81,7 @@ func TestOpenAIProxyNonStreamingOutputUsesOriginalModel(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	if err := proxy.modifyResponse(resp); err != nil {
+	if err := coreproxy.DefaultModifyResponse(proxy.onComplete)(resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusUnprocessableEntity {

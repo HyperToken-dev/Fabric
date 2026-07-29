@@ -61,16 +61,69 @@ function inputSummaryFromRequest(request: unknown): string {
     return input.length > 50 ? `${input.slice(0, 50)}...` : input;
 }
 
-function logSummary(log: IntegralLog): { channelId: string; model: string; input: string } {
+function logSummary(log: IntegralLog): {
+    channelId: string;
+    provider: string;
+    model: string;
+    input: string;
+    outcome: string;
+    rejectionStage: string;
+} {
     try {
         const context = JSON.parse(log.context) as Record<string, unknown>;
         const channelId = typeof context.channel_id === 'number' ? String(context.channel_id) : '-';
+        const provider =
+            typeof context.provider === 'string' && context.provider.trim()
+                ? context.provider
+                : '-';
         const model =
             typeof context.model === 'string' && context.model.trim() ? context.model : '-';
-        return { channelId, model, input: inputSummaryFromRequest(context.request) || '-' };
+        const outcome =
+            typeof context.outcome === 'string' && context.outcome.trim() ? context.outcome : 'ok';
+        const rejectionStage =
+            typeof context.rejection_stage === 'string' && context.rejection_stage.trim()
+                ? context.rejection_stage
+                : '';
+        return {
+            channelId,
+            provider,
+            model,
+            input: inputSummaryFromRequest(context.request) || '-',
+            outcome,
+            rejectionStage,
+        };
     } catch {
-        return { channelId: '-', model: '-', input: '-' };
+        return {
+            channelId: '-',
+            provider: '-',
+            model: '-',
+            input: '-',
+            outcome: 'ok',
+            rejectionStage: '',
+        };
     }
+}
+
+function StatusBadge({ outcome, rejectionStage }: { outcome: string; rejectionStage: string }) {
+    if (outcome === 'rejected') {
+        return (
+            <span className="inline-flex w-fit items-center rounded-full bg-rose-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-rose-700">
+                Rejected{rejectionStage ? ` · ${rejectionStage}` : ''}
+            </span>
+        );
+    }
+    if (outcome === 'error') {
+        return (
+            <span className="inline-flex w-fit items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-amber-700">
+                Error
+            </span>
+        );
+    }
+    return (
+        <span className="inline-flex w-fit items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-emerald-700">
+            OK
+        </span>
+    );
 }
 
 function ResponseContent({ response }: { response: string }) {
@@ -178,6 +231,7 @@ export default function IntegralLogsPage() {
     }
 
     if (selectedLog) {
+        const summary = logSummary(selectedLog);
         return (
             <div className="mx-auto max-w-5xl space-y-6 p-5 md:p-8">
                 <PageHeader
@@ -200,6 +254,12 @@ export default function IntegralLogsPage() {
                         retry={() => setVersion((value) => value + 1)}
                     />
                 )}
+                <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                    <StatusBadge
+                        outcome={summary.outcome}
+                        rejectionStage={summary.rejectionStage}
+                    />
+                </div>
                 <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900">
                         <FileJson size={18} className="text-emerald-600" /> Context
@@ -310,12 +370,20 @@ function LogListItem({ log, onClick }: { log: IntegralLog; onClick: () => void }
             </span>
             <span className="text-sm text-slate-600">key_id {log.keyId}</span>
             <span className="text-sm text-slate-600">channel_id {summary.channelId}</span>
-            <span className="truncate text-sm font-medium text-slate-700" title={summary.model}>
-                {summary.model}
-            </span>
-            <span className="truncate text-sm text-slate-500" title={summary.input}>
-                {summary.input}
-            </span>
+            <div className="flex flex-col gap-1">
+                <span className="truncate text-sm font-medium text-slate-700" title={summary.model}>
+                    {summary.model}
+                </span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    {summary.provider}
+                </span>
+            </div>
+            <div className="space-y-2">
+                <StatusBadge outcome={summary.outcome} rejectionStage={summary.rejectionStage} />
+                <span className="block truncate text-sm text-slate-500" title={summary.input}>
+                    {summary.input}
+                </span>
+            </div>
         </button>
     );
 }

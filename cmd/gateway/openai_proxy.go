@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
@@ -52,94 +51,80 @@ func NewOpenAIProxy(opts OpenAIProxyOptions) (*OpenAIProxy, error) {
 		textPolicy:   opts.TextPolicy,
 	}
 	coreProxy := coreopenai.New(coreproxy.Options{
-		ModifyResponse: p.modifyResponse,
+		OnComplete: p.onComplete,
 	})
 	p.coreProxy = coreProxy
 	return p, nil
 }
 
-func (p *OpenAIProxy) modifyResponse(resp *http.Response) error {
+func (p *OpenAIProxy) onComplete(resp *http.Response, decodedBody []byte) {
 	keyID := getContextInt32(resp.Request, ctxKeyID)
 	channelID := getContextInt32(resp.Request, ctxChannelID)
 	model := getContextString(resp.Request, ctxModel)
 	modelID := getContextInt32(resp.Request, ctxModelID)
-
-	// process SSE
-	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && isOpenAIUsageStream(resp.Request, resp.Header.Get("Content-Type")) {
-		zap.L().Info("openai upstream streaming response received",
-			zap.Int("status_code", resp.StatusCode),
-			zap.String("content_type", resp.Header.Get("Content-Type")),
-			zap.String("content_encoding", resp.Header.Get("Content-Encoding")),
-			zap.Int32("key_id", keyID),
-			zap.Int32("channel_id", channelID),
-			zap.Int32("model_id", modelID),
-			zap.String("model", model),
-		)
-		contentEncoding := resp.Header.Get("Content-Encoding")
-		resp.Body = p.usageHandler.WrapStreamingResponse(resp.Body, contentEncoding, UsageContext{
-			KeyID:     keyID,
-			ChannelID: channelID,
-			ModelID:   modelID,
-			Model:     model,
-		}, func(responseBody []byte) {
-			go p.processIntegralLogAsync(resp.Request, responseBody, keyID, channelID, modelID, model)
-		})
-		resp.ContentLength = -1
-		resp.Header.Del("Content-Length")
-		return nil
-	}
-
-	// process none SSE
-	rawBody, err := io.ReadAll(resp.Body)
-	closeErr := resp.Body.Close()
-	// all error in this function shouldn't return an error to client
-	// just log
-	if err != nil {
-		zap.L().Error("read upstream response body failed", zap.Error(err))
-		if closeErr != nil {
-			zap.L().Error("close upstream response body failed", zap.Error(closeErr))
-		}
-		return nil
-	}
-	if closeErr != nil {
-		zap.L().Error("close upstream response body failed", zap.Error(closeErr))
-	}
-	resp.Body = io.NopCloser(bytes.NewReader(rawBody))
-	resp.ContentLength = int64(len(rawBody))
+	contentType := resp.Header.Get("Content-Type")
+	contentEncoding := resp.Header.Get("Content-Encoding")
 	zap.L().Info("openai upstream response received",
 		zap.Int("status_code", resp.StatusCode),
-		zap.String("content_type", resp.Header.Get("Content-Type")),
-		zap.String("content_encoding", resp.Header.Get("Content-Encoding")),
+		zap.String("content_type", contentType),
+		zap.String("content_encoding", contentEncoding),
 		zap.Int32("key_id", keyID),
 		zap.Int32("channel_id", channelID),
 		zap.Int32("model_id", modelID),
 		zap.String("model", model),
-		zap.Int("body_bytes", len(rawBody)),
+		zap.Int("decoded_body_bytes", len(decodedBody)),
 	)
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil
+
+	info := integralLogInfo{
+		Provider:                ProviderOpenAI,
+		APIFormat:               1,
+		KeyID:                   keyID,
+		ChannelID:               channelID,
+		ModelID:                 modelID,
+		Model:                   model,
+		Outcome:                 responseOutcome(resp.StatusCode),
+		ResponseStatus:          resp.StatusCode,
+		ResponseContentType:     contentType,
+		ResponseContentEncoding: contentEncoding,
+		DecodeOK:                decodedBody != nil,
 	}
-	contentEncoding := resp.Header.Get("Content-Encoding")
-	contentType := resp.Header.Get("Content-Type")
-	decodedBody, err := decodeResponseBody(rawBody, contentEncoding)
 	integralResponseBody := decodedBody
-	if err != nil {
-		zap.L().Error("decode response body for output detection failed", zap.Error(err), zap.String("content_type", contentType), zap.String("content_encoding", contentEncoding), zap.String("raw_body_prefix", bodyPrefix(rawBody, 128)))
-		integralResponseBody = rawBody
-	} else {
+	if decodedBody == nil {
+		integralResponseBody = nil
+	}
+	upstreamSuccess := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+	isStream := isOpenAIUsageStream(resp.Request, contentType)
+
+	if decodedBody != nil && upstreamSuccess && !isStream {
 		outputTexts, err := sensitiveopenai.ExtractOutputTexts(resp.Request, decodedBody)
 		if err != nil {
 			zap.L().Error("extract openai output texts failed", zap.Error(err), zap.String("content_type", contentType), zap.String("decoded_body_prefix", bodyPrefix(decodedBody, 128)))
 		} else if detectPrompts(resp.Request.Context(), model, TextDirectionOutput, outputTexts, p.textPolicy) {
 			integralResponseBody = rejectOpenAIOutputResponse(resp)
+			info.Outcome = integralOutcomeRejected
+			info.RejectionStage = rejectionStageOutput
+			info.RejectionReason = rejectionReasonSensitive
+			info.ResponseStatus = resp.StatusCode
+			info.ResponseContentType = resp.Header.Get("Content-Type")
+			info.ResponseContentEncoding = resp.Header.Get("Content-Encoding")
 		}
 	}
 
-	// async process can improve efficiency,make sure client get realtime response
-	go p.processUsageAsync(rawBody, contentEncoding, contentType, keyID, channelID, modelID, model)
-	go p.processIntegralLogAsync(resp.Request, integralResponseBody, keyID, channelID, modelID, model)
+	if decodedBody != nil && upstreamSuccess {
+		if isStream {
+			go p.processStreamingUsageAsync(resp.Request, decodedBody, keyID, channelID, modelID, model)
+		} else {
+			go p.processUsageAsync(resp.Request, decodedBody, "identity", contentType, keyID, channelID, modelID, model)
+		}
+	}
+	go processIntegralLogAsync(p.integralLogs, resp.Request, info, integralResponseBody)
+}
 
-	return nil
+func responseOutcome(statusCode int) string {
+	if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+		return integralOutcomeOK
+	}
+	return integralOutcomeError
 }
 
 func rejectOpenAIOutputResponse(resp *http.Response) []byte {
@@ -161,7 +146,7 @@ func isOpenAIUsageStream(req *http.Request, contentType string) bool {
 }
 
 // async usage processing
-func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, contentType string, keyID int32, channelID int32, modelID int32, model string) {
+func (p *OpenAIProxy) processUsageAsync(req *http.Request, rawBody []byte, contentEncoding string, contentType string, keyID int32, channelID int32, modelID int32, model string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -170,7 +155,7 @@ func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, 
 		return
 	}
 
-	if err := p.usageHandler.ProcessNonStreamingResponse(ctx, rawBody, contentEncoding, contentType, UsageContext{
+	if err := p.usageHandler.ProcessNonStreamingResponse(ctx, req, rawBody, contentEncoding, contentType, UsageContext{
 		KeyID:     keyID,
 		ChannelID: channelID,
 		ModelID:   modelID,
@@ -182,74 +167,32 @@ func (p *OpenAIProxy) processUsageAsync(rawBody []byte, contentEncoding string, 
 	zap.L().Info("non-streaming usage processed", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
 }
 
+func (p *OpenAIProxy) processStreamingUsageAsync(req *http.Request, decodedBody []byte, keyID int32, channelID int32, modelID int32, model string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if modelID == 0 {
+		zap.L().Error("missing resolved model id for streaming usage", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", model))
+		return
+	}
+
+	if err := p.usageHandler.ProcessStreamingResponse(ctx, req, decodedBody, UsageContext{
+		KeyID:     keyID,
+		ChannelID: channelID,
+		ModelID:   modelID,
+		Model:     model,
+	}); err != nil {
+		zap.L().Error("process streaming usage failed", zap.Error(err), zap.String("raw_body_prefix", bodyPrefix(decodedBody, 128)), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
+		return
+	}
+	zap.L().Info("streaming usage processed", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
+}
+
 func bodyPrefix(body []byte, maxLen int) string {
 	if len(body) > maxLen {
 		body = body[:maxLen]
 	}
 	return string(body)
-}
-
-func (p *OpenAIProxy) processIntegralLogAsync(req *http.Request, responseBody []byte, keyID int32, channelID int32, modelID int32, model string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	contextJSON := integralLogContext(req, keyID, channelID, modelID, model)
-	responseText := string(responseBody)
-
-	if err := p.integralLogs.InsertIntegralLog(ctx, keyID, contextJSON, responseText); err != nil {
-		zap.L().Error("insert integral log failed", zap.Error(err), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
-		return
-	}
-	zap.L().Info("integral log inserted", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model), zap.Int("response_bytes", len(responseBody)))
-}
-
-func integralLogContext(req *http.Request, keyID int32, channelID int32, modelID int32, model string) string {
-	entry := struct {
-		Method    string          `json:"method"`
-		Path      string          `json:"path"`
-		Model     string          `json:"model"`
-		ModelID   int32           `json:"model_id"`
-		ChannelID int32           `json:"channel_id"`
-		Request   json.RawMessage `json:"request"`
-	}{
-		Model:     model,
-		ModelID:   modelID,
-		ChannelID: channelID,
-		Request:   json.RawMessage(`null`),
-	}
-	if req != nil {
-		entry.Method = req.Method
-		if req.URL != nil {
-			entry.Path = req.URL.Path
-		}
-	}
-
-	if req != nil && req.GetBody != nil {
-		body, err := req.GetBody()
-		if err != nil {
-			zap.L().Error("get request body for integral log failed", zap.Error(err), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
-		} else {
-			raw, readErr := io.ReadAll(body)
-			closeErr := body.Close()
-			if readErr != nil {
-				zap.L().Error("read request body for integral log failed", zap.Error(readErr), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
-			} else if json.Valid(raw) {
-				entry.Request = append(json.RawMessage(nil), raw...)
-			} else {
-				zap.L().Error("request body for integral log is not valid JSON", zap.String("raw_body_prefix", bodyPrefix(raw, 128)), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
-			}
-			if closeErr != nil {
-				zap.L().Error("close request body for integral log failed", zap.Error(closeErr), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
-			}
-		}
-	}
-
-	encoded, err := json.Marshal(entry)
-	if err != nil {
-		zap.L().Error("marshal integral log context failed", zap.Error(err), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
-		return `{"request":null}`
-	}
-	return string(encoded)
 }
 
 func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, baseURL string, providerKey string) {
@@ -283,7 +226,21 @@ func (p *OpenAIProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, keyID in
 	)
 	if detectPrompts(r.Context(), modelName, TextDirectionInput, parsedReq.Prompts, p.textPolicy) {
 		zap.L().Warn("openai prompt rejected", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName))
+		responseBody := []byte("prompt rejected\n")
 		http.Error(w, "prompt rejected", http.StatusForbidden)
+		go processIntegralLogAsync(p.integralLogs, r, integralLogInfo{
+			Provider:            ProviderOpenAI,
+			APIFormat:           1,
+			KeyID:               keyID,
+			ChannelID:           channelID,
+			Model:               modelName,
+			Outcome:             integralOutcomeRejected,
+			RejectionStage:      rejectionStageInput,
+			RejectionReason:     rejectionReasonSensitive,
+			ResponseStatus:      http.StatusForbidden,
+			ResponseContentType: "text/plain; charset=utf-8",
+			DecodeOK:            true,
+		}, responseBody)
 		return
 	}
 	modelID, err := p.resolveModel(r.Context(), channelID, modelName)

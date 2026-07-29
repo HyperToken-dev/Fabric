@@ -22,6 +22,8 @@ type RewriteFunc func(pr *httputil.ProxyRequest) error
 
 type ModifyResponseFunc func(resp *http.Response) error
 
+type OnCompleteFunc func(resp *http.Response, decodedBody []byte)
+
 type AuthInjector func(req *http.Request, upstream Upstream)
 
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
@@ -29,6 +31,7 @@ type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 type Options struct {
 	Rewrite        RewriteFunc
 	ModifyResponse ModifyResponseFunc
+	OnComplete     OnCompleteFunc
 	AuthInjector   AuthInjector
 	ErrorHandler   ErrorHandler
 }
@@ -45,6 +48,11 @@ func New(opts Options) *Proxy {
 	errorHandler := opts.ErrorHandler
 	if errorHandler == nil {
 		errorHandler = defaultErrorHandler
+	}
+
+	modifyResponse := opts.ModifyResponse
+	if modifyResponse == nil {
+		modifyResponse = DefaultModifyResponse(opts.OnComplete)
 	}
 
 	return &Proxy{proxy: &httputil.ReverseProxy{
@@ -68,7 +76,7 @@ func New(opts Options) *Proxy {
 				}
 			}
 		},
-		ModifyResponse: opts.ModifyResponse,
+		ModifyResponse: modifyResponse,
 		Transport:      rewriteErrorTransport{base: http.DefaultTransport},
 		ErrorHandler:   errorHandler,
 	}}
