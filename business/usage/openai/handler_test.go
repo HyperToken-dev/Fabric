@@ -409,6 +409,36 @@ func TestNewTrackingReaderFallbackResponsesPrefersFinalOutputText(t *testing.T) 
 	})
 }
 
+func TestNewTrackingReaderFallbackResponsesDoesNotDoubleCountDoneAndCompleted(t *testing.T) {
+	req := newOpenAITestRequest(t, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`)
+	sse := strings.Join([]string{
+		`event: response.output_text.delta`,
+		`data: {"delta":"same "}`,
+		"",
+		`event: response.output_text.done`,
+		`data: {"text":"same answer","response":{"output_text":"same answer"}}`,
+		"",
+		`event: response.completed`,
+		`data: {"response":{"output_text":"same answer"}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	usageCh := make(chan *usage.Usage, 1)
+
+	reader := NewTrackingReaderWithFallback(req, io.NopCloser(strings.NewReader(sse)), "", "gpt-5.5", func(u *usage.Usage) {
+		usageCh <- u
+	}, nil)
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+
+	assertUsage(t, receiveUsage(t, usageCh), &usage.Usage{
+		PromptTokens:     int64(mustTokenCount(t, "hello")),
+		CompletionTokens: int64(mustTokenCount(t, "same answer")),
+	})
+}
+
 func TestNewTrackingReaderNoUsageCallbackAndClose(t *testing.T) {
 	inner := &trackingReadCloser{Reader: strings.NewReader("data: [DONE]\n\n")}
 	reader := NewTrackingReader(inner, "", nil, nil)

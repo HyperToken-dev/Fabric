@@ -710,6 +710,7 @@ func (p *responsesSSEUsageParser) consumeLine(line string) error {
 }
 
 func (p *responsesSSEUsageParser) consumeEvent() error {
+	event := p.event
 	data := strings.TrimSpace(p.data.String())
 	p.event = ""
 	p.data.Reset()
@@ -744,14 +745,33 @@ func (p *responsesSSEUsageParser) consumeEvent() error {
 		p.mergeChatToolCalls(choice.Delta.ToolCalls)
 		p.mergeChatFunctionCall(choice.Delta.FunctionCall)
 	}
-	if streamEvent.Delta != "" {
-		_, _ = p.responsesDeltas.WriteString(streamEvent.Delta)
-	}
-	if streamEvent.Text != "" {
-		p.responsesEventText = append(p.responsesEventText, streamEvent.Text)
-	}
-	p.responsesFinalText = append(p.responsesFinalText, responsesOutputTexts(streamEvent.Response.OutputText, streamEvent.Response.Output)...)
+	p.consumeResponsesText(event, streamEvent)
 	return nil
+}
+
+func (p *responsesSSEUsageParser) consumeResponsesText(event string, streamEvent openAIResponsesStreamEvent) {
+	switch event {
+	case "response.completed":
+		p.responsesFinalText = append(p.responsesFinalText, responsesOutputTexts(streamEvent.Response.OutputText, streamEvent.Response.Output)...)
+	case "response.output_text.done":
+		if strings.TrimSpace(streamEvent.Text) != "" {
+			p.responsesEventText = append(p.responsesEventText, streamEvent.Text)
+		}
+	case "response.output_text.delta":
+		if streamEvent.Delta != "" {
+			_, _ = p.responsesDeltas.WriteString(streamEvent.Delta)
+		}
+	default:
+		finalTexts := responsesOutputTexts(streamEvent.Response.OutputText, streamEvent.Response.Output)
+		switch {
+		case len(finalTexts) > 0:
+			p.responsesFinalText = append(p.responsesFinalText, finalTexts...)
+		case strings.TrimSpace(streamEvent.Text) != "":
+			p.responsesEventText = append(p.responsesEventText, streamEvent.Text)
+		case streamEvent.Delta != "":
+			_, _ = p.responsesDeltas.WriteString(streamEvent.Delta)
+		}
+	}
 }
 
 func (p *responsesSSEUsageParser) mergeChatToolCalls(deltas []openAIChatStreamToolCallDelta) {
