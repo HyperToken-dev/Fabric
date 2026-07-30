@@ -18,6 +18,7 @@ networks:
 
 volumes:
   fabric-data:
+  fabric-sensitive:
   postgres-data:
 
 services:
@@ -28,7 +29,7 @@ services:
     container_name: fabric
     volumes:
       - ./configs/config.docker.yaml:/app/configs/config.yaml:ro
-      - ./configs/stwd:/app/configs/stwd:ro
+      - fabric-sensitive:/app/configs/sensitive
       - fabric-data:/app/logs
     ports:
       - 3002:3002

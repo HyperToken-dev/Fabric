@@ -4,12 +4,6 @@ logLevel: info
 
 timeZone: Asia/Shanghai
 
-sensitiveWordDetect: false # When this is set to true, the configuration items below must be valid.
-sensitiveWordDictionaries:
-  - name: example_name
-    effectModels: [gpt-5.5, gpt-5.4]
-    keywordFileList: [st-01, st-02] # This will go to configs/stwd/st-01.txt
-
 db:
   addr: postgres
   user: root

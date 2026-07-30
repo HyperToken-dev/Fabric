@@ -55,7 +55,7 @@ Startup flow in `cmd/gateway/main.go`:
 
 1. Load `configs/config.yaml` with Viper.
 2. Initialize zap logging.
-3. Optionally load sensitive-word dictionaries from `configs/stwd/`.
+3. Initialize the Fire Wall runtime store under `configs/sensitive/`.
 4. Run PostgreSQL migrations from `db/migrations/`.
 5. Open the PostgreSQL connection and initialize sqlc repositories.
 6. Register proxy routes and connect-go admin handlers.
@@ -78,7 +78,7 @@ Startup flow in `cmd/gateway/main.go`:
 - Model types: `models.ModelTypeText = 1`, `models.ModelTypeVideo = 2`.
 - Alibaba Bailian proxying uses `https://dashscope.aliyuncs.com` as the default base URL. It supports text-to-video task creation and task status fetching. Video usage logging is not currently recorded.
 - The OpenAI proxy injects `stream_options.include_usage=true` for streaming chat completions so usage can be captured.
-- Sensitive-word detection is controlled by `sensitiveWordDetect` in config.
+- Fire Wall detection is controlled by the Web Console and runtime store, not by `config.yaml`.
 
 ## Database
 

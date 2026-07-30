@@ -17,7 +17,7 @@ func TestUsageHandlersDelegateToService(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	srv := NewServer(nil, nil, nil, service.NewUsageService(db, time.UTC), nil)
+	srv := NewServer(nil, nil, nil, service.NewUsageService(db, time.UTC), nil, nil)
 
 	mock.ExpectQuery("FROM usage_logs").
 		WithArgs(int32(7), int32(100), int32(0)).
@@ -37,7 +37,7 @@ func TestUsageDashboardHandlerIsImplemented(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	srv := NewServer(nil, nil, nil, service.NewUsageService(db, time.UTC), nil)
+	srv := NewServer(nil, nil, nil, service.NewUsageService(db, time.UTC), nil, nil)
 
 	mock.ExpectQuery("COALESCE\\(SUM\\(prompt_tokens\\), 0\\)").
 		WillReturnRows(sqlmock.NewRows([]string{"total_prompt_tokens", "total_completion_tokens", "request_count"}).AddRow(0, 0, 0))
@@ -58,7 +58,7 @@ func TestUsageHandlerMapsServiceErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	srv := NewServer(nil, nil, nil, service.NewUsageService(db, time.UTC), nil)
+	srv := NewServer(nil, nil, nil, service.NewUsageService(db, time.UTC), nil, nil)
 
 	mock.ExpectQuery("FROM usage_logs").WillReturnError(context.DeadlineExceeded)
 	_, err = srv.GetUsageByKeyID(context.Background(), connect.NewRequest(&gen.GetUsageByKeyIDRequest{KeyId: 7}))

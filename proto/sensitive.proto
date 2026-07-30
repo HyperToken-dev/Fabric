@@ -1,0 +1,105 @@
+syntax = "proto3";
+package proto;
+option go_package = "github.com/HyperToken-dev/fabric/gen;proto";
+
+import "google/protobuf/timestamp.proto";
+
+service SensitiveWordService {
+    rpc GetSensitiveWordStatus(GetSensitiveWordStatusRequest) returns(GetSensitiveWordStatusResponse);
+    rpc UpdateSensitiveWordEnabled(UpdateSensitiveWordEnabledRequest) returns(GetSensitiveWordStatusResponse);
+    rpc ListSensitiveDictionaries(ListSensitiveDictionariesRequest) returns(ListSensitiveDictionariesResponse);
+    rpc GetSensitiveDictionary(GetSensitiveDictionaryRequest) returns(GetSensitiveDictionaryResponse);
+    rpc CreateSensitiveDictionary(CreateSensitiveDictionaryRequest) returns(SensitiveDictionaryResponse);
+    rpc UpdateSensitiveDictionaryEffectModels(UpdateSensitiveDictionaryEffectModelsRequest) returns(SensitiveDictionaryResponse);
+    rpc UpdateSensitiveDictionaryEnabled(UpdateSensitiveDictionaryEnabledRequest) returns(SensitiveDictionaryResponse);
+    rpc AddSensitiveWords(AddSensitiveWordsRequest) returns(SensitiveDictionaryResponse);
+    rpc RemoveSensitiveWords(RemoveSensitiveWordsRequest) returns(SensitiveDictionaryResponse);
+    rpc DeleteSensitiveDictionary(DeleteSensitiveDictionaryRequest) returns(DeleteSensitiveDictionaryResponse);
+}
+
+message SensitiveDictionarySummary {
+    string name = 1;
+    repeated string effect_models = 2;
+    bool enabled = 3;
+    int32 word_count = 4;
+}
+
+message SensitiveDictionary {
+    string name = 1;
+    repeated string effect_models = 2;
+    bool enabled = 3;
+    repeated string words = 4;
+}
+
+message SensitiveWordSnapshot {
+    bool enabled = 1;
+    int64 version = 2;
+    google.protobuf.Timestamp loaded_at = 3;
+    int32 dictionary_count = 4;
+}
+
+message GetSensitiveWordStatusRequest {}
+
+message GetSensitiveWordStatusResponse {
+    bool enabled = 1;
+    bool store_initialized = 2;
+    SensitiveWordSnapshot snapshot = 3;
+}
+
+message UpdateSensitiveWordEnabledRequest {
+    bool enabled = 1;
+}
+
+message ListSensitiveDictionariesRequest {}
+
+message ListSensitiveDictionariesResponse {
+    repeated SensitiveDictionarySummary dictionaries = 1;
+}
+
+message GetSensitiveDictionaryRequest {
+    string name = 1;
+}
+
+message GetSensitiveDictionaryResponse {
+    SensitiveDictionary dictionary = 1;
+}
+
+message CreateSensitiveDictionaryRequest {
+    string name = 1;
+    repeated string effect_models = 2;
+    bool enabled = 3;
+    repeated string words = 4;
+}
+
+message SensitiveDictionaryResponse {
+    SensitiveDictionary dictionary = 1;
+    SensitiveWordSnapshot snapshot = 2;
+}
+
+message UpdateSensitiveDictionaryEffectModelsRequest {
+    string name = 1;
+    repeated string effect_models = 2;
+}
+
+message UpdateSensitiveDictionaryEnabledRequest {
+    string name = 1;
+    bool enabled = 2;
+}
+
+message AddSensitiveWordsRequest {
+    string name = 1;
+    repeated string words = 2;
+}
+
+message RemoveSensitiveWordsRequest {
+    string name = 1;
+    repeated string words = 2;
+}
+
+message DeleteSensitiveDictionaryRequest {
+    string name = 1;
+}
+
+message DeleteSensitiveDictionaryResponse {
+    SensitiveWordSnapshot snapshot = 1;
+}

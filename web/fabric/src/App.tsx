@@ -6,6 +6,7 @@ import ModelsPage from './components/ModelsPage';
 import ApiKeysPage from './components/ApiKeysPage';
 import UsageLogsPage from './components/UsageLogsPage';
 import IntegralLogsPage from './components/IntegralLogsPage';
+import SensitiveWordsPage from './components/SensitiveWordsPage';
 
 const pages = {
     dashboard: Dashboard,
@@ -14,6 +15,7 @@ const pages = {
     'api-keys': ApiKeysPage,
     usage: UsageLogsPage,
     'integral-logs': IntegralLogsPage,
+    'sensitive-words': SensitiveWordsPage,
 };
 
 export default function App() {

@@ -2,54 +2,58 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
-	"github.com/HyperToken-dev/fabric/internal/config"
+	"github.com/HyperToken-dev/fabric/internal/service"
 
-	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
 type gatewaySensitiveSource struct {
-	workDir string
-	runPath string
+	runtimeStore *service.SensitiveRuntimeStore
 }
 
 func (s gatewaySensitiveSource) State(ctx context.Context) (sensitive.SourceState, error) {
-	if err := ctx.Err(); err != nil {
+	if s.runtimeStore == nil {
+		return sensitive.SourceState{Enabled: false}, nil
+	}
+	state, err := s.runtimeStore.ReadState(ctx)
+	if err != nil {
 		return sensitive.SourceState{}, err
 	}
-	if err := viper.ReadInConfig(); err != nil {
-		return sensitive.SourceState{}, fmt.Errorf("read sensitive config: %w", err)
-	}
-	cfg, err := config.Load(s.workDir, s.runPath)
-	if err != nil {
-		return sensitive.SourceState{}, fmt.Errorf("load sensitive config: %w", err)
-	}
-	if !cfg.SensitiveWD {
+	if !state.Enabled {
 		return sensitive.SourceState{Enabled: false}, nil
 	}
 
-	dictionaries := make([]sensitive.DictionaryFileConfig, 0, len(cfg.SensitiveDictionaries))
-	for _, dictConfig := range cfg.SensitiveDictionaries {
-		dictionaries = append(dictionaries, sensitive.DictionaryFileConfig{
-			Name:            dictConfig.Name,
-			EffectModels:    append([]string(nil), dictConfig.EffectModels...),
-			KeywordFileList: append([]string(nil), dictConfig.KeywordFileList...),
-		})
-	}
-	detector, err := sensitive.LoadDetectorFromFiles(sensitiveWordsPath(cfg.WorkDir, cfg.RunPath), dictionaries)
+	dictionaries, err := s.runtimeStore.ListDictionaries(ctx)
 	if err != nil {
 		return sensitive.SourceState{}, err
 	}
-	return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: len(cfg.SensitiveDictionaries)}, nil
+	loaded := make([]sensitive.Dictionary, 0, len(dictionaries))
+	for _, dict := range dictionaries {
+		if !dict.Enabled || len(dict.Words) == 0 {
+			continue
+		}
+		loaded = append(loaded, sensitive.Dictionary{
+			Name:         dict.Name,
+			Words:        append([]string(nil), dict.Words...),
+			EffectModels: append([]string(nil), dict.EffectModels...),
+		})
+	}
+	detector, err := sensitive.NewDetector(loaded...)
+	if err != nil {
+		return sensitive.SourceState{}, err
+	}
+	return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: len(loaded)}, nil
 }
 
-func (s gatewaySensitiveSource) Watch(ctx context.Context, policy *sensitive.ReloadablePolicy, cfg *config.Config) {
-	paths := []string{viper.ConfigFileUsed(), sensitiveWordsPath(cfg.WorkDir, cfg.RunPath)}
+func (s gatewaySensitiveSource) Watch(ctx context.Context, policy *sensitive.ReloadablePolicy) {
+	var paths []string
+	if s.runtimeStore != nil {
+		paths = append(paths, s.runtimeStore.WatchPaths()...)
+	}
 	go func() {
 		err := sensitive.Watch(ctx, sensitive.WatchOptions{
 			Paths: paths,
@@ -74,10 +78,10 @@ func (s gatewaySensitiveSource) Watch(ctx context.Context, policy *sensitive.Rel
 	}()
 }
 
-func sensitiveWordsPath(workDir, runPath string) string {
-	path := filepath.Join(workDir, "stwd")
+func sensitiveRuntimePath(workDir, runPath string) string {
+	path := filepath.Join(workDir, "sensitive")
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return path
 	}
-	return filepath.Join(runPath, "configs", "stwd")
+	return filepath.Join(runPath, "configs", "sensitive")
 }

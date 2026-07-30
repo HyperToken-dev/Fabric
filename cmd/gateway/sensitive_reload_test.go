@@ -2,28 +2,26 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/spf13/viper"
+	"github.com/HyperToken-dev/fabric/internal/service"
 )
 
-func TestSensitiveLoaderReadsLatestConfigAndDictionaryFiles(t *testing.T) {
-	runPath := t.TempDir()
-	configPath := filepath.Join(runPath, "config.yaml")
-	dictDir := filepath.Join(runPath, "configs", "stwd")
-	if err := os.MkdirAll(dictDir, 0o700); err != nil {
+func TestSensitiveLoaderReadsLatestRuntimeDictionaryFiles(t *testing.T) {
+	baseDir := t.TempDir()
+	store := service.NewSensitiveRuntimeStore(baseDir)
+	if err := store.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	writeTestDictionary(t, filepath.Join(dictDir, "blocked.txt"), "old-word\n")
-	writeSensitiveReloadConfig(t, configPath, true, "blocked")
-
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	viper.SetConfigFile(configPath)
-	source := gatewaySensitiveSource{workDir: filepath.Join(runPath, "bin"), runPath: runPath}
+	if err := store.SetEnabled(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDictionary(context.Background(), "测试词库", []string{"gpt-5.5"}, true, []string{"old-word"}); err != nil {
+		t.Fatal(err)
+	}
+	source := gatewaySensitiveSource{runtimeStore: store}
 
 	loaded, err := source.State(context.Background())
 	if err != nil {
@@ -36,7 +34,15 @@ func TestSensitiveLoaderReadsLatestConfigAndDictionaryFiles(t *testing.T) {
 		t.Fatal("initial dictionary content was not loaded")
 	}
 
-	writeTestDictionary(t, filepath.Join(dictDir, "blocked.txt"), "new-word\n")
+	state, err := store.ReadState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wordsPath := filepath.Join(baseDir, "dictionaries", state.Dictionaries[0].KeywordFile)
+	if err := os.WriteFile(wordsPath, []byte("new-word\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	loaded, err = source.State(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -50,19 +56,17 @@ func TestSensitiveLoaderReadsLatestConfigAndDictionaryFiles(t *testing.T) {
 }
 
 func TestSensitiveLoaderAppliesRuntimeDisable(t *testing.T) {
-	runPath := t.TempDir()
-	configPath := filepath.Join(runPath, "config.yaml")
-	dictDir := filepath.Join(runPath, "configs", "stwd")
-	if err := os.MkdirAll(dictDir, 0o700); err != nil {
+	store := service.NewSensitiveRuntimeStore(t.TempDir())
+	if err := store.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	writeTestDictionary(t, filepath.Join(dictDir, "blocked.txt"), "blocked\n")
-	writeSensitiveReloadConfig(t, configPath, true, "blocked")
-
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	viper.SetConfigFile(configPath)
-	source := gatewaySensitiveSource{workDir: filepath.Join(runPath, "bin"), runPath: runPath}
+	if err := store.SetEnabled(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDictionary(context.Background(), "blocked", nil, true, []string{"blocked"}); err != nil {
+		t.Fatal(err)
+	}
+	source := gatewaySensitiveSource{runtimeStore: store}
 
 	loaded, err := source.State(context.Background())
 	if err != nil {
@@ -72,7 +76,9 @@ func TestSensitiveLoaderAppliesRuntimeDisable(t *testing.T) {
 		t.Fatal("initial load was disabled")
 	}
 
-	writeSensitiveReloadConfig(t, configPath, false, "blocked")
+	if err := store.SetEnabled(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
 	loaded, err = source.State(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -82,18 +88,19 @@ func TestSensitiveLoaderAppliesRuntimeDisable(t *testing.T) {
 	}
 }
 
-func writeSensitiveReloadConfig(t *testing.T, path string, enabled bool, keywordFile string) {
-	t.Helper()
-	content := fmt.Sprintf(`proxyAddr: 3002
-adminAddr: 9090
-timeZone: UTC
-sensitiveWordDetect: %t
-sensitiveWordDictionaries:
-  - name: test-rule
-    effectModels: [gpt-5.5]
-    keywordFileList: [%s]
-`, enabled, keywordFile)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+func TestSensitiveLoaderAutoCreatesDisabledRuntimeStore(t *testing.T) {
+	baseDir := t.TempDir()
+	store := service.NewSensitiveRuntimeStore(baseDir)
+	source := gatewaySensitiveSource{runtimeStore: store}
+
+	loaded, err := source.State(context.Background())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if loaded.Enabled || loaded.Detector != nil || loaded.DictionaryCount != 0 {
+		t.Fatalf("fresh runtime load = %#v", loaded)
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "state.json")); err != nil {
+		t.Fatalf("state.json was not created: %v", err)
 	}
 }

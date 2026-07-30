@@ -74,27 +74,30 @@ func main() {
 	zap.L().Info("configuration loaded",
 		zap.String("proxy_addr", cfg.ProxyAddr),
 		zap.String("admin_addr", cfg.AdminAddr),
-		zap.Bool("sensitive_word_detect", cfg.SensitiveWD),
 	)
 
 	// init sensitive word detect
-	sensitiveSource := gatewaySensitiveSource{workDir: workDir, runPath: runPath}
-	textPolicy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
-	if cfg.SensitiveWD {
-		loaded, err := sensitiveSource.State(context.Background())
-		if err != nil {
-			zap.S().Fatalf("load sensitive dictionaries error: %v", err)
-		}
-		textPolicy = sensitive.NewReloadablePolicy(sensitive.Snapshot{
-			Enabled:         loaded.Enabled,
-			Detector:        loaded.Detector,
-			DictionaryCount: loaded.DictionaryCount,
-		})
-		zap.L().Info("sensitive dictionaries loaded", zap.String("path", sensitiveWordsPath(cfg.WorkDir, cfg.RunPath)), zap.Int("count", loaded.DictionaryCount))
-	} else {
-		zap.L().Info("sensitive word detection disabled")
+	sensitiveRuntimeStore := service.NewSensitiveRuntimeStore(sensitiveRuntimePath(workDir, runPath))
+	if err := sensitiveRuntimeStore.Ensure(context.Background()); err != nil {
+		zap.S().Fatalf("init sensitive runtime store error: %v", err)
 	}
-	sensitiveSource.Watch(context.Background(), textPolicy, cfg)
+	sensitiveSource := gatewaySensitiveSource{runtimeStore: sensitiveRuntimeStore}
+	textPolicy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
+	loaded, err := sensitiveSource.State(context.Background())
+	if err != nil {
+		zap.S().Fatalf("load sensitive dictionaries error: %v", err)
+	}
+	textPolicy = sensitive.NewReloadablePolicy(sensitive.Snapshot{
+		Enabled:         loaded.Enabled,
+		Detector:        loaded.Detector,
+		DictionaryCount: loaded.DictionaryCount,
+	})
+	zap.L().Info("sensitive runtime store loaded",
+		zap.String("path", sensitiveRuntimeStore.StatePath()),
+		zap.Bool("enabled", loaded.Enabled),
+		zap.Int("count", loaded.DictionaryCount),
+	)
+	sensitiveSource.Watch(context.Background(), textPolicy)
 
 	// db con str
 	dsn := config.GetDSN(cfg.DB)
@@ -134,7 +137,8 @@ func main() {
 	modelSvc := service.NewModelService(db)
 	usageSvc := service.NewUsageService(db, cfg.Location)
 	integralLogSvc := service.NewIntegralLogService(db)
-	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc, integralLogSvc)
+	sensitiveWordSvc := service.NewSensitiveWordService(sensitiveRuntimeStore, textPolicy, sensitiveSource.State)
+	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc, integralLogSvc, sensitiveWordSvc)
 
 	// register proxy
 	proxyStore := postgres.NewProxyStore(queries)
@@ -175,17 +179,20 @@ func main() {
 	channelPath, channelHandler := pbconnect.NewChannelServiceHandler(srv)
 	modelPath, modelHandler := pbconnect.NewModelServiceHandler(srv)
 	integralLogPath, integralLogHandler := pbconnect.NewIntegralLogServiceHandler(srv)
+	sensitivePath, sensitiveHandler := pbconnect.NewSensitiveWordServiceHandler(srv)
 	adminMux.Handle(apiKeyPath, apiKeyHandler)
 	adminMux.Handle(usagePath, usageHandler)
 	adminMux.Handle(channelPath, channelHandler)
 	adminMux.Handle(modelPath, modelHandler)
 	adminMux.Handle(integralLogPath, integralLogHandler)
+	adminMux.Handle(sensitivePath, sensitiveHandler)
 	zap.L().Info("admin handlers registered",
 		zap.String("api_key_path", apiKeyPath),
 		zap.String("usage_path", usagePath),
 		zap.String("channel_path", channelPath),
 		zap.String("model_path", modelPath),
 		zap.String("integral_log_path", integralLogPath),
+		zap.String("sensitive_path", sensitivePath),
 	)
 
 	zap.S().Infof("Admin server listening on %s", cfg.AdminAddr)

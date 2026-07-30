@@ -24,7 +24,7 @@ Fabric 并不只是一个代理服务。它的目标是提供可复用的 AI 网
     <a href="./README.md">English</a> | 简体中文
 </p>
 
-## 💡 项目缘起
+## 💡 为什么有这个项目？
 
 许多 AI 网关或 AI 应用项目，例如 new_api、axonhub 以及类似系统，都会反复维护同一类基础设施：
 
@@ -149,7 +149,7 @@ Integrated Gateway 将 Core 和 Business 能力组合为完整的网关产品。
 - **网关密钥和服务商密钥隔离**：调用方使用 Fabric 签发的网关 API Key，上游服务商密钥保存在渠道中，并由网关注入。
 - **多服务商演进**：可以通过适配器增加服务商，使业务层不直接绑定某个厂商协议。
 
-## 🌐 已支持和计划支持的服务商 / 模型
+## 🌐 支持的服务商
 
 Fabric 当前聚焦 OpenAI-compatible API 和 Alibaba Bailian 异步文生视频 API。Core Layer 将继续增加服务商适配器，使不同厂商的模型能够通过同一套网关基础能力接入。
 
@@ -188,7 +188,7 @@ Fabric 当前聚焦 OpenAI-compatible API 和 Alibaba Bailian 异步文生视频
 
 ## 🚀 快速开始
 
-### 1. 克隆并使用 Docker Compose 启动
+### 1. Docker Compose
 
 ```bash
 git clone https://github.com/HyperToken-dev/Fabric.git
@@ -203,21 +203,9 @@ Docker Compose 会基于 `Dockerfile` 构建网关镜像，启动 PostgreSQL，�
 
 Docker Compose 使用仓库中的 `configs/config.docker.yaml`。该文件会被挂载到容器内的 `/app/configs/config.yaml`，因此 Docker 用户在启动 Fabric 前不需要额外创建 `configs/config.yaml`。
 
-网关会在启动期间执行 `db/migrations/` 中的数据库迁移。启动后，请先为目标服务商创建渠道，例如 OpenAI 或 Alibaba Bailian，再添加模型，并通过 Admin API 或 Web Console 配置真实的上游服务商密钥，然后再代理生产流量。
+### 2. 可选：Fire Wall
 
-### 2. 可选：敏感词检测
-
-`configs/config.docker.yaml` 默认关闭敏感词检测。若要启用，请在 `configs/stwd/` 下创建词库文件，并在 `sensitiveWordDictionaries` 中引用：
-
-```yaml
-sensitiveWordDetect: true
-sensitiveWordDictionaries:
-  - name: default-block-list
-    effectModels: [gpt-5.5]
-    keywordFileList: [blocked-words]
-```
-
-该示例会加载 `configs/stwd/blocked-words.txt`。每个词库文件每行包含一个关键词。词库和敏感词配置变更会在运行时热重载。完整配置和敏感词指南见 [how_to_use.md](./how_to_use.md)。
+Fire Wall 由 Web Console 管理。使用 `Fire Wall` 页面开启检测、创建词库、设置模型范围并维护词条。Docker Compose 会将运行时数据持久化到 `fabric-sensitive` 命名卷。
 
 ### 3. 本地开发运行
 
@@ -251,7 +239,7 @@ make test                   # go test ./...
 make sqlc-check             # sqlc compile
 ```
 
-### 前端开发
+### 前端
 
 管理控制台是位于 `web/fabric/` 下的 React 和 Vite 应用。网关会通过 Admin Server 提供其打包后的生产构建。`web/fabric/src/gen/` 下的 TypeScript protobuf 和 connect 服务描述符是生成代码，不应手动编辑。
 
