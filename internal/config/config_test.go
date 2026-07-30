@@ -1,36 +1,11 @@
 package config
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
 )
-
-func TestLoadSensitiveDictionaries(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	viper.Set("proxyAddr", 3002)
-	viper.Set("adminAddr", 9090)
-	viper.Set("sensitiveWordDetect", true)
-	viper.Set("sensitiveWordDictionaries", []map[string]any{
-		{"name": "common", "effectModels": []string{}, "keywordFileList": []string{"common"}},
-		{"name": "scoped", "effectModels": []string{"gpt-5.5"}, "keywordFileList": []string{"scoped", "shared"}},
-	})
-
-	cfg, err := Load("work", "run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []SensitiveDictionaryConfig{
-		{Name: "common", EffectModels: []string{}, KeywordFileList: []string{"common"}},
-		{Name: "scoped", EffectModels: []string{"gpt-5.5"}, KeywordFileList: []string{"scoped", "shared"}},
-	}
-	if !reflect.DeepEqual(cfg.SensitiveDictionaries, want) {
-		t.Fatalf("SensitiveDictionaries = %#v, want %#v", cfg.SensitiveDictionaries, want)
-	}
-}
 
 func TestLoadTimeZone(t *testing.T) {
 	tests := []struct {

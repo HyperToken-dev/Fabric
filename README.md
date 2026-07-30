@@ -205,19 +205,9 @@ The tracked `configs/config.docker.yaml` is used by Docker Compose. It is mounte
 
 The gateway runs database migrations from `db/migrations/` during startup. After startup, create a channel for your desired provider (e.g. OpenAI or Alibaba Bailian), add a model, and configure a real upstream provider key through the Admin API or Web Console before proxying production traffic.
 
-### 2. Optional Sensitive-Word Detection
+### 2. Optional Fire Wall
 
-Sensitive-word detection is disabled by default in `configs/config.docker.yaml`. To enable it, create dictionary files under `configs/stwd/` and reference them from `sensitiveWordDictionaries`:
-
-```yaml
-sensitiveWordDetect: true
-sensitiveWordDictionaries:
-  - name: default-block-list
-    effectModels: [gpt-5.5]
-    keywordFileList: [blocked-words]
-```
-
-This example loads `configs/stwd/blocked-words.txt`. Each dictionary file contains one keyword per line. Dictionary and sensitive-word config changes are hot-reloaded at runtime. See [how_to_use.md](./how_to_use.md) for the full configuration and sensitive-word guide.
+Fire Wall is managed from the Web Console. Use the `Fire Wall` page to enable detection, create dictionaries, set model scopes, and manage words. Docker Compose persists this runtime data in the `fabric-sensitive` named volume.
 
 ### 3. Local Development Run
 

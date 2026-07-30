@@ -45,7 +45,8 @@ COPY --from=builder /out/gateway ./gateway
 COPY configs ./configs
 COPY db/migrations ./db/migrations
 
-RUN mkdir -p /app/logs && chown -R fabric:fabric /app
+RUN mkdir -p /app/logs /app/configs/sensitive/dictionaries
+RUN chown -R fabric:fabric /app /app/logs /app/configs/sensitive
 
 USER fabric
 

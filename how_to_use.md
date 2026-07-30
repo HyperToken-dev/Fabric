@@ -52,12 +52,6 @@ proxyAddr: 3002
 adminAddr: 9090
 logLevel: info
 
-sensitiveWordDetect: false
-sensitiveWordDictionaries:
-  - name: example_name
-    effectModels: [gpt-5.5, gpt-5.4]
-    keywordFileList: [st-01, st-02]
-
 db:
   addr: postgres
   user: root
@@ -80,11 +74,6 @@ Configuration reference:
 - `proxyAddr`: proxy server listen port. Clients call OpenAI-compatible APIs through this port. Docker exposes it as `3002`.
 - `adminAddr`: admin server listen port. connect-go management APIs are exposed through this port. Docker exposes it as `9090`.
 - `logLevel`: logging level, for example `info`.
-- `sensitiveWordDetect`: enables or disables sensitive-word detection.
-- `sensitiveWordDictionaries`: list of sensitive-word detection rules used when detection is enabled.
-- `sensitiveWordDictionaries[].name`: rule name used in logs and match results.
-- `sensitiveWordDictionaries[].effectModels`: models this rule applies to. Leave it empty to apply the rule to all models.
-- `sensitiveWordDictionaries[].keywordFileList`: dictionary file base names under `configs/stwd/`. Do not include the `.txt` suffix.
 - `db.addr`: PostgreSQL host. In Docker Compose this is the service name `postgres`.
 - `db.user`: PostgreSQL user. In Docker Compose this must match `POSTGRES_USER` in `compose.yaml`.
 - `db.port`: PostgreSQL port.
@@ -106,8 +95,6 @@ Fabric reads `configs/config.yaml` by default. A typical configuration looks lik
 proxyAddr: 3002
 adminAddr: 9090
 logLevel: info
-
-sensitiveWordDetect: false
 
 db:
   addr: 127.0.0.1
@@ -131,8 +118,6 @@ Field reference:
 - `proxyAddr`: proxy server listen port. Clients call OpenAI-compatible APIs through this port.
 - `adminAddr`: admin server listen port. connect-go management APIs are exposed through this port.
 - `logLevel`: logging level.
-- `sensitiveWordDetect`: enables or disables sensitive-word detection.
-- `sensitiveWordDictionaries`: dictionary configuration used when sensitive-word detection is enabled.
 - `db.addr`: PostgreSQL host.
 - `db.user`: PostgreSQL user.
 - `db.port`: PostgreSQL port.
@@ -143,30 +128,7 @@ Field reference:
 - `db.maxLifeTime`: maximum connection lifetime.
 - `log.maxSize`, `log.maxBackups`, `log.maxAge`, `log.compress`: log rotation settings.
 
-If you have not prepared sensitive-word dictionaries, disable detection first:
-
-```yaml
-sensitiveWordDetect: false
-```
-
-If you want to enable sensitive-word detection for local runs, configure rule-based dictionaries and prepare the corresponding files:
-
-```yaml
-sensitiveWordDetect: true
-sensitiveWordDictionaries:
-  - name: example_name
-    effectModels: [gpt-5.5]
-    keywordFileList: [st-01, st-02]
-```
-
-Dictionary file paths:
-
-```text
-configs/stwd/st-01.txt
-configs/stwd/st-02.txt
-```
-
-Each entry is a detection rule. `name` is required and is only used as a human-readable rule name in logs and match results. `effectModels` controls which models the rule applies to; leave it empty to apply the rule to all models. `keywordFileList` is required and lists keyword files under `configs/stwd/`, so `st-01` loads `configs/stwd/st-01.txt`. Each keyword file contains one keyword per line.
+Fire Wall dictionaries are managed from the Web Console, not from `config.yaml`. For local runs, the runtime store is created under `configs/sensitive/` on first startup.
 
 #### Local Database
 
@@ -534,77 +496,18 @@ Usage logs are associated with:
 - Completion tokens
 - Created time
 
-## 5. Model-Scoped Sensitive-Word Detection
+## 5. Fire Wall
 
-Sensitive-word detection is controlled by `sensitiveWordDetect` and `sensitiveWordDictionaries`. It is disabled by default in `configs/config.docker.yaml`:
+Fire Wall is managed from the Web Console. Use the `Fire Wall` page to enable detection, create dictionaries, set model scopes, and manage words. Docker Compose persists Fire Wall runtime data in the `fabric-sensitive` named volume. Local runs create the runtime store under `configs/sensitive/`.
 
-```yaml
-sensitiveWordDetect: false
-```
-
-### 5.1 Configure Detection Rules
-
-Edit `configs/config.docker.yaml` and enable detection:
-
-```yaml
-sensitiveWordDetect: true
-sensitiveWordDictionaries:
-  - name: default-block-list
-    effectModels: [gpt-5.5]
-    keywordFileList: [blocked-words]
-```
-
-Each entry under `sensitiveWordDictionaries` is a detection rule:
-
-- `name` is required and is used as a human-readable rule name in logs and match results.
-- `effectModels` controls which models the rule applies to. Use `effectModels: []` to apply the rule to all models.
-- `keywordFileList` is required and lists dictionary file base names under `configs/stwd/`.
-
-`keywordFileList` uses file base names without the `.txt` suffix. The example above loads:
-
-```text
-configs/stwd/blocked-words.txt
-```
-
-### 5.2 Create Dictionary Files
-
-Dictionary files live under `configs/stwd/`. Create one `.txt` file per dictionary and put one keyword on each line:
-
-```bash
-cd configs/stwd
-```
-
-For example, create `blocked-words.txt`:
-
-```text
-badword1
-badword2
-badword3
-```
-
-Empty lines are ignored, and duplicate keywords are removed when the dictionary is loaded.
-
-### 5.3 Hot Reload Behavior
-
-The gateway hot-reloads sensitive-word settings and dictionary files while it is running. After changing `sensitiveWordDetect`, `sensitiveWordDictionaries`, or a referenced file under `configs/stwd/`, new proxy detections use the latest successfully loaded rules without restarting the service.
-
-If you run Fabric with Docker Compose, the tracked compose file bind-mounts `configs/stwd/` into the container. File-based hot reload is per gateway instance and depends on filesystem event delivery from that mount, so multi-instance deployments must distribute dictionary files consistently to every instance.
-
-If you want to restart the service anyway, run:
-
-```bash
-docker compose up -d
-```
-
-### 5.4 Detection Behavior
+### 5.1 Detection Behavior
 
 - Fabric checks input prompts before forwarding requests upstream.
 - Fabric checks non-streaming model outputs before returning responses.
 - If an input prompt matches, Fabric returns `403` with `prompt rejected`.
 - If a non-streaming model output matches, Fabric returns `422` with `model output rejected, please change your prompt`.
 - Streaming output sensitive-word detection is not currently applied to streamed response chunks.
-- If `sensitiveWordDetect: true` and a configured dictionary file is missing or contains no usable words, startup fails.
-- If a runtime reload fails because the updated config or dictionary files are invalid, Fabric keeps using the previous sensitive-word rules and logs the reload error.
+- If a runtime reload fails because the updated Fire Wall files are invalid, Fabric keeps using the previous rules and logs the reload error.
 
 ## 6. Library Usage
 
@@ -716,50 +619,19 @@ if result.Rejected() {
 
 `EffectModels` scopes a dictionary to specific model names. Leave it empty to apply that dictionary to every model passed to `Detect`. Dictionary names are included in match results so downstream systems can audit which rule matched.
 
-If your dictionaries are stored as one word per line, load a single file before constructing the detector:
-
-```go
-dict, err := sensitive.LoadDictionary("default-block-list", "configs/stwd/blocked-words.txt", []string{"gpt-5.5"})
-if err != nil {
-    return err
-}
-
-detector, err := sensitive.NewDetector(dict)
-if err != nil {
-    return err
-}
-```
-
-For multiple dictionary files that use Fabric's `keywordFileList` convention, load a detector from file configs:
-
-```go
-detector, err := sensitive.LoadDetectorFromFiles("configs/stwd", []sensitive.DictionaryFileConfig{
-    {
-        Name:            "default-block-list",
-        EffectModels:    []string{"gpt-5.5"},
-        KeywordFileList: []string{"blocked-words"},
-    },
-})
-if err != nil {
-    return err
-}
-```
-
 For runtime updates, use the reloadable policy from `business/sensitive` and provide your own source callback:
 
 ```go
 policy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
 
 source := func(ctx context.Context) (sensitive.SourceState, error) {
-    detector, err := sensitive.LoadDetectorFromFiles("configs/stwd", []sensitive.DictionaryFileConfig{
-        {
-            Name:            "default-block-list",
-            EffectModels:    []string{"gpt-5.5"},
-            KeywordFileList: []string{"blocked-words"},
-        },
-    })
-    if err != nil {
-        return sensitive.SourceState{}, err
+	 detector, err := sensitive.NewDetector(sensitive.Dictionary{
+	     Name:         "default-block-list",
+	     Words:        []string{"blocked phrase", "secret"},
+	     EffectModels: []string{"gpt-5.5"},
+	 })
+	 if err != nil {
+	     return sensitive.SourceState{}, err
     }
     return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: 1}, nil
 }
@@ -771,23 +643,6 @@ if err != nil {
 ```
 
 `Reload` publishes a new snapshot only after the source callback succeeds. If a later reload fails, callers can keep the existing policy active and log the returned error.
-
-To trigger reloads from file changes, use `Watch` with your source callback:
-
-```go
-go func() {
-    err := sensitive.Watch(ctx, sensitive.WatchOptions{
-        Paths: []string{"configs/stwd"},
-        Reload: func(ctx context.Context) error {
-            _, err := policy.Reload(ctx, source)
-            return err
-        },
-    })
-    if err != nil {
-        logReloadError(err)
-    }
-}()
-```
 
 #### 6.2.4 OpenAI Prompt and Output Extraction
 
@@ -858,15 +713,6 @@ Usage flow:
 3. Let applications call the Fabric Proxy Server with OpenAI-compatible requests.
 
 ## 7. Troubleshooting
-
-### Startup fails because a sensitive-word dictionary file is missing
-
-If `sensitiveWordDetect: true`, Fabric loads each file listed by `keywordFileList` from `configs/stwd/` using the `.txt` suffix convention. For example, `keywordFileList: [st-01]` loads `configs/stwd/st-01.txt`. Startup fails if a configured keyword file does not exist.
-
-Fix it by either:
-
-- Creating the corresponding dictionary file.
-- Setting `sensitiveWordDetect: false` first.
 
 ### Proxy returns `missing provider key`
 
