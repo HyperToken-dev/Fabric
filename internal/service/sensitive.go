@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
 	proto "github.com/HyperToken-dev/fabric/gen"
@@ -137,7 +136,7 @@ func (s *SensitiveWordService) reload(ctx context.Context) (sensitive.Snapshot, 
 	snapshot, err := s.policy.Reload(ctx, s.source)
 	if err != nil {
 		zap.L().Error("reload sensitive words failed", zap.Error(err))
-		return sensitive.Snapshot{}, fmt.Errorf("reload sensitive words: %w", err)
+		return s.policy.Snapshot(), nil
 	}
 	return snapshot, nil
 }
