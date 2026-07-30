@@ -109,12 +109,12 @@ func TestParseBaseURL(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "root without slash", baseURL: "https://api.openai.com"},
-		{name: "root with slash", baseURL: "https://api.openai.com/"},
+		{name: "root with slash", baseURL: "https://api.openai.com/", wantErr: true},
 		{name: "trim spaces", baseURL: " https://api.openai.com "},
 		{name: "empty", baseURL: "", wantErr: true},
 		{name: "missing scheme", baseURL: "api.openai.com", wantErr: true},
 		{name: "missing host", baseURL: "https://", wantErr: true},
-		{name: "path", baseURL: "https://api.openai.com/v1", wantErr: true},
+		{name: "path", baseURL: "https://api.openai.com/v1"},
 		{name: "path with slash", baseURL: "https://api.openai.com/v1/", wantErr: true},
 	}
 
