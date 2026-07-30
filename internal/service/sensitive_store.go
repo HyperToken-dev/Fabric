@@ -344,12 +344,22 @@ func (s *SensitiveRuntimeStore) DeleteDictionary(ctx context.Context, name strin
 	if !ok {
 		return fmt.Errorf("sensitive dictionary %q not found", name)
 	}
+	wordsPath := s.wordsPath(meta.KeywordFile)
+	wordsData, readErr := os.ReadFile(wordsPath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return fmt.Errorf("read sensitive words file before delete: %w", readErr)
+	}
+	if err := os.Remove(wordsPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove sensitive words file: %w", err)
+	}
 	state.Dictionaries = append(state.Dictionaries[:index], state.Dictionaries[index+1:]...)
 	if err := s.writeStateLocked(state); err != nil {
+		if readErr == nil {
+			if restoreErr := writeFileAtomic(wordsPath, wordsData, 0o644); restoreErr != nil {
+				return fmt.Errorf("write sensitive state: %w; restore sensitive words file: %v", err, restoreErr)
+			}
+		}
 		return err
-	}
-	if err := os.Remove(s.wordsPath(meta.KeywordFile)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove sensitive words file: %w", err)
 	}
 	return nil
 }
