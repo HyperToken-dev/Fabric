@@ -7,8 +7,6 @@ import (
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
 	"github.com/HyperToken-dev/fabric/internal/service"
-
-	"go.uber.org/zap"
 )
 
 type gatewaySensitiveSource struct {
@@ -47,35 +45,6 @@ func (s gatewaySensitiveSource) State(ctx context.Context) (sensitive.SourceStat
 		return sensitive.SourceState{}, err
 	}
 	return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: len(loaded)}, nil
-}
-
-func (s gatewaySensitiveSource) Watch(ctx context.Context, policy *sensitive.ReloadablePolicy) {
-	var paths []string
-	if s.runtimeStore != nil {
-		paths = append(paths, s.runtimeStore.WatchPaths()...)
-	}
-	go func() {
-		err := sensitive.Watch(ctx, sensitive.WatchOptions{
-			Paths: paths,
-			Reload: func(ctx context.Context) error {
-				snapshot, err := policy.Reload(ctx, s.State)
-				if err != nil {
-					zap.L().Warn("sensitive dictionaries reload failed", zap.Error(err))
-					return nil
-				}
-				zap.L().Info("sensitive dictionaries reloaded",
-					zap.Bool("enabled", snapshot.Enabled),
-					zap.Int64("version", snapshot.Version),
-					zap.Time("loaded_at", snapshot.LoadedAt),
-					zap.Int("count", snapshot.DictionaryCount),
-				)
-				return nil
-			},
-		})
-		if err != nil && err != context.Canceled {
-			zap.L().Warn("sensitive dictionary watcher stopped", zap.Error(err))
-		}
-	}()
 }
 
 func sensitiveRuntimePath(workDir, runPath string) string {

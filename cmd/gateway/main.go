@@ -97,8 +97,6 @@ func main() {
 		zap.Bool("enabled", loaded.Enabled),
 		zap.Int("count", loaded.DictionaryCount),
 	)
-	sensitiveSource.Watch(context.Background(), textPolicy)
-
 	// db con str
 	dsn := config.GetDSN(cfg.DB)
 
