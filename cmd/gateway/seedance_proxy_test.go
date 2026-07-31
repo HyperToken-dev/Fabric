@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSeedanceProxyCreateTaskForwardsWithProviderAuth(t *testing.T) {
@@ -180,5 +182,174 @@ func TestSeedanceProxyRejectsUnsupportedPath(t *testing.T) {
 	case got := <-integralLogs.ch:
 		t.Fatalf("unexpected integral log for unsupported path: %+v", got)
 	default:
+	}
+}
+
+func TestSeedanceProxyCreateTaskTracksProviderTask(t *testing.T) {
+	tasks := &recordingProviderTaskStore{createCh: make(chan ProviderTaskInfo, 1)}
+	proxy, err := NewSeedanceProxy(SeedanceProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}},
+		ProviderTaskStore:  tasks,
+		IntegralLogHandler: &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"task-1","model":"doubao-seedance-2-0-260128","status":"queued"}`))
+	}))
+	defer upstream.Close()
+
+	reqBody := `{"model":"doubao-seedance-2-0-260128","content":[{"type":"text","text":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, seedanceTasksPath, strings.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+
+	created := receiveProviderTask(t, tasks.createCh)
+	if created.Provider != ProviderSeedance || created.KeyID != 10 || created.ChannelID != 20 || created.ModelID != 42 || created.ProviderTaskID != "task-1" || created.Status != ProviderTaskStatusPending {
+		t.Fatalf("created task = %+v", created)
+	}
+	if string(created.Request) != reqBody {
+		t.Fatalf("request = %s, want %s", created.Request, reqBody)
+	}
+	if !strings.Contains(string(created.Response), `"task-1"`) {
+		t.Fatalf("response = %s", created.Response)
+	}
+}
+
+func TestSeedanceProxyQueryCompletionRecordsCompletionTokens(t *testing.T) {
+	tasks := &recordingProviderTaskStore{completeCh: make(chan ProviderTaskCompletion, 1)}
+	proxy, err := NewSeedanceProxy(SeedanceProxyOptions{ProviderTaskStore: tasks, IntegralLogHandler: &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"task-1","model":"doubao-seedance-2-0-260128","status":"succeeded","usage":{"completion_tokens":108900,"total_tokens":108900}}`))
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodGet, seedanceTasksPath+"/task-1", nil)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+
+	completed := receiveProviderTaskCompletion(t, tasks.completeCh)
+	if completed.Provider != ProviderSeedance || completed.ProviderTaskID != "task-1" || completed.Status != ProviderTaskStatusSuccess || completed.CompletionTokens != 108900 {
+		t.Fatalf("completed task = %+v", completed)
+	}
+}
+
+func TestSeedanceProxyTotalTokensAloneDoesNotRecordUsage(t *testing.T) {
+	tasks := &recordingProviderTaskStore{completeCh: make(chan ProviderTaskCompletion, 1)}
+	proxy, err := NewSeedanceProxy(SeedanceProxyOptions{ProviderTaskStore: tasks, IntegralLogHandler: &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"task-1","model":"doubao-seedance-2-0-260128","status":"succeeded","usage":{"total_tokens":108900}}`))
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodGet, seedanceTasksPath+"/task-1", nil)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+
+	completed := receiveProviderTaskCompletion(t, tasks.completeCh)
+	if completed.CompletionTokens != 0 {
+		t.Fatalf("completion tokens = %d, want 0", completed.CompletionTokens)
+	}
+}
+
+func TestSeedanceProxySensitivePromptRejected(t *testing.T) {
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewSeedanceProxy(SeedanceProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}},
+		IntegralLogHandler: integralLogs,
+		TextPolicy:         rejectingPolicy{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream should not be called")
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodPost, seedanceTasksPath, strings.NewReader(`{"model":"doubao-seedance-2-0-260128","content":[{"type":"image_url","image_url":{"url":"https://example.test/blocked.png"}},{"type":"text","text":"blocked"}]}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+
+	got := receiveIntegralLog(t, integralLogs.ch)
+	var loggedContext struct {
+		Provider        string `json:"provider"`
+		Outcome         string `json:"outcome"`
+		RejectionStage  string `json:"rejection_stage"`
+		RejectionReason string `json:"rejection_reason"`
+		Model           string `json:"model"`
+		ModelID         int32  `json:"model_id"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Provider != "seedance" || loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "input" || loggedContext.RejectionReason != "sensitive" || loggedContext.Model != "doubao-seedance-2-0-260128" || loggedContext.ModelID != 42 {
+		t.Fatalf("context = %+v", loggedContext)
+	}
+}
+
+type recordingProviderTaskStore struct {
+	createCh   chan ProviderTaskInfo
+	completeCh chan ProviderTaskCompletion
+}
+
+func (s *recordingProviderTaskStore) CreateProviderTask(ctx context.Context, task ProviderTaskInfo) error {
+	if s.createCh != nil {
+		s.createCh <- task
+	}
+	return nil
+}
+
+func (s *recordingProviderTaskStore) CompleteProviderTask(ctx context.Context, completion ProviderTaskCompletion) (bool, error) {
+	if s.completeCh != nil {
+		s.completeCh <- completion
+	}
+	return completion.CompletionTokens > 0, nil
+}
+
+func receiveProviderTask(t *testing.T, ch <-chan ProviderTaskInfo) ProviderTaskInfo {
+	t.Helper()
+	select {
+	case got := <-ch:
+		return got
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider task")
+		return ProviderTaskInfo{}
+	}
+}
+
+func receiveProviderTaskCompletion(t *testing.T, ch <-chan ProviderTaskCompletion) ProviderTaskCompletion {
+	t.Helper()
+	select {
+	case got := <-ch:
+		return got
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider task completion")
+		return ProviderTaskCompletion{}
 	}
 }

@@ -139,7 +139,7 @@ func main() {
 	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc, integralLogSvc, sensitiveWordSvc)
 
 	// register proxy
-	proxyStore := postgres.NewProxyStore(queries)
+	proxyStore := postgres.NewProxyStore(db)
 	openaiProxy, err := NewOpenAIProxy(OpenAIProxyOptions{
 		ModelStore:         newModelStoreAdapter(proxyStore),
 		UsageHandler:       newOpenAIUsageAdapter(proxyStore),
@@ -159,6 +159,8 @@ func main() {
 	seedanceProxy, err := NewSeedanceProxy(SeedanceProxyOptions{
 		ModelStore:         newModelStoreAdapter(proxyStore),
 		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+		ProviderTaskStore:  newProviderTaskStoreAdapter(proxyStore),
+		TextPolicy:         textPolicy,
 	})
 	if err != nil {
 		zap.S().Fatalf("create seedance proxy error: %v", err)
