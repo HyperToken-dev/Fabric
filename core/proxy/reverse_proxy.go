@@ -110,9 +110,6 @@ func ParseBaseURL(baseURL string) (*url.URL, error) {
 	if target.Scheme == "" || target.Host == "" {
 		return nil, url.InvalidHostError(baseURL)
 	}
-	if strings.HasSuffix(target.Path, "/") {
-		return nil, url.InvalidHostError("base_url must not end with slash")
-	}
 	return target, nil
 }
 

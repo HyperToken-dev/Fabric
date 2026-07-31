@@ -39,35 +39,17 @@ Fabric 的目标是将这些通用能力拆分为独立、可组合、可复用�
 
 ## 🧭 项目定位
 
-Fabric 当前实现了一个按服务商路由的网关，支持：
-
-- 透明 OpenAI API 代理。
-- Alibaba Bailian 文生视频任务创建和查询代理。
-- 网关 API Key 鉴权。
-- 支持服务商感知 base URL 路由的渠道管理。
-- 支持服务商感知模型目录选择的模型管理。
-- 文本、音频和视频模型类型。
-- 用量日志记录和查询，适用于 OpenAI-compatible 端点。
-- 按模型作用域生效、支持热重载的敏感词检测。
-- 基于 PostgreSQL 的持久化。
-- 启动时数据库迁移。
-- connect-go 管理 API。
-
-未来 Fabric 将扩展更多服务商、更多模型类型，并增加配额、限流、审计、策略编排等治理模块。
-
-## ✨ 功能亮点
-
-当前特色功能：
-
-- **服务商感知路由**：根据渠道的 API 格式将流量分发到不同上游服务商。
-- **用量日志**：为 OpenAI-compatible 请求记录 API Key、渠道、模型、提示词 token 和补全 token，并提供后续查询和聚合能力。
-- **按模型作用域生效、支持热重载的敏感词检测**：词库可以绑定到特定模型，并可在运行时更新。
-
-计划中的能力：
-
-- **配额**：按 API Key、渠道、模型、租户或其他业务维度控制 token 或请求配额。
-- **限制**：速率限制、并发限制和模型调用频率控制。
-- **策略治理**：审计、风控、安全规则和企业工作流模块。
+| Feature | Description |
+| ------- | ----------- |
+| 🧩 可插拔式的分层模块网关 | 可插拔式的分层模块网关。 |
+| 🌐 多厂商与多模态 | 多厂商、多模态 AI 网关基础设施。 |
+| 🖥️ 现代化 Web Console | 提供现代化、易操作的 Web Console。 |
+| 📊 动态数据看板 | 动态数据看板。 |
+| ⚡ 高并发与高可用 | 面向高并发、高可用的网关架构。 |
+| 🔁 透明代理转发 | 调用方使用 Fabric Gateway API Key，Fabric 在转发请求前自动解析渠道、模型、上游 base URL 和服务商凭据。 |
+| 📈 用量记录 | 记录已支持服务商的 key、channel、model、prompt token 和 completion token 用量。 |
+| 🛡️ Fire Wall | 在转发支持的输入前检测敏感文本，支持按模型作用域配置词库并热更新。 |
+| 🎞️ 多厂商与多模态支持 | 支持 OpenAI、Google、Anthropic、Seedance 等。 |
 
 ## 🏗️ 架构
 
@@ -139,19 +121,7 @@ Integrated Gateway 将 Core 和 Business 能力组合为完整的网关产品。
 - 不希望手动组合 Core 和 Business 模块的用户。
 - 只需编写配置文件并运行网关即可满足需求的场景。
 
-## 🎯 设计优势
-
-- **层次独立**：Core、Business 和 Integrated Gateway 边界清晰，可独立演进。
-- **独立部署**：每一层都可以作为独立服务部署，并按团队或业务边界组合。
-- **库式嵌入**：已有系统可以导入所需包，直接嵌入 Fabric 能力。
-- **减少重复网关建设**：API Key、服务商密钥、渠道、模型、用量和策略治理成为可复用基础设施。
-- **控制面和数据面分离**：Admin API 管理密钥、渠道、模型和用量；Proxy API 处理模型流量。
-- **网关密钥和服务商密钥隔离**：调用方使用 Fabric 签发的网关 API Key，上游服务商密钥保存在渠道中，并由网关注入。
-- **多服务商演进**：可以通过适配器增加服务商，使业务层不直接绑定某个厂商协议。
-
 ## 🌐 支持的服务商
-
-Fabric 当前聚焦 OpenAI-compatible API 和 Alibaba Bailian 异步文生视频 API。Core Layer 将继续增加服务商适配器，使不同厂商的模型能够通过同一套网关基础能力接入。
 
 计划支持的服务商和模型厂商包括：
 
@@ -203,6 +173,8 @@ Docker Compose 会基于 `Dockerfile` 构建网关镜像，启动 PostgreSQL，�
 
 Docker Compose 使用仓库中的 `configs/config.docker.yaml`。该文件会被挂载到容器内的 `/app/configs/config.yaml`，因此 Docker 用户在启动 Fabric 前不需要额外创建 `configs/config.yaml`。
 
+网关会在启动时运行 `db/migrations/` 中的数据库迁移。启动完成后，请为目标服务商创建渠道，例如 OpenAI、Alibaba Bailian 或 Seedance；添加模型；并通过 Admin API 或 Web Console 配置真实的上游 provider key，再开始代理生产流量。
+
 ### 2. 可选：Fire Wall
 
 Fire Wall 由 Web Console 管理。使用 `Fire Wall` 页面开启检测、创建词库、设置模型范围并维护词条。Docker Compose 会将运行时数据持久化到 `fabric-sensitive` 命名卷。
@@ -240,8 +212,6 @@ make sqlc-check             # sqlc compile
 ```
 
 ### 前端
-
-管理控制台是位于 `web/fabric/` 下的 React 和 Vite 应用。网关会通过 Admin Server 提供其打包后的生产构建。`web/fabric/src/gen/` 下的 TypeScript protobuf 和 connect 服务描述符是生成代码，不应手动编辑。
 
 ```bash
 cd web/fabric

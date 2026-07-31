@@ -2,14 +2,16 @@
 
 ## Project
 
-Fabric is a modular AI gateway framework. The current implementation supports OpenAI-compatible proxying and Alibaba Bailian text-to-video proxying with:
+Fabric is a modular AI gateway framework. The current implementation supports OpenAI-compatible proxying, Alibaba Bailian text-to-video proxying, and Seedance asynchronous video task proxying with:
 
 - Provider-routed transparent proxying.
 - API key, channel, model, and usage-log management APIs.
+- Integral logs for provider request/response audit data.
+- Provider task tracking for Fabric-created Seedance asynchronous tasks.
 - PostgreSQL-backed storage with startup migrations.
-- Optional sensitive-word detection for OpenAI chat completion requests.
+- Optional sensitive-word detection for OpenAI chat completion requests and Seedance generation request text entries.
 
-Future provider support is planned, but current proxy code focuses on OpenAI and Alibaba Bailian.
+Future provider support is planned, but current proxy code focuses on OpenAI, Alibaba Bailian, and Seedance.
 
 ## Commands
 
@@ -74,16 +76,20 @@ Startup flow in `cmd/gateway/main.go`:
 - Module path: `fabric`.
 - Go version: 1.26.4.
 - Configuration is YAML-based via Viper. Local runs use `configs/config.yaml`; Docker Compose uses `configs/config.docker.yaml` mounted as container `configs/config.yaml`.
-- API formats: `models.APIFormatOpenAI = 1`, `models.APIFormatAlibabaBailian = 2`.
+- API formats: `models.APIFormatOpenAI = 1`, `models.APIFormatAlibabaBailian = 2`, `models.APIFormatSeedance = 3`.
 - Model types: `models.ModelTypeText = 1`, `models.ModelTypeVideo = 2`.
-- Alibaba Bailian proxying uses `https://dashscope.aliyuncs.com` as the default base URL. It supports text-to-video task creation and task status fetching. Video usage logging is not currently recorded.
+- Alibaba Bailian proxying uses `https://dashscope.aliyuncs.com` as the default base URL. It supports text-to-video task creation and task status fetching. Structured video usage logging is not currently recorded for Alibaba Bailian.
+- Seedance proxying supports `/api/v3/contents/generations/tasks` task creation plus task query/delete paths under that prefix. It tracks only tasks created through Fabric and records usage exactly once when a tracked successful task response includes positive `usage.completion_tokens`; `usage.total_tokens` alone is ignored.
 - The OpenAI proxy injects `stream_options.include_usage=true` for streaming chat completions so usage can be captured.
 - Fire Wall detection is controlled by the Web Console and runtime store, not by `config.yaml`.
+- Seedance input sensitive-word detection checks request `content[]` entries where `type == "text"`; image, video, and audio URL fields are not checked by that behavior.
 
 ## Database
 
 - PostgreSQL via `lib/pq`. Migrations in `db/migrations/`, applied at startup via `golang-migrate`.
-- Current tables include `channels`, `api_keys`, `models`, and `usage_logs`.
+- Current tables include `channels`, `api_keys`, `models`, `usage_logs`, `integral_logs`, and `provider_tasks`.
+- `provider_tasks` stores Fabric-created asynchronous provider tasks and coordinates idempotent Seedance completion usage recording.
+- `integral_logs` stores provider request/response audit records and rejected-input metadata; it is not a substitute for provider task lifecycle state.
 - sqlc queries in `db/queries/`, generates code into `internal/repository/`.
 
 ## Directory map
@@ -108,6 +114,7 @@ Startup flow in `cmd/gateway/main.go`:
 | `internal/service/`    | Management service business logic              |
 | `internal/router/`     | HTTP route registration and proxy client logic |
 | `internal/storage/`    | Storage adapters used by gateway/proxy logic   |
+| `internal/storage/postgres/` | PostgreSQL proxy, usage, integral log, and provider task adapters |
 | `internal/config/`     | Environment-based configuration                |
 | `internal/web/`        | Bundled web UI handler for the admin server    |
 | `web/fabric/`          | React/Vite management console source           |

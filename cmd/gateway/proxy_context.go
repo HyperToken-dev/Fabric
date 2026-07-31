@@ -9,8 +9,9 @@ import (
 type Provider string
 
 const (
-	ProviderOpenAI  Provider = "openai"
-	ProviderAlibaba Provider = "alibaba"
+	ProviderOpenAI   Provider = "openai"
+	ProviderAlibaba  Provider = "alibaba"
+	ProviderSeedance Provider = "seedance"
 )
 
 type contextKey string
