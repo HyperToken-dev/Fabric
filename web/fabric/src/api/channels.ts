@@ -4,11 +4,12 @@ import { callAdminRpc } from '../rpc/errors';
 import { requireString, safeInteger, timestampToIso } from '../rpc/values';
 
 export const CHANNEL_STATUSES = { 1: 'Active', 2: 'Banned', 3: 'Pending' } as const;
-export const API_FORMATS = { 1: 'OpenAI', 2: 'Alibaba Bailian' } as const;
-export const CATALOG_API_FORMATS = new Set<number>([1, 2]);
+export const API_FORMATS = { 1: 'OpenAI', 2: 'Alibaba Bailian', 3: 'Seedance' } as const;
+export const CATALOG_API_FORMATS = new Set<number>([1, 2, 3]);
 export const API_FORMAT_DEFAULT_BASE_URLS: Record<number, string> = {
     1: 'https://api.openai.com',
     2: 'https://dashscope.aliyuncs.com',
+    3: 'https://ark.cn-beijing.volces.com',
 };
 
 export type Channel = {

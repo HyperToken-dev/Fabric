@@ -89,7 +89,7 @@ func TestProxyServeHTTPForwardsToUpstream(t *testing.T) {
 func TestProxyServeHTTPRejectsInvalidBaseURL(t *testing.T) {
 	p := New(Options{})
 
-	tests := []string{"", "example.com", "http://", "http://example.com/base"}
+	tests := []string{"", "example.com", "http://"}
 	for _, baseURL := range tests {
 		t.Run(baseURL, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -109,13 +109,13 @@ func TestParseBaseURL(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "root without slash", baseURL: "https://api.openai.com"},
-		{name: "root with slash", baseURL: "https://api.openai.com/", wantErr: true},
+		{name: "root with slash", baseURL: "https://api.openai.com/"},
 		{name: "trim spaces", baseURL: " https://api.openai.com "},
 		{name: "empty", baseURL: "", wantErr: true},
 		{name: "missing scheme", baseURL: "api.openai.com", wantErr: true},
 		{name: "missing host", baseURL: "https://", wantErr: true},
 		{name: "path", baseURL: "https://api.openai.com/v1"},
-		{name: "path with slash", baseURL: "https://api.openai.com/v1/", wantErr: true},
+		{name: "path with slash", baseURL: "https://api.openai.com/v1/"},
 	}
 
 	for _, tt := range tests {

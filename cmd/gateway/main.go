@@ -156,10 +156,18 @@ func main() {
 	if err != nil {
 		zap.S().Fatalf("create alibaba bailian proxy error: %v", err)
 	}
+	seedanceProxy, err := NewSeedanceProxy(SeedanceProxyOptions{
+		ModelStore:         newModelStoreAdapter(proxyStore),
+		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+	})
+	if err != nil {
+		zap.S().Fatalf("create seedance proxy error: %v", err)
+	}
 
 	rt := router.New(queries, map[int32]router.Proxy{
 		models.APIFormatOpenAI:         openaiProxy,
 		models.APIFormatAlibabaBailian: alibabaBailianProxy,
+		models.APIFormatSeedance:       seedanceProxy,
 	})
 	proxyMux := rt.RegisterProxyRoutes()
 	zap.L().Info("proxy routes registered")

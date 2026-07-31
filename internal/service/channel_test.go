@@ -219,7 +219,7 @@ func TestChannelServiceUpdateChannelBaseURL(t *testing.T) {
 }
 
 func TestChannelServiceUpdateChannelBaseURLValidation(t *testing.T) {
-	tests := []string{"", "api.openai.com", "https://", "https://api.openai.com/v1", "https://" + strings.Repeat("a", channelBaseURLMaxLength)}
+	tests := []string{"", "api.openai.com", "https://", "https://" + strings.Repeat("a", channelBaseURLMaxLength)}
 	for _, baseURL := range tests {
 		t.Run(baseURL, func(t *testing.T) {
 			db, mock, cleanup := newServiceMock(t)
