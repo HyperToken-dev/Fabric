@@ -1,6 +1,6 @@
 # Fabric Usage Guide
 
-This document explains how to use Fabric in detail, including running the integrated gateway, configuring management APIs, calling the OpenAI-compatible proxy, and reusing Core / Business layers as libraries.
+This document explains how to use Fabric in detail, including running the integrated gateway, configuring management APIs, calling provider-routed proxy APIs, and reusing Core / Business layers as libraries.
 
 ## 1. Run the Integrated Gateway
 
@@ -8,7 +8,7 @@ This document explains how to use Fabric in detail, including running the integr
 
 - Docker and Docker Compose for the recommended startup path.
 - Go 1.26.4 and PostgreSQL only when running locally without Docker.
-- Access to an OpenAI-compatible upstream service
+- Access to an OpenAI-compatible, Alibaba Bailian, or Seedance upstream service, depending on the provider channel you configure.
 
 ### 1.2 Start with Docker Compose
 
@@ -33,6 +33,8 @@ Fabric runs migrations from `db/migrations/` during startup. The current migrati
 - `api_keys`
 - `models`
 - `usage_logs`
+- `integral_logs`
+- `provider_tasks`
 
 The migrations do not seed default provider channels or models. In real deployments, configure or create a channel with a real `provider_key` and add required models through the management API or Admin Console.
 
@@ -144,6 +146,8 @@ Fabric runs migrations from `db/migrations/` during startup. The current migrati
 - `api_keys`
 - `models`
 - `usage_logs`
+- `integral_logs`
+- `provider_tasks`
 
 The migrations do not seed default provider channels or models. In real deployments, configure or create a channel with a real `provider_key` and add required models through the management API or Admin Console.
 
@@ -207,8 +211,8 @@ Methods:
 `CreateChannelRequest` fields:
 
 - `channel_name`: channel name.
-- `base_url`: upstream service URL, for example `https://api.openai.com` (OpenAI) or `https://dashscope.aliyuncs.com` (Alibaba Bailian).
-- `api_format`: API format. `1` for OpenAI, `2` for Alibaba Bailian.
+- `base_url`: upstream service URL, for example `https://api.openai.com` (OpenAI), `https://dashscope.aliyuncs.com` (Alibaba Bailian), or your Seedance upstream base URL.
+- `api_format`: API format. `1` for OpenAI, `2` for Alibaba Bailian, `3` for Seedance.
 - `provider_key`: upstream provider API key.
 
 Update request fields:
@@ -246,6 +250,21 @@ curl http://localhost:9090/proto.ChannelService/CreateChannel \
     "providerKey": "sk-your-dashscope-key"
   }'
 ```
+
+Example for Seedance:
+
+```bash
+curl http://localhost:9090/proto.ChannelService/CreateChannel \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channelName": "Seedance",
+    "baseUrl": "https://your-seedance-upstream.example.com",
+    "apiFormat": 3,
+    "providerKey": "sk-your-seedance-key"
+  }'
+```
+
+Use the upstream base URL assigned by your Seedance provider account. Fabric routes Seedance traffic through the configured channel `base_url`; it does not require a hardcoded Seedance base URL in `config.yaml`.
 
 Update channel name:
 
@@ -320,7 +339,7 @@ Methods:
 - `status`: model status. The current active status is `1`.
 - `model_type`: model type. Text is `1`, Video is `2`.
 
-Example:
+Example for a text model:
 
 ```bash
 curl http://localhost:9090/proto.ModelService/CreateModel \
@@ -332,6 +351,21 @@ curl http://localhost:9090/proto.ModelService/CreateModel \
     "modelType": 1
   }'
 ```
+
+Example for a Seedance video model:
+
+```bash
+curl http://localhost:9090/proto.ModelService/CreateModel \
+  -H "Content-Type: application/json" \
+  -d '{
+    "modelName": "doubao-seedance-2-0-260128",
+    "channelId": 3,
+    "status": 1,
+    "modelType": 2
+  }'
+```
+
+The `channelId` must point to a Seedance channel. Seedance catalog models are video models, so use `modelType: 2`.
 
 ### 2.3 ManageApiKeyService
 
@@ -471,9 +505,44 @@ Notes:
 - Replace `<task_id>` with the ID returned by the task creation request.
 - The same Gateway API Key must be used.
 
+### 3.5 Seedance Video Task Creation
+
+```bash
+curl http://localhost:3002/api/v3/contents/generations/tasks \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "content": [
+      {
+        "type": "text",
+        "text": "A cat running under moonlight"
+      }
+    ]
+  }'
+```
+
+Notes:
+- The `Authorization` header expects a Gateway API Key bound to a Seedance API format channel.
+- The `model` must be configured under the bound Seedance channel and must be enabled.
+- Fabric checks `content[]` entries where `type` is `text` before forwarding the request upstream.
+- If the upstream creation response contains a task ID, Fabric stores a provider task record for later lifecycle and usage handling.
+
+### 3.6 Seedance Task Query
+
+```bash
+curl http://localhost:3002/api/v3/contents/generations/tasks/<task_id> \
+  -H "Authorization: Bearer hy_xxx"
+```
+
+Notes:
+- Replace `<task_id>` with the ID returned by the Seedance task creation request.
+- The same Gateway API Key must be used.
+- Fabric updates usage only for Seedance tasks that were created through Fabric and are already tracked in `provider_tasks`.
+
 ## 4. Usage Logging
 
-Fabric currently supports OpenAI-compatible usage logging. Alibaba Bailian text-to-video requests are proxied but video usage is not recorded yet.
+Fabric currently records usage for OpenAI-compatible requests and for tracked successful Seedance task responses. Alibaba Bailian text-to-video requests are proxied successfully, but structured Alibaba Bailian video usage is not currently recorded.
 
 For non-streaming responses:
 
@@ -496,6 +565,15 @@ Usage logs are associated with:
 - Completion tokens
 - Created time
 
+For Seedance asynchronous video tasks:
+
+- Fabric creates a `provider_tasks` row only when a Seedance generation request passes through Fabric and the upstream creation response includes a task ID.
+- Later Seedance task query responses update only existing provider task records; querying a task ID that was not created through Fabric does not create a provider task or usage log.
+- Usage is recorded only when a tracked task reaches a successful status and the response includes a positive `usage.completion_tokens` value.
+- Seedance usage rows use `prompt_tokens = 0` and `completion_tokens = usage.completion_tokens`.
+- `usage.total_tokens` alone is intentionally ignored.
+- Repeated or concurrent polling for the same completed Seedance task records usage at most once.
+
 ## 5. Fire Wall
 
 Fire Wall is managed from the Web Console. Use the `Fire Wall` page to enable detection, create dictionaries, set model scopes, and manage words. Docker Compose persists Fire Wall runtime data in the `fabric-sensitive` named volume. Local runs create the runtime store under `configs/sensitive/`.
@@ -504,6 +582,8 @@ Fire Wall is managed from the Web Console. Use the `Fire Wall` page to enable de
 
 - Fabric checks input prompts before forwarding requests upstream.
 - Fabric checks non-streaming model outputs before returning responses.
+- For Seedance generation requests, Fabric checks `content[]` entries where `type` is `text` and `text` is non-empty before forwarding upstream.
+- Seedance image, video, and audio URL fields are not checked by this text-entry behavior.
 - If an input prompt matches, Fabric returns `403` with `prompt rejected`.
 - If a non-streaming model output matches, Fabric returns `422` with `model output rejected, please change your prompt`.
 - Streaming output sensitive-word detection is not currently applied to streamed response chunks.
@@ -526,6 +606,7 @@ Reusable capabilities:
 
 - OpenAI-compatible reverse proxy.
 - Alibaba Bailian task API proxy.
+- Seedance asynchronous task API proxy.
 - Provider request rewrite hooks.
 - Upstream base URL and provider key injection.
 
@@ -710,7 +791,7 @@ Usage flow:
 
 1. Start with `docker compose up -d` or run locally with `go run ./cmd/gateway` after preparing PostgreSQL.
 2. Configure Channel, Model, and Gateway API Key through the Admin API.
-3. Let applications call the Fabric Proxy Server with OpenAI-compatible requests.
+3. Let applications call the Fabric Proxy Server with OpenAI-compatible, Alibaba Bailian, or Seedance requests through the Gateway API Key bound to the appropriate channel.
 
 ## 7. Troubleshooting
 
@@ -726,9 +807,23 @@ The requested model is not configured under the current Channel, or the model is
 
 The requested path is not `video-synthesis` or `tasks/`. Fabric restricts the Alibaba Bailian proxy surface to explicitly supported task paths.
 
+### Proxy returns `unsupported seedance path`
+
+The requested path is not under `/api/v3/contents/generations/tasks`, or the method is not supported for that Seedance task route. Fabric supports Seedance task creation with `POST /api/v3/contents/generations/tasks` and task query/delete paths under that prefix.
+
 ### Bailian Video Usage is not shown
 
 Alibaba Bailian text-to-video requests are proxied successfully, but Fabric does not currently record video usage. This is a known limitation.
+
+### Seedance Usage is not shown
+
+Seedance usage is recorded only from tracked Fabric-created tasks. If no usage appears, check whether:
+
+- The original Seedance task creation request passed through Fabric and returned a provider task ID.
+- The task query response reached a successful status.
+- The successful response included a positive `usage.completion_tokens` value.
+- The response only included `usage.total_tokens`, which Fabric intentionally ignores for Seedance usage accounting.
+- The task ID was created outside Fabric; unknown task queries produce audit logs but do not create provider task or usage records.
 
 ### Proxy returns `invalid api key`
 

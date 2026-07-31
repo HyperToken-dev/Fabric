@@ -39,35 +39,17 @@ Fabric exists to split these common capabilities into independent, composable, r
 
 ## 🧭 Project Positioning
 
-Fabric currently implements a provider-routed gateway with:
-
-- Transparent OpenAI API proxying.
-- Alibaba Bailian text-to-video task creation and fetch proxying.
-- Gateway API key authentication.
-- Channel management with provider-aware base URL routing.
-- Model management with provider-aware catalog selection.
-- Text, Audio and Video model types.
-- Usage logging and querying (for OpenAI-compatible endpoints).
-- Model-scoped, hot-reloadable sensitive-word detection.
-- PostgreSQL-backed persistence.
-- Startup database migrations.
-- connect-go management APIs.
-
-Future work will expand Fabric with more providers, more model types, and additional governance modules such as quota, limit, audit, and policy orchestration.
-
-## ✨ Feature Highlights
-
-Current distinctive features:
-
-- **Provider-aware routing**: dispatch traffic to upstream providers based on channel API format.
-- **Usage logging**: records the key, channel, model, prompt tokens, and completion tokens for OpenAI-compatible requests, then exposes the data for later querying and aggregation.
-- **Model-scoped, hot-reloadable sensitive-word detection**: dictionaries can be scoped to specific models and updated at runtime.
-
-Planned capabilities:
-
-- **Quota**: token or request quotas by key, channel, model, tenant, or other business dimensions.
-- **Limit**: rate limiting, concurrency limiting, and model-call frequency controls.
-- **Policy governance**: audit, risk control, safety rules, and enterprise workflow modules.
+| Feature                                  | Description                                                                                                                                          |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🧩 Layered modular gateway               | A pluggable, layered modular gateway.                                                                                                                |
+| 🌐 Multi-provider and multimodal         | A multi-provider, multimodal AI gateway foundation.                                                                                                  |
+| 🖥️ Modern Web Console                    | A modern gateway product with an easy-to-operate Web Console.                                                                                        |
+| 📊 Dynamic data dashboard                | A dynamic data dashboard.                                                                                                                            |
+| ⚡ High concurrency and availability     | A high-concurrency, high-availability gateway architecture.                                                                                          |
+| 🔁 Transparent proxying                  | Callers use Fabric Gateway API Keys while Fabric resolves channels, models, upstream base URLs, and provider credentials before forwarding requests. |
+| 📈 Usage logging                         | Records key, channel, model, prompt-token, and completion-token usage                                                                                |
+| 🛡️ Fire Wall                             | Detects sensitive text before forwarding supported inputs, supports model-scoped dictionaries and hot updating                                       |
+| 🎞️ Multi-provider and multimodal support | OpenAI、Google、Anthropic、Seedance and more                                                                                                         |
 
 ## 🏗️ Architecture
 
@@ -139,19 +121,7 @@ It is useful for:
 - Users who do not want to manually compose Core and Business modules.
 - Scenarios where writing a configuration file and running the gateway is enough.
 
-## 🎯 Design Advantages
-
-- **Independent layers**: Core, Business, and Integrated Gateway have clear boundaries and can evolve independently.
-- **Independent deployment**: each layer can be deployed as its own service and composed by team or business boundaries.
-- **Library embedding**: existing systems can import the needed packages and embed Fabric capabilities directly into their own code.
-- **Less duplicated gateway work**: API keys, provider keys, channels, models, usage, and policy governance become reusable infrastructure.
-- **Control plane and data plane separation**: Admin APIs manage keys, channels, models, and usage; Proxy APIs handle model traffic.
-- **Gateway key and provider key isolation**: callers use Fabric-issued gateway API keys, while upstream provider keys stay in channels and are injected by the gateway.
-- **Multi-provider evolution**: providers can be added through adapters so the business layer does not bind directly to one vendor's protocol.
-
 ## 🌐 Supported and Planned Providers / Models
-
-Fabric currently focuses on OpenAI-compatible APIs and Alibaba Bailian asynchronous text-to-video APIs. The Core Layer will continue to add provider adapters so models from different vendors can be connected through the same gateway primitives.
 
 Planned provider/model vendors include:
 
@@ -203,7 +173,7 @@ Docker Compose builds the gateway image from `Dockerfile`, starts PostgreSQL, an
 
 The tracked `configs/config.docker.yaml` is used by Docker Compose. It is mounted into the container as `/app/configs/config.yaml`, so Docker users do not need to create a separate `configs/config.yaml` before starting Fabric.
 
-The gateway runs database migrations from `db/migrations/` during startup. After startup, create a channel for your desired provider (e.g. OpenAI or Alibaba Bailian), add a model, and configure a real upstream provider key through the Admin API or Web Console before proxying production traffic.
+The gateway runs database migrations from `db/migrations/` during startup. After startup, create a channel for your desired provider (e.g. OpenAI, Alibaba Bailian, or Seedance), add a model, and configure a real upstream provider key through the Admin API or Web Console before proxying production traffic.
 
 ### 2. Optional Fire Wall
 
@@ -242,8 +212,6 @@ make sqlc-check             # sqlc compile
 ```
 
 ### Frontend Development
-
-The management console is a React and Vite application under `web/fabric/`. The gateway serves its bundled production build from the Admin Server. TypeScript protobuf and connect service descriptors under `web/fabric/src/gen/` are generated code and should not be edited manually.
 
 ```bash
 cd web/fabric
