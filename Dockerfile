@@ -1,17 +1,4 @@
-FROM node:24-alpine AS web-builder
-
-WORKDIR /build/web/fabric
-
-RUN corepack enable && corepack prepare pnpm@11.13.1 --activate
-
-COPY web/fabric/package.json web/fabric/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-COPY web/fabric/ ./
-RUN pnpm build
-
-
-FROM golang:1.26.4 AS builder
+FROM golang:1.26.4 AS generator
 
 ARG SQLC_VERSION=v1.30.0
 ARG BUF_VERSION=v1.57.2
@@ -29,9 +16,31 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-COPY --from=web-builder /build/web/fabric/dist ./internal/web/dist
+
 RUN make generate
+
+
+FROM node:24-alpine AS web-builder
+
+WORKDIR /build/web/fabric
+
+RUN corepack enable && corepack prepare pnpm@11.13.1 --activate
+
+COPY web/fabric/package.json web/fabric/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY web/fabric/ ./
+COPY --from=generator /src/web/fabric/src/gen ./src/gen
+
+RUN pnpm build
+
+
+FROM generator AS builder
+
+COPY --from=web-builder /build/web/fabric/dist ./internal/web/dist
+
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/gateway ./cmd/gateway
+
 
 FROM alpine:3.22
 
