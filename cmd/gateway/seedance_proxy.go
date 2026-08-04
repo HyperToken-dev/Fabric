@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	seedanceusage "github.com/HyperToken-dev/fabric/business/usage/seedance"
 	coreseedance "github.com/HyperToken-dev/fabric/core/providers/seedance"
 	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 	"github.com/HyperToken-dev/fabric/internal/models"
@@ -50,9 +51,6 @@ type seedanceTaskResponse struct {
 	ID     string `json:"id"`
 	Model  string `json:"model"`
 	Status string `json:"status"`
-	Usage  struct {
-		CompletionTokens int64 `json:"completion_tokens"`
-	} `json:"usage"`
 }
 
 func NewSeedanceProxy(opts SeedanceProxyOptions) (*SeedanceProxy, error) {
@@ -312,19 +310,27 @@ func (p *SeedanceProxy) processTaskResponseAsync(req *http.Request, taskResp see
 		return
 	}
 
+	completionTokens := int64(0)
+	parsedUsage, usageErr := seedanceusage.ExtractTaskUsage(rawBody)
+	if usageErr != nil {
+		zap.L().Error("extract seedance task usage failed", zap.Error(usageErr), zap.String("provider_task_id", taskResp.ID))
+	} else if parsedUsage != nil {
+		completionTokens = parsedUsage.CompletionTokens
+	}
+
 	inserted, err := p.tasks.CompleteProviderTask(ctx, ProviderTaskCompletion{
 		Provider:         ProviderSeedance,
 		ProviderTaskID:   taskResp.ID,
 		Status:           status,
 		Response:         append(json.RawMessage(nil), rawBody...),
-		CompletionTokens: taskResp.Usage.CompletionTokens,
+		CompletionTokens: completionTokens,
 	})
 	if err != nil {
-		zap.L().Error("complete seedance provider task failed", zap.Error(err), zap.String("provider_task_id", taskResp.ID), zap.Int64("completion_tokens", taskResp.Usage.CompletionTokens))
+		zap.L().Error("complete seedance provider task failed", zap.Error(err), zap.String("provider_task_id", taskResp.ID), zap.Int64("completion_tokens", completionTokens))
 		return
 	}
 	if inserted {
-		zap.L().Info("seedance provider task usage recorded", zap.String("provider_task_id", taskResp.ID), zap.Int64("completion_tokens", taskResp.Usage.CompletionTokens))
+		zap.L().Info("seedance provider task usage recorded", zap.String("provider_task_id", taskResp.ID), zap.Int64("completion_tokens", completionTokens))
 	}
 }
 
