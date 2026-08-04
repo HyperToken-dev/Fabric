@@ -157,6 +157,31 @@ func TestGoogleProxyInteractionsValidation(t *testing.T) {
 	}
 }
 
+func TestIsGoogleInteractionsRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		method  string
+		baseURL string
+		path    string
+		want    bool
+	}{
+		{name: "root base with versioned request path", method: http.MethodPost, baseURL: "https://example.com", path: "/v1beta/interactions", want: true},
+		{name: "versioned base with short request path", method: http.MethodPost, baseURL: "https://example.com/v1beta", path: "/interactions", want: true},
+		{name: "versioned base with versioned request path", method: http.MethodPost, baseURL: "https://example.com/v1beta", path: "/v1beta/interactions", want: true},
+		{name: "arbitrary suffix path rejected", method: http.MethodPost, baseURL: "https://example.com", path: "/foo/interactions", want: false},
+		{name: "unsupported method rejected", method: http.MethodGet, baseURL: "https://example.com", path: "/v1beta/interactions", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			if got := isGoogleInteractionsRequest(req, tt.baseURL); got != tt.want {
+				t.Fatalf("isGoogleInteractionsRequest(%s, %s, %s) = %v, want %v", tt.method, tt.baseURL, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGoogleProxyModelRejectionRecordsIntegralLog(t *testing.T) {
 	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
 	proxy, err := NewGoogleProxy(GoogleProxyOptions{ModelStore: fakeModelStore{}, IntegralLogHandler: integralLogs})

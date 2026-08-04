@@ -17,7 +17,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const googleInteractionsPath = "/interactions"
+const (
+	googleInteractionsPath       = "/interactions"
+	googleV1BetaInteractionsPath = "/v1beta/interactions"
+)
 
 type GoogleProxy struct {
 	coreProxy    *coreproxy.Proxy
@@ -216,7 +219,12 @@ func (p *GoogleProxy) processUsageAsync(rawBody []byte, keyID int32, channelID i
 }
 
 func isGoogleInteractionsRequest(r *http.Request, baseURL string) bool {
-	return r.Method == http.MethodPost && strings.HasSuffix(googleEffectivePath(baseURL, r.URL.Path), googleInteractionsPath)
+	if r.Method != http.MethodPost {
+		return false
+	}
+	requestPath := path.Clean("/" + strings.TrimPrefix(r.URL.Path, "/"))
+	effectivePath := googleEffectivePath(baseURL, r.URL.Path)
+	return requestPath == googleInteractionsPath || requestPath == googleV1BetaInteractionsPath || effectivePath == googleV1BetaInteractionsPath
 }
 
 func googleEffectivePath(baseURL string, requestPath string) string {
