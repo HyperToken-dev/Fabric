@@ -84,6 +84,43 @@ func TestGoogleProxyInteractionsForwardsWithProviderAuth(t *testing.T) {
 	}
 }
 
+func TestGoogleProxyInteractionsNormalizesUpstreamPath(t *testing.T) {
+	tests := []struct {
+		name        string
+		basePrefix  string
+		requestPath string
+		wantPath    string
+	}{
+		{name: "base without prefix request with prefix", requestPath: "/v1beta/interactions", wantPath: "/v1beta/interactions"},
+		{name: "base with prefix request without prefix", basePrefix: "/v1beta", requestPath: "/interactions", wantPath: "/v1beta/interactions"},
+		{name: "base with prefix request with same prefix", basePrefix: "/v1beta", requestPath: "/v1beta/interactions", wantPath: "/v1beta/interactions"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proxy, err := NewGoogleProxy(GoogleProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.wantPath {
+					t.Errorf("path = %s, want %s", r.URL.Path, tt.wantPath)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"object":"interaction","usage":{"total_input_tokens":1,"total_output_tokens":1}}`))
+			}))
+			defer upstream.Close()
+
+			req := httptest.NewRequest(http.MethodPost, tt.requestPath, strings.NewReader(`{"model":"gemini-3-flash-preview","input":[{"type":"user_input","content":[{"type":"text","text":"hello"}]}]}`))
+			rec := httptest.NewRecorder()
+			proxy.ServeHTTP(rec, req, 10, 20, upstream.URL+tt.basePrefix, "provider-key")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestGoogleProxyInteractionsValidation(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -145,6 +182,38 @@ func TestGoogleProxyModelRejectionRecordsIntegralLog(t *testing.T) {
 	}
 	if loggedContext.Provider != "google" || loggedContext.Outcome != "rejected" || loggedContext.RejectionReason != "model" || loggedContext.Model != "gemini-3-flash-preview" {
 		t.Fatalf("context = %+v", loggedContext)
+	}
+}
+
+func TestGoogleProxyModelLookupErrorRecordsIntegralLogAsError(t *testing.T) {
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewGoogleProxy(GoogleProxyOptions{ModelStore: fakeModelStore{err: errors.New("lookup failed")}, IntegralLogHandler: integralLogs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/interactions", strings.NewReader(`{"model":"gemini-3-flash-preview"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, "https://generativelanguage.googleapis.com", "provider-key")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+
+	got := receiveIntegralLog(t, integralLogs.ch)
+	var loggedContext struct {
+		Provider        string `json:"provider"`
+		Outcome         string `json:"outcome"`
+		RejectionStage  string `json:"rejection_stage"`
+		RejectionReason string `json:"rejection_reason"`
+		ResponseStatus  int    `json:"response_status"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Provider != "google" || loggedContext.Outcome != "error" || loggedContext.ResponseStatus != http.StatusInternalServerError {
+		t.Fatalf("context = %+v", loggedContext)
+	}
+	if loggedContext.RejectionStage != "" || loggedContext.RejectionReason != "" {
+		t.Fatalf("rejection fields = %q/%q, want empty", loggedContext.RejectionStage, loggedContext.RejectionReason)
 	}
 }
 

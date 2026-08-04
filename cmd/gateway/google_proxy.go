@@ -135,6 +135,9 @@ func (p *GoogleProxy) prepareInteractionsRequest(r *http.Request, channelID int3
 func (p *GoogleProxy) writeModelError(w http.ResponseWriter, r *http.Request, keyID int32, channelID int32, modelID int32, modelName string, err error) {
 	status := http.StatusInternalServerError
 	message := "model lookup failed"
+	outcome := integralOutcomeRejected
+	rejectionStage := rejectionStageInput
+	rejectionReason := rejectionReasonModel
 	switch {
 	case errors.Is(err, errInvalidRequestBody):
 		status = http.StatusBadRequest
@@ -153,6 +156,9 @@ func (p *GoogleProxy) writeModelError(w http.ResponseWriter, r *http.Request, ke
 		message = "unsupported model"
 		zap.L().Warn("google model unsupported", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName), zap.String("method", r.Method), zap.String("path", r.URL.Path))
 	default:
+		outcome = integralOutcomeError
+		rejectionStage = ""
+		rejectionReason = ""
 		zap.L().Error("resolve google model failed", zap.Error(err), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", modelName), zap.String("method", r.Method), zap.String("path", r.URL.Path))
 	}
 
@@ -165,9 +171,9 @@ func (p *GoogleProxy) writeModelError(w http.ResponseWriter, r *http.Request, ke
 		ChannelID:           channelID,
 		ModelID:             modelID,
 		Model:               modelName,
-		Outcome:             integralOutcomeRejected,
-		RejectionStage:      rejectionStageInput,
-		RejectionReason:     rejectionReasonModel,
+		Outcome:             outcome,
+		RejectionStage:      rejectionStage,
+		RejectionReason:     rejectionReason,
 		ResponseStatus:      status,
 		ResponseContentType: "text/plain; charset=utf-8",
 		DecodeOK:            true,
