@@ -168,6 +168,7 @@ func TestIsGoogleInteractionsRequest(t *testing.T) {
 		{name: "root base with versioned request path", method: http.MethodPost, baseURL: "https://example.com", path: "/v1beta/interactions", want: true},
 		{name: "versioned base with short request path", method: http.MethodPost, baseURL: "https://example.com/v1beta", path: "/interactions", want: true},
 		{name: "versioned base with versioned request path", method: http.MethodPost, baseURL: "https://example.com/v1beta", path: "/v1beta/interactions", want: true},
+		{name: "v1 path rejected", method: http.MethodPost, baseURL: "https://example.com", path: "/v1/interactions", want: false},
 		{name: "arbitrary suffix path rejected", method: http.MethodPost, baseURL: "https://example.com", path: "/foo/interactions", want: false},
 		{name: "unsupported method rejected", method: http.MethodGet, baseURL: "https://example.com", path: "/v1beta/interactions", want: false},
 	}
@@ -179,6 +180,35 @@ func TestIsGoogleInteractionsRequest(t *testing.T) {
 				t.Fatalf("isGoogleInteractionsRequest(%s, %s, %s) = %v, want %v", tt.method, tt.baseURL, tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGoogleProxyInvalidRequestBodyRecordsIntegralLogAsInvalidRequest(t *testing.T) {
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewGoogleProxy(GoogleProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}}, IntegralLogHandler: integralLogs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/interactions", strings.NewReader(`{`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, "https://generativelanguage.googleapis.com", "provider-key")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+
+	got := receiveIntegralLog(t, integralLogs.ch)
+	var loggedContext struct {
+		Provider        string `json:"provider"`
+		Outcome         string `json:"outcome"`
+		RejectionStage  string `json:"rejection_stage"`
+		RejectionReason string `json:"rejection_reason"`
+		ResponseStatus  int    `json:"response_status"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Provider != "google" || loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "input" || loggedContext.RejectionReason != "invalid_request" || loggedContext.ResponseStatus != http.StatusBadRequest {
+		t.Fatalf("context = %+v", loggedContext)
 	}
 }
 
@@ -311,9 +341,9 @@ func TestGoogleEffectivePath(t *testing.T) {
 		requestPath string
 		want        string
 	}{
-		{baseURL: "https://example.com", requestPath: "/v1/interactions", want: "/v1/interactions"},
-		{baseURL: "https://example.com/v1", requestPath: "/interactions", want: "/v1/interactions"},
-		{baseURL: "https://example.com/v1/", requestPath: "interactions", want: "/v1/interactions"},
+		{baseURL: "https://example.com", requestPath: "/v1beta/interactions", want: "/v1beta/interactions"},
+		{baseURL: "https://example.com/v1beta", requestPath: "/interactions", want: "/v1beta/interactions"},
+		{baseURL: "https://example.com/v1beta/", requestPath: "interactions", want: "/v1beta/interactions"},
 	}
 	for _, tt := range tests {
 		if got := googleEffectivePath(tt.baseURL, tt.requestPath); got != tt.want {

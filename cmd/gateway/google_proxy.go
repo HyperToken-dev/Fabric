@@ -145,6 +145,7 @@ func (p *GoogleProxy) writeModelError(w http.ResponseWriter, r *http.Request, ke
 	case errors.Is(err, errInvalidRequestBody):
 		status = http.StatusBadRequest
 		message = "invalid request body"
+		rejectionReason = rejectionReasonInvalidRequest
 		zap.L().Error("parse google interactions request failed", zap.Error(err), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("method", r.Method), zap.String("path", r.URL.Path))
 	case errors.Is(err, errMissingModel):
 		status = http.StatusBadRequest

@@ -16,10 +16,11 @@ const (
 	integralOutcomeError    = "error"
 	integralOutcomeRejected = "rejected"
 
-	rejectionStageInput      = "input"
-	rejectionStageOutput     = "output"
-	rejectionReasonSensitive = "sensitive"
-	rejectionReasonModel     = "model"
+	rejectionStageInput           = "input"
+	rejectionStageOutput          = "output"
+	rejectionReasonInvalidRequest = "invalid_request"
+	rejectionReasonSensitive      = "sensitive"
+	rejectionReasonModel          = "model"
 )
 
 type integralLogInfo struct {
