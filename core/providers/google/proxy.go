@@ -23,4 +23,5 @@ func defaultRewrite(pr *httputil.ProxyRequest) error {
 
 func defaultAuthInjector(req *http.Request, upstream coreproxy.Upstream) {
 	req.Header.Set("x-goog-api-key", upstream.APIKey)
+	req.Header.Del("Authorization")
 }
