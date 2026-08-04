@@ -165,11 +165,21 @@ func main() {
 	if err != nil {
 		zap.S().Fatalf("create seedance proxy error: %v", err)
 	}
+	googleProxy, err := NewGoogleProxy(GoogleProxyOptions{
+		ModelStore:         newModelStoreAdapter(proxyStore),
+		UsageHandler:       newGoogleUsageAdapter(proxyStore),
+		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+		TextPolicy:         textPolicy,
+	})
+	if err != nil {
+		zap.S().Fatalf("create google proxy error: %v", err)
+	}
 
 	rt := router.New(queries, map[int32]router.Proxy{
 		models.APIFormatOpenAI:         openaiProxy,
 		models.APIFormatAlibabaBailian: alibabaBailianProxy,
 		models.APIFormatSeedance:       seedanceProxy,
+		models.APIFormatGoogle:         googleProxy,
 	})
 	proxyMux := rt.RegisterProxyRoutes()
 	zap.L().Info("proxy routes registered")

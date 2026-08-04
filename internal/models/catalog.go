@@ -9,6 +9,7 @@ const (
 	APIFormatOpenAI         int32 = 1
 	APIFormatAlibabaBailian int32 = 2
 	APIFormatSeedance       int32 = 3
+	APIFormatGoogle         int32 = 4
 	ModelTypeText           int32 = 1
 	ModelTypeVideo          int32 = 2
 )
@@ -56,6 +57,8 @@ func catalogForAPIFormat(apiFormat int32) map[string]CatalogModel {
 		return alibabaBailian
 	case APIFormatSeedance:
 		return seedance
+	case APIFormatGoogle:
+		return google
 	default:
 		return nil
 	}

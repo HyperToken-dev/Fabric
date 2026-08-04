@@ -19,6 +19,7 @@ const (
 	rejectionStageInput      = "input"
 	rejectionStageOutput     = "output"
 	rejectionReasonSensitive = "sensitive"
+	rejectionReasonModel     = "model"
 )
 
 type integralLogInfo struct {
