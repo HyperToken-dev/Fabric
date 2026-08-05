@@ -16,8 +16,8 @@ type PromptRequest struct {
 }
 
 type interactionRequest struct {
-	Model string            `json:"model"`
-	Input []interactionItem `json:"input"`
+	Model string          `json:"model"`
+	Input json.RawMessage `json:"input"`
 }
 
 type interactionItem struct {
@@ -67,12 +67,33 @@ func parseInteractionPromptRequest(body []byte) (*PromptRequest, error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
 	}
-	return &PromptRequest{Model: req.Model, Prompts: interactionPromptTexts(req)}, nil
+	prompts, err := interactionPromptTexts(req)
+	if err != nil {
+		return nil, err
+	}
+	return &PromptRequest{Model: req.Model, Prompts: prompts}, nil
 }
 
-func interactionPromptTexts(req interactionRequest) []string {
+func interactionPromptTexts(req interactionRequest) ([]string, error) {
+	if len(req.Input) == 0 || string(req.Input) == "null" {
+		return nil, nil
+	}
+
+	var text string
+	if err := json.Unmarshal(req.Input, &text); err == nil {
+		if strings.TrimSpace(text) == "" {
+			return nil, nil
+		}
+		return []string{text}, nil
+	}
+
+	var items []interactionItem
+	if err := json.Unmarshal(req.Input, &items); err != nil {
+		return nil, fmt.Errorf("decode google interaction input: %w", err)
+	}
+
 	var prompts []string
-	for _, item := range req.Input {
+	for _, item := range items {
 		if item.Type != "user_input" && item.Type != "model_output" {
 			continue
 		}
@@ -82,5 +103,5 @@ func interactionPromptTexts(req interactionRequest) []string {
 			}
 		}
 	}
-	return prompts
+	return prompts, nil
 }

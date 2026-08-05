@@ -35,6 +35,39 @@ func TestExtractPromptRequestExtractsUserInputAndModelOutputText(t *testing.T) {
 	}
 }
 
+func TestExtractPromptRequestExtractsSimpleStringInput(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1beta/interactions", strings.NewReader(`{
+		"model":"gemini-3-flash-preview",
+		"input":"Hello, how are you?"
+	}`))
+
+	parsed, err := ExtractPromptRequest(req)
+	if err != nil {
+		t.Fatalf("ExtractPromptRequest() error = %v", err)
+	}
+	if parsed.Model != "gemini-3-flash-preview" {
+		t.Fatalf("Model = %q, want gemini-3-flash-preview", parsed.Model)
+	}
+	if len(parsed.Prompts) != 1 || parsed.Prompts[0] != "Hello, how are you?" {
+		t.Fatalf("Prompts = %#v, want simple input text", parsed.Prompts)
+	}
+}
+
+func TestExtractPromptRequestIgnoresBlankSimpleStringInput(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1beta/interactions", strings.NewReader(`{
+		"model":"gemini-3-flash-preview",
+		"input":" "
+	}`))
+
+	parsed, err := ExtractPromptRequest(req)
+	if err != nil {
+		t.Fatalf("ExtractPromptRequest() error = %v", err)
+	}
+	if len(parsed.Prompts) != 0 {
+		t.Fatalf("Prompts = %#v, want empty", parsed.Prompts)
+	}
+}
+
 func TestExtractPromptRequestIgnoresNonTextEmptyAndUnsupportedItems(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1beta/interactions", strings.NewReader(`{
 		"model":"gemini-3-flash-preview",
@@ -89,6 +122,16 @@ func TestExtractPromptRequestRestoresBody(t *testing.T) {
 
 func TestExtractPromptRequestMalformedJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1beta/interactions", strings.NewReader(`{"model":`))
+	if _, err := ExtractPromptRequest(req); err == nil {
+		t.Fatal("ExtractPromptRequest() error = nil, want error")
+	}
+}
+
+func TestExtractPromptRequestRejectsUnsupportedInputShape(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1beta/interactions", strings.NewReader(`{
+		"model":"gemini-3-flash-preview",
+		"input":{"text":"Hello"}
+	}`))
 	if _, err := ExtractPromptRequest(req); err == nil {
 		t.Fatal("ExtractPromptRequest() error = nil, want error")
 	}

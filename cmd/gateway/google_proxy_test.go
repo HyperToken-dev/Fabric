@@ -84,6 +84,48 @@ func TestGoogleProxyInteractionsForwardsWithProviderAuth(t *testing.T) {
 	}
 }
 
+func TestGoogleProxyInteractionsForwardsSimpleStringInput(t *testing.T) {
+	usageHandler := &recordingGoogleUsageHandler{ch: make(chan googleUsageRecord, 1)}
+	proxy, err := NewGoogleProxy(GoogleProxyOptions{
+		ModelStore:   fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}},
+		UsageHandler: usageHandler,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"input":"Hello, how are you?"`) {
+			t.Fatalf("forwarded body = %s, want simple input string", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":"2025-11-26T12:25:15Z","id":"v1_ChdPU0F4YWFtNkFwS2kxZThQZ05lbXdROBIXT1NBeGFhbTZBcEtpMWU4UGdOZW13UTg","model":"gemini-3-flash-preview","object":"interaction","steps":[{"type":"model_output","content":[{"type":"text","text":"Hello! I'm functioning perfectly and ready to assist you.\n\nHow are you doing today?"}]}],"status":"completed","updated":"2025-11-26T12:25:15Z","usage":{"input_tokens_by_modality":[{"modality":"text","tokens":7}],"total_cached_tokens":0,"total_input_tokens":7,"total_output_tokens":20,"total_thought_tokens":22,"total_tokens":49,"total_tool_use_tokens":0}}`))
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/interactions", strings.NewReader(`{"model":"gemini-3-flash-preview","input":"Hello, how are you?"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"object":"interaction"`) {
+		t.Fatalf("response body = %q, want upstream response", rec.Body.String())
+	}
+
+	usage := receiveGoogleUsageRecord(t, usageHandler.ch)
+	if usage.info.KeyID != 10 || usage.info.ChannelID != 20 || usage.info.ModelID != 42 || usage.info.Model != "gemini-3-flash-preview" {
+		t.Fatalf("usage context = %+v", usage.info)
+	}
+	if !strings.Contains(string(usage.rawBody), `"total_input_tokens":7`) {
+		t.Fatalf("usage raw body = %s", usage.rawBody)
+	}
+}
+
 func TestGoogleProxyInteractionsProcessesStreamingUsage(t *testing.T) {
 	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
 	usageHandler := &recordingGoogleUsageHandler{streamingCh: make(chan googleUsageRecord, 1)}
@@ -329,6 +371,10 @@ func TestGoogleProxySensitiveInputRejected(t *testing.T) {
 		{
 			name: "model output text",
 			body: `{"model":"gemini-3-flash-preview","input":[{"type":"model_output","content":[{"type":"text","text":"blocked"}]}]}`,
+		},
+		{
+			name: "simple string input",
+			body: `{"model":"gemini-3-flash-preview","input":"blocked"}`,
 		},
 	}
 
