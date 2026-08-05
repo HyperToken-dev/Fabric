@@ -84,6 +84,51 @@ func TestGoogleProxyInteractionsForwardsWithProviderAuth(t *testing.T) {
 	}
 }
 
+func TestGoogleProxyInteractionsProcessesStreamingUsage(t *testing.T) {
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	usageHandler := &recordingGoogleUsageHandler{streamingCh: make(chan googleUsageRecord, 1)}
+	proxy, err := NewGoogleProxy(GoogleProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 42, Status: ModelStatusActive}},
+		UsageHandler:       usageHandler,
+		IntegralLogHandler: integralLogs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	streamBody := "event: interaction.completed\n" +
+		"data:{\"interaction\":{\"usage\":{\"total_tokens\":64,\"total_input_tokens\":22,\"total_output_tokens\":8,\"total_thought_tokens\":34,\"total_tool_use_tokens\":0,\"total_cached_tokens\":0,\"input_tokens_by_modality\":[{\"modality\":\"text\",\"tokens\":22}]}},\"event_type\":\"interaction.completed\"}\n\n" +
+		"data: [DONE]\n\n"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(streamBody))
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/interactions", strings.NewReader(`{"model":"gemini-3-flash-preview","input":[{"type":"user_input","content":[{"type":"text","text":"hello"}]}]}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != streamBody {
+		t.Fatalf("response body = %q, want stream body", rec.Body.String())
+	}
+
+	usage := receiveGoogleUsageRecord(t, usageHandler.streamingCh)
+	if usage.info.KeyID != 10 || usage.info.ChannelID != 20 || usage.info.ModelID != 42 || usage.info.Model != "gemini-3-flash-preview" {
+		t.Fatalf("usage context = %+v", usage.info)
+	}
+	if string(usage.rawBody) != streamBody {
+		t.Fatalf("usage raw body = %q", usage.rawBody)
+	}
+
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if got.response != streamBody {
+		t.Fatalf("integral response = %q, want stream body", got.response)
+	}
+}
+
 func TestGoogleProxyInteractionsNormalizesUpstreamPath(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -358,11 +403,23 @@ type googleUsageRecord struct {
 }
 
 type recordingGoogleUsageHandler struct {
-	ch chan googleUsageRecord
+	ch          chan googleUsageRecord
+	streamingCh chan googleUsageRecord
 }
 
 func (h *recordingGoogleUsageHandler) ProcessInteractionResponse(ctx context.Context, rawBody []byte, info UsageContext) error {
+	if h.ch == nil {
+		h.ch = make(chan googleUsageRecord, 1)
+	}
 	h.ch <- googleUsageRecord{rawBody: append([]byte(nil), rawBody...), info: info}
+	return nil
+}
+
+func (h *recordingGoogleUsageHandler) ProcessInteractionStreamingResponse(ctx context.Context, decodedBody []byte, info UsageContext) error {
+	if h.streamingCh == nil {
+		h.streamingCh = make(chan googleUsageRecord, 1)
+	}
+	h.streamingCh <- googleUsageRecord{rawBody: append([]byte(nil), decodedBody...), info: info}
 	return nil
 }
 

@@ -39,6 +39,7 @@ type GoogleProxyOptions struct {
 
 type GoogleUsageHandler interface {
 	ProcessInteractionResponse(ctx context.Context, rawBody []byte, info UsageContext) error
+	ProcessInteractionStreamingResponse(ctx context.Context, decodedBody []byte, info UsageContext) error
 }
 
 func NewGoogleProxy(opts GoogleProxyOptions) (*GoogleProxy, error) {
@@ -80,7 +81,11 @@ func (p *GoogleProxy) onComplete(resp *http.Response, decodedBody []byte) {
 		DecodeOK:                decodedBody != nil,
 	}
 	if decodedBody != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-		go p.processUsageAsync(decodedBody, keyID, channelID, modelID, model)
+		if strings.Contains(strings.ToLower(contentType), "text/event-stream") {
+			go p.processStreamingUsageAsync(decodedBody, keyID, channelID, modelID, model)
+		} else {
+			go p.processUsageAsync(decodedBody, keyID, channelID, modelID, model)
+		}
 	}
 	go processIntegralLogAsync(p.integralLogs, resp.Request, info, decodedBody)
 }
@@ -219,6 +224,21 @@ func (p *GoogleProxy) processUsageAsync(rawBody []byte, keyID int32, channelID i
 	zap.L().Info("google usage processed", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
 }
 
+func (p *GoogleProxy) processStreamingUsageAsync(decodedBody []byte, keyID int32, channelID int32, modelID int32, model string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if modelID == 0 {
+		zap.L().Error("missing resolved model id for google streaming usage", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.String("model", model))
+		return
+	}
+	if err := p.usageHandler.ProcessInteractionStreamingResponse(ctx, decodedBody, UsageContext{KeyID: keyID, ChannelID: channelID, ModelID: modelID, Model: model}); err != nil {
+		zap.L().Error("process google streaming usage failed", zap.Error(err), zap.String("raw_body_prefix", bodyPrefix(decodedBody, 128)), zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
+		return
+	}
+	zap.L().Info("google streaming usage processed", zap.Int32("key_id", keyID), zap.Int32("channel_id", channelID), zap.Int32("model_id", modelID), zap.String("model", model))
+}
+
 func isGoogleInteractionsRequest(r *http.Request, baseURL string) bool {
 	if r.Method != http.MethodPost {
 		return false
@@ -242,5 +262,9 @@ func googleEffectivePath(baseURL string, requestPath string) string {
 type NoopGoogleUsageHandler struct{}
 
 func (NoopGoogleUsageHandler) ProcessInteractionResponse(ctx context.Context, rawBody []byte, info UsageContext) error {
+	return nil
+}
+
+func (NoopGoogleUsageHandler) ProcessInteractionStreamingResponse(ctx context.Context, decodedBody []byte, info UsageContext) error {
 	return nil
 }

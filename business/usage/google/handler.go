@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/HyperToken-dev/fabric/business/usage"
 )
@@ -12,6 +13,13 @@ var errMissingGoogleUsage = errors.New("missing google usage")
 
 type interactionResponse struct {
 	Usage *interactionUsage `json:"usage"`
+}
+
+type interactionStreamEvent struct {
+	Interaction struct {
+		Usage *interactionUsage `json:"usage"`
+	} `json:"interaction"`
+	EventType string `json:"event_type"`
 }
 
 type interactionUsage struct {
@@ -32,12 +40,56 @@ type modalityTokenUsage struct {
 func ExtractInteraction(rawBody []byte) (*usage.Usage, error) {
 	var resp interactionResponse
 	if err := json.Unmarshal(rawBody, &resp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode google interaction response: %w", err)
 	}
 	if resp.Usage == nil {
 		return nil, errMissingGoogleUsage
 	}
 	return googleUsageToUsage(resp.Usage)
+}
+
+func ExtractInteractionStreaming(decodedBody []byte) (*usage.Usage, error) {
+	blocks := strings.Split(strings.ReplaceAll(string(decodedBody), "\r\n", "\n"), "\n\n")
+	for _, block := range blocks {
+		event := ""
+		var data strings.Builder
+		for _, rawLine := range strings.Split(block, "\n") {
+			line := strings.TrimRight(rawLine, "\r")
+			if strings.HasPrefix(line, "event:") {
+				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+				continue
+			}
+			if strings.HasPrefix(line, "data:") {
+				if data.Len() > 0 {
+					data.WriteByte('\n')
+				}
+				data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+				continue
+			}
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+				data.WriteString(line)
+			}
+		}
+
+		body := strings.TrimSpace(data.String())
+		if body == "" || body == "[DONE]" {
+			continue
+		}
+
+		var parsed interactionStreamEvent
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			return nil, fmt.Errorf("decode google interaction stream event: %w", err)
+		}
+		if event != "interaction.completed" && parsed.EventType != "interaction.completed" {
+			continue
+		}
+		if parsed.Interaction.Usage == nil {
+			return nil, errMissingGoogleUsage
+		}
+		return googleUsageToUsage(parsed.Interaction.Usage)
+	}
+	return nil, errMissingGoogleUsage
 }
 
 func googleUsageToUsage(parsed *interactionUsage) (*usage.Usage, error) {
