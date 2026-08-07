@@ -23,9 +23,10 @@ volumes:
 
 services:
   fabric:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: funeralsawa/fabric:latest
+    # build: #local build
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: fabric
     volumes:
       - ./configs/config.docker.yaml:/app/configs/config.yaml:ro
