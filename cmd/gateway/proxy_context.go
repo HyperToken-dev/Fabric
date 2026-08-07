@@ -12,6 +12,7 @@ const (
 	ProviderOpenAI   Provider = "openai"
 	ProviderAlibaba  Provider = "alibaba"
 	ProviderSeedance Provider = "seedance"
+	ProviderGoogle   Provider = "google"
 )
 
 type contextKey string
