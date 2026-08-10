@@ -9,13 +9,15 @@ export const API_FORMATS = {
     2: 'Alibaba Bailian',
     3: 'Seedance',
     4: 'Google',
+    5: 'Extrotec',
 } as const;
-export const CATALOG_API_FORMATS = new Set<number>([1, 2, 3, 4]);
+export const CATALOG_API_FORMATS = new Set<number>([1, 2, 3, 4, 5]);
 export const API_FORMAT_DEFAULT_BASE_URLS: Record<number, string> = {
     1: 'https://api.openai.com',
     2: 'https://dashscope.aliyuncs.com',
     3: 'https://ark.cn-beijing.volces.com',
     4: 'https://generativelanguage.googleapis.com',
+    5: 'https://api.extrotec.com',
 };
 
 export type Channel = {
