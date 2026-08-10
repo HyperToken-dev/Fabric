@@ -10,6 +10,8 @@ export const messages: Record<Language, Record<string, string>> = {
     'en-US': {
         'language.english': 'EN',
         'language.chinese': '中',
+        'language.label': 'Language',
+        'language.toggleAria': 'Switch language to {language}',
         'common.retry': 'Retry',
         'common.cancel': 'Cancel',
         'common.save': 'Save',
@@ -260,6 +262,8 @@ export const messages: Record<Language, Record<string, string>> = {
     'zh-CN': {
         'language.english': 'EN',
         'language.chinese': '中',
+        'language.label': '语言',
+        'language.toggleAria': '切换语言到 {language}',
         'common.retry': '重试',
         'common.cancel': '取消',
         'common.save': '保存',

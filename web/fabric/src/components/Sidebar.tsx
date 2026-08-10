@@ -3,12 +3,13 @@ import {
     Boxes,
     FileJson,
     KeyRound,
+    Languages,
     LayoutDashboard,
     Radio,
     ShieldAlert,
 } from 'lucide-react';
 import type { NavigationItem } from '../types';
-import { useI18n, type Language } from '../i18n';
+import { useI18n } from '../i18n';
 
 interface SidebarProps {
     activeTab: string;
@@ -25,13 +26,18 @@ const navItems: NavigationItem[] = [
     { id: 'sensitive-words', label: 'nav.sensitiveWords', icon: ShieldAlert },
 ];
 
-const languages: { language: Language; labelKey: string }[] = [
-    { language: 'en-US', labelKey: 'language.english' },
-    { language: 'zh-CN', labelKey: 'language.chinese' },
-];
-
 export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     const { language, setLanguage, t } = useI18n();
+    const nextLanguage = language === 'en-US' ? 'zh-CN' : 'en-US';
+    const currentLanguageLabel =
+        language === 'en-US' ? t('language.english') : t('language.chinese');
+    const nextLanguageLabel =
+        nextLanguage === 'en-US' ? t('language.english') : t('language.chinese');
+    const languageButtonLabel = t('language.toggleAria', { language: nextLanguageLabel });
+
+    function toggleLanguage() {
+        setLanguage(nextLanguage);
+    }
 
     return (
         <aside className="w-full bg-gradient-to-b from-emerald-50 via-teal-50 to-white text-slate-600 flex flex-col border-r border-emerald-100 md:h-screen md:w-64 md:fixed md:top-0 md:left-0">
@@ -43,29 +49,13 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                         className="h-full w-full object-contain"
                     />
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0">
                     <span className="block text-lg font-bold leading-tight tracking-tight text-emerald-950">
                         Fabric
                     </span>
                     <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-600">
                         HyperToken
                     </span>
-                </div>
-                <div className="flex shrink-0 overflow-hidden rounded-full border border-emerald-200 bg-white/70 p-0.5 text-[11px] font-bold text-emerald-700 shadow-sm">
-                    {languages.map((item) => (
-                        <button
-                            key={item.language}
-                            type="button"
-                            onClick={() => setLanguage(item.language)}
-                            className={`rounded-full px-2 py-1 transition ${
-                                language === item.language
-                                    ? 'bg-emerald-600 text-white shadow-sm'
-                                    : 'hover:bg-emerald-50'
-                            }`}
-                        >
-                            {t(item.labelKey)}
-                        </button>
-                    ))}
                 </div>
             </div>
 
@@ -88,9 +78,32 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                         </button>
                     );
                 })}
+                <button
+                    type="button"
+                    onClick={toggleLanguage}
+                    className="flex shrink-0 items-center gap-2 rounded-xl border border-emerald-100 bg-white/70 px-4 py-3 font-semibold text-emerald-700 transition hover:bg-emerald-100 hover:text-emerald-900 md:hidden"
+                    aria-label={languageButtonLabel}
+                    title={languageButtonLabel}
+                >
+                    <Languages size={20} />
+                    <span className="text-xs">{currentLanguageLabel}</span>
+                </button>
             </nav>
 
             <div className="hidden p-4 border-t border-emerald-100 md:block">
+                <button
+                    type="button"
+                    onClick={toggleLanguage}
+                    className="mb-3 flex w-full items-center justify-between rounded-xl border border-emerald-100 bg-white/70 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 hover:text-emerald-900"
+                    aria-label={languageButtonLabel}
+                    title={languageButtonLabel}
+                >
+                    <span className="inline-flex items-center gap-2">
+                        <Languages size={18} />
+                        {t('language.label')}
+                    </span>
+                    <span className="text-xs font-bold">{currentLanguageLabel}</span>
+                </button>
                 <div className="flex items-center gap-3 px-4 py-3">
                     <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-sm font-bold text-white shadow-sm shadow-emerald-200">
                         AD
