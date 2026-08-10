@@ -28,6 +28,7 @@ type I18nContextValue = {
 };
 
 const I18nContext = createContext<I18nContextValue | null>(null);
+const translationErrorPrefix = 'i18n:';
 
 function isLanguage(value: string | null): value is Language {
     return supportedLanguages.includes(value as Language);
@@ -92,6 +93,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
     const formatErrorMessage = useCallback(
         function formatErrorMessage(message: string): string {
+            if (message.startsWith(translationErrorPrefix)) {
+                return t(message.slice(translationErrorPrefix.length));
+            }
             if (message === messages[defaultLanguage]['rpc.unreachable'])
                 return t('rpc.unreachable');
             if (message === messages[defaultLanguage]['rpc.failed']) return t('rpc.failed');

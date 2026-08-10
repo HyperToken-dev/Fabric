@@ -68,11 +68,11 @@ export default function ChannelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('channels.loadError'),
+                            : 'i18n:channels.loadError',
                     );
             });
         return () => controller.abort();
-    }, [version, t]);
+    }, [version]);
 
     function channelStatusLabel(status: number): string {
         if (status === 1) return t('status.active');
@@ -117,7 +117,7 @@ export default function ChannelsPage() {
             setDraft(newDraft());
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('channels.createError'),
+                requestError instanceof Error ? requestError.message : 'i18n:channels.createError',
             );
         } finally {
             setSaving(false);
@@ -156,7 +156,7 @@ export default function ChannelsPage() {
             setEditing(null);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('channels.updateError'),
+                requestError instanceof Error ? requestError.message : 'i18n:channels.updateError',
             );
         } finally {
             setSaving(false);

@@ -41,12 +41,12 @@ export default function Dashboard() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('dashboard.loadError'),
+                            : 'i18n:dashboard.loadError',
                     );
                 }
             });
         return () => controller.abort();
-    }, [requestVersion, t]);
+    }, [requestVersion]);
 
     if (!dashboard && !error) {
         return (

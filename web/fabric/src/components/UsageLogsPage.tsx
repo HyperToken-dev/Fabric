@@ -55,11 +55,11 @@ export default function UsageLogsPage() {
                     setSummaryError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('usage.summaryError'),
+                            : 'i18n:usage.summaryError',
                     );
             });
         return () => controller.abort();
-    }, [summaryVersion, t]);
+    }, [summaryVersion]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -78,11 +78,11 @@ export default function UsageLogsPage() {
                     setChannelsError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('usage.channelsError'),
+                            : 'i18n:usage.channelsError',
                     );
             });
         return () => controller.abort();
-    }, [summaryVersion, t]);
+    }, [summaryVersion]);
 
     useEffect(() => {
         setLogs(null);
@@ -115,14 +115,14 @@ export default function UsageLogsPage() {
                     setQueryError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('usage.optionsError'),
+                            : 'i18n:usage.optionsError',
                     );
             })
             .finally(() => {
                 if (!controller.signal.aborted) setOptionsLoading(false);
             });
         return () => controller.abort();
-    }, [channelId, mode, t]);
+    }, [channelId, mode]);
 
     async function submit(event: FormEvent) {
         event.preventDefault();
@@ -170,7 +170,7 @@ export default function UsageLogsPage() {
             setActiveFilter(filter);
         } catch (requestError) {
             setQueryError(
-                requestError instanceof Error ? requestError.message : t('usage.queryError'),
+                requestError instanceof Error ? requestError.message : 'i18n:usage.queryError',
             );
         } finally {
             setLoading(false);

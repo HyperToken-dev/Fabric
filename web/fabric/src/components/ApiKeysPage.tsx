@@ -48,11 +48,11 @@ export default function ApiKeysPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('apiKeys.loadChannelsError'),
+                            : 'i18n:apiKeys.loadChannelsError',
                     );
             });
         return () => controller.abort();
-    }, [version, t]);
+    }, [version]);
     useEffect(() => {
         if (!channelId) {
             setKeys([]);
@@ -68,11 +68,11 @@ export default function ApiKeysPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('apiKeys.loadError'),
+                            : 'i18n:apiKeys.loadError',
                     );
             });
         return () => controller.abort();
-    }, [channelId, version, t]);
+    }, [channelId, version]);
     async function submit(event: FormEvent) {
         event.preventDefault();
         if (!channelId || !keyName.trim() || saving) return;
@@ -89,7 +89,7 @@ export default function ApiKeysPage() {
             ]);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('apiKeys.createError'),
+                requestError instanceof Error ? requestError.message : 'i18n:apiKeys.createError',
             );
         } finally {
             setSaving(false);
@@ -104,7 +104,7 @@ export default function ApiKeysPage() {
             setKeys((current) => current?.filter((item) => item.keyHash !== key.keyHash) ?? null);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('apiKeys.revokeError'),
+                requestError instanceof Error ? requestError.message : 'i18n:apiKeys.revokeError',
             );
         } finally {
             setRevoking(null);
@@ -116,7 +116,7 @@ export default function ApiKeysPage() {
             await navigator.clipboard.writeText(created.rawKey);
             setCopied(true);
         } catch {
-            setError(t('apiKeys.clipboardDenied'));
+            setError('i18n:apiKeys.clipboardDenied');
         }
     }
     if (!channels && error)

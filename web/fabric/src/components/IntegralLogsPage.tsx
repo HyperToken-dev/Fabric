@@ -195,12 +195,12 @@ export default function IntegralLogsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('integral.loadError'),
+                            : 'i18n:integral.loadError',
                     );
                 }
             });
         return () => controller.abort();
-    }, [appliedKeyId, offset, version, t]);
+    }, [appliedKeyId, offset, version]);
 
     function applyFilter(event: FormEvent) {
         event.preventDefault();
@@ -214,7 +214,7 @@ export default function IntegralLogsPage() {
 
         const parsed = Number(trimmed);
         if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-            setError(t('integral.invalidKeyId'));
+            setError('i18n:integral.invalidKeyId');
             return;
         }
         setOffset(0);

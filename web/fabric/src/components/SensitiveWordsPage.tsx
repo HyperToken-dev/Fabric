@@ -63,12 +63,12 @@ export default function SensitiveWordsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('sensitive.loadError'),
+                            : 'i18n:sensitive.loadError',
                     );
                 }
             });
         return () => controller.abort();
-    }, [version, t]);
+    }, [version]);
 
     useEffect(() => {
         if (!selectedName) {
@@ -89,12 +89,12 @@ export default function SensitiveWordsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('sensitive.loadDictionaryError'),
+                            : 'i18n:sensitive.loadDictionaryError',
                     );
                 }
             });
         return () => controller.abort();
-    }, [selectedName, version, t]);
+    }, [selectedName, version]);
 
     async function toggleGlobalEnabled() {
         if (!status || saving) return;
@@ -107,7 +107,7 @@ export default function SensitiveWordsPage() {
             setError(
                 requestError instanceof Error
                     ? requestError.message
-                    : t('sensitive.updateDetectionError'),
+                    : 'i18n:sensitive.updateDetectionError',
             );
         } finally {
             setSaving(false);
@@ -119,7 +119,7 @@ export default function SensitiveWordsPage() {
         if (saving) return;
         const name = newName.trim();
         if (!name) {
-            setError(t('sensitive.nameRequired'));
+            setError('i18n:sensitive.nameRequired');
             return;
         }
         setSaving(true);
@@ -150,7 +150,7 @@ export default function SensitiveWordsPage() {
             setVersion((value) => value + 1);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('sensitive.createError'),
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.createError',
             );
         } finally {
             setSaving(false);
@@ -171,7 +171,7 @@ export default function SensitiveWordsPage() {
             setError(
                 requestError instanceof Error
                     ? requestError.message
-                    : t('sensitive.updateModelsError'),
+                    : 'i18n:sensitive.updateModelsError',
             );
         } finally {
             setSaving(false);
@@ -192,7 +192,7 @@ export default function SensitiveWordsPage() {
             setError(
                 requestError instanceof Error
                     ? requestError.message
-                    : t('sensitive.updateStatusError'),
+                    : 'i18n:sensitive.updateStatusError',
             );
         } finally {
             setSaving(false);
@@ -211,7 +211,7 @@ export default function SensitiveWordsPage() {
             setNewWordsText('');
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('sensitive.addError'),
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.addError',
             );
         } finally {
             setSaving(false);
@@ -227,7 +227,7 @@ export default function SensitiveWordsPage() {
             updateSelected(dictionary);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('sensitive.removeError'),
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.removeError',
             );
         } finally {
             setSaving(false);
@@ -249,7 +249,7 @@ export default function SensitiveWordsPage() {
             setVersion((value) => value + 1);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('sensitive.deleteError'),
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.deleteError',
             );
         } finally {
             setSaving(false);

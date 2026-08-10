@@ -64,11 +64,11 @@ export default function ModelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('models.loadChannelsError'),
+                            : 'i18n:models.loadChannelsError',
                     );
             });
         return () => controller.abort();
-    }, [version, t]);
+    }, [version]);
     useEffect(() => {
         if (!channelId) {
             setModels([]);
@@ -84,11 +84,11 @@ export default function ModelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('models.loadModelsError'),
+                            : 'i18n:models.loadModelsError',
                     );
             });
         return () => controller.abort();
-    }, [channelId, version, t]);
+    }, [channelId, version]);
 
     useEffect(() => {
         if (!supportsCatalog || !selectedChannel) {
@@ -113,11 +113,11 @@ export default function ModelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : t('models.loadCatalogError'),
+                            : 'i18n:models.loadCatalogError',
                     );
             });
         return () => controller.abort();
-    }, [selectedChannel, supportsCatalog, version, t]);
+    }, [selectedChannel, supportsCatalog, version]);
 
     function modelStatusLabel(value: number): string {
         if (value === 1) return t('model.status.active');
@@ -161,7 +161,7 @@ export default function ModelsPage() {
             setModelName('');
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('models.createError'),
+                requestError instanceof Error ? requestError.message : 'i18n:models.createError',
             );
         } finally {
             setSaving(false);
@@ -189,7 +189,9 @@ export default function ModelsPage() {
             );
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : t('models.addCatalogError'),
+                requestError instanceof Error
+                    ? requestError.message
+                    : 'i18n:models.addCatalogError',
             );
         } finally {
             setAddingCatalog(false);
