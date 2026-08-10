@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useState,
+    type ReactNode,
+} from 'react';
 import {
     defaultLanguage,
     languageStorageKey,
@@ -43,53 +51,77 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         window.localStorage.setItem(languageStorageKey, language);
+        document.documentElement.lang = language;
     }, [language]);
 
-    function setLanguage(nextLanguage: Language) {
+    const setLanguage = useCallback(function setLanguage(nextLanguage: Language) {
         setLanguageState(nextLanguage);
-    }
+    }, []);
 
-    function t(key: string, values?: TranslationValues): string {
-        const message = messages[language][key] ?? messages[defaultLanguage][key] ?? key;
-        return interpolate(message, values);
-    }
-
-    function formatNumber(value: number): string {
-        return new Intl.NumberFormat(language).format(value);
-    }
-
-    function formatCompactNumber(value: number): string {
-        return new Intl.NumberFormat(language, {
-            notation: 'compact',
-            maximumFractionDigits: 1,
-        }).format(value);
-    }
-
-    function formatDate(value: string | number | Date): string {
-        return new Date(value).toLocaleString(language);
-    }
-
-    function formatErrorMessage(message: string): string {
-        if (message === messages[defaultLanguage]['rpc.unreachable']) return t('rpc.unreachable');
-        if (message === messages[defaultLanguage]['rpc.failed']) return t('rpc.failed');
-        return message;
-    }
-
-    return (
-        <I18nContext.Provider
-            value={{
-                language,
-                setLanguage,
-                t,
-                formatNumber,
-                formatCompactNumber,
-                formatDate,
-                formatErrorMessage,
-            }}
-        >
-            {children}
-        </I18nContext.Provider>
+    const t = useCallback(
+        function t(key: string, values?: TranslationValues): string {
+            const message = messages[language][key] ?? messages[defaultLanguage][key] ?? key;
+            return interpolate(message, values);
+        },
+        [language],
     );
+
+    const formatNumber = useCallback(
+        function formatNumber(value: number): string {
+            return new Intl.NumberFormat(language).format(value);
+        },
+        [language],
+    );
+
+    const formatCompactNumber = useCallback(
+        function formatCompactNumber(value: number): string {
+            return new Intl.NumberFormat(language, {
+                notation: 'compact',
+                maximumFractionDigits: 1,
+            }).format(value);
+        },
+        [language],
+    );
+
+    const formatDate = useCallback(
+        function formatDate(value: string | number | Date): string {
+            return new Date(value).toLocaleString(language);
+        },
+        [language],
+    );
+
+    const formatErrorMessage = useCallback(
+        function formatErrorMessage(message: string): string {
+            if (message === messages[defaultLanguage]['rpc.unreachable'])
+                return t('rpc.unreachable');
+            if (message === messages[defaultLanguage]['rpc.failed']) return t('rpc.failed');
+            return message;
+        },
+        [t],
+    );
+
+    const value = useMemo(
+        () => ({
+            language,
+            setLanguage,
+            t,
+            formatNumber,
+            formatCompactNumber,
+            formatDate,
+            formatErrorMessage,
+        }),
+        [
+            language,
+            setLanguage,
+            t,
+            formatNumber,
+            formatCompactNumber,
+            formatDate,
+            formatErrorMessage,
+        ],
+    );
+
+    return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
 export function useI18n(): I18nContextValue {
