@@ -40,7 +40,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/fabric
+          images: ghcr.io/${{ github.repository_owner }}/fabric
           flavor: |
             latest=auto
           tags: |
