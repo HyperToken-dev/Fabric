@@ -20,13 +20,13 @@ import {
     PageHeader,
     RefreshWarning,
 } from './PageState';
+import { useI18n } from '../i18n';
 
 type QueryMode = 'channel' | 'model' | 'key' | 'deadline';
 type DeadlinePreset = '1' | '7' | '30' | '90';
 
-const formatter = new Intl.NumberFormat('en-US');
-
 export default function UsageLogsPage() {
+    const { t, formatNumber, formatDate } = useI18n();
     const [summary, setSummary] = useState<UsageSummary | null>(null);
     const [summaryError, setSummaryError] = useState<string | null>(null);
     const [summaryVersion, setSummaryVersion] = useState(0);
@@ -55,11 +55,11 @@ export default function UsageLogsPage() {
                     setSummaryError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load usage summary',
+                            : t('usage.summaryError'),
                     );
             });
         return () => controller.abort();
-    }, [summaryVersion]);
+    }, [summaryVersion, t]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -78,11 +78,11 @@ export default function UsageLogsPage() {
                     setChannelsError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load channels',
+                            : t('usage.channelsError'),
                     );
             });
         return () => controller.abort();
-    }, [summaryVersion]);
+    }, [summaryVersion, t]);
 
     useEffect(() => {
         setLogs(null);
@@ -115,14 +115,14 @@ export default function UsageLogsPage() {
                     setQueryError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load filter options',
+                            : t('usage.optionsError'),
                     );
             })
             .finally(() => {
                 if (!controller.signal.aborted) setOptionsLoading(false);
             });
         return () => controller.abort();
-    }, [channelId, mode]);
+    }, [channelId, mode, t]);
 
     async function submit(event: FormEvent) {
         event.preventDefault();
@@ -138,29 +138,39 @@ export default function UsageLogsPage() {
         try {
             const channel = channels?.find((item) => item.channelId === channelId);
             let result: UsageLog[];
-            let filter = `Channel: ${channel?.channelName ?? channelId}`;
+            let filter = t('usage.filterChannel', { value: channel?.channelName ?? channelId });
             if (mode === 'channel') {
                 result = await getUsageByChannelId(channelId);
             } else if (mode === 'model' && modelId) {
                 const model = models.find((item) => item.modelId === modelId);
                 result = await getUsageByModelId(modelId);
-                filter = `Model: ${model?.modelName ?? modelId} · ${channel?.channelName ?? channelId}`;
+                filter = t('usage.filterModel', {
+                    model: model?.modelName ?? modelId,
+                    channel: channel?.channelName ?? channelId,
+                });
             } else if (mode === 'key') {
                 const key = keys.find((item) => item.keyHash === keyHash);
                 result = await getUsageByKeyHash(keyHash);
-                filter = `API key: ${key?.keyName ?? 'Selected key'} · ${channel?.channelName ?? channelId}`;
+                filter = t('usage.filterKey', {
+                    key: key?.keyName ?? t('usage.selectedKey'),
+                    channel: channel?.channelName ?? channelId,
+                });
             } else {
                 const days = Number(deadlinePreset);
                 const deadline = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
                 const key = keys.find((item) => item.keyHash === keyHash);
                 result = await getUsageByDeadlineAndKeyHash(keyHash, deadline);
-                filter = `${key?.keyName ?? 'Selected key'} · Last ${days} day${days === 1 ? '' : 's'}`;
+                filter = t('usage.filterDeadline', {
+                    key: key?.keyName ?? t('usage.selectedKey'),
+                    days,
+                    plural: days === 1 ? '' : 's',
+                });
             }
             setLogs(result);
             setActiveFilter(filter);
         } catch (requestError) {
             setQueryError(
-                requestError instanceof Error ? requestError.message : 'Unable to query usage',
+                requestError instanceof Error ? requestError.message : t('usage.queryError'),
             );
         } finally {
             setLoading(false);
@@ -170,21 +180,21 @@ export default function UsageLogsPage() {
     const stats = summary
         ? [
               {
-                  label: 'Prompt tokens',
+                  label: t('usage.promptTokens'),
                   value: summary.promptTokens,
                   icon: Cpu,
                   color: 'text-emerald-600',
                   surface: 'bg-emerald-50',
               },
               {
-                  label: 'Completion tokens',
+                  label: t('usage.completionTokens'),
                   value: summary.completionTokens,
                   icon: Zap,
                   color: 'text-amber-600',
                   surface: 'bg-amber-50',
               },
               {
-                  label: 'Total tokens',
+                  label: t('usage.totalTokens'),
                   value: summary.totalTokens,
                   icon: Activity,
                   color: 'text-teal-700',
@@ -200,9 +210,9 @@ export default function UsageLogsPage() {
     return (
         <div className="mx-auto max-w-7xl space-y-6 p-5 md:p-8">
             <PageHeader
-                eyebrow="Traffic audit"
-                title="Usage Logs"
-                description="Choose a resource to inspect. No IDs or hashes required."
+                eyebrow={t('usage.eyebrow')}
+                title={t('usage.title')}
+                description={t('usage.description')}
             />
             {summaryError && summary && (
                 <RefreshWarning
@@ -231,7 +241,7 @@ export default function UsageLogsPage() {
                             </div>
                             <p className="mt-4 text-sm text-slate-500">{label}</p>
                             <p className="mt-1 text-2xl font-bold text-slate-900">
-                                {formatter.format(value)}
+                                {formatNumber(value)}
                             </p>
                         </article>
                     ))}
@@ -245,8 +255,8 @@ export default function UsageLogsPage() {
             )}
             {channels?.length === 0 && (
                 <EmptyState
-                    title="No channels available"
-                    description="Create a channel before exploring usage records."
+                    title={t('usage.noChannelsTitle')}
+                    description={t('usage.noChannelsDescription')}
                 />
             )}
             {!!channels?.length && (
@@ -256,9 +266,9 @@ export default function UsageLogsPage() {
                             <Search size={19} />
                         </div>
                         <div>
-                            <h2 className="font-bold text-slate-900">Explore usage</h2>
+                            <h2 className="font-bold text-slate-900">{t('usage.explore')}</h2>
                             <p className="text-sm text-slate-500">
-                                Select from resources already configured in Fabric.
+                                {t('usage.exploreDescription')}
                             </p>
                         </div>
                     </div>
@@ -267,20 +277,20 @@ export default function UsageLogsPage() {
                         className="grid gap-3 lg:grid-cols-[180px_1fr_1fr_180px_auto] lg:items-end"
                     >
                         <label className="text-sm font-medium text-slate-700">
-                            View usage by
+                            {t('usage.viewBy')}
                             <select
                                 className={inputClass}
                                 value={mode}
                                 onChange={(event) => setMode(event.target.value as QueryMode)}
                             >
-                                <option value="channel">Channel</option>
-                                <option value="model">Model</option>
-                                <option value="key">API key</option>
-                                <option value="deadline">API key period</option>
+                                <option value="channel">{t('usage.byChannel')}</option>
+                                <option value="model">{t('usage.byModel')}</option>
+                                <option value="key">{t('usage.byKey')}</option>
+                                <option value="deadline">{t('usage.byDeadline')}</option>
                             </select>
                         </label>
                         <label className="text-sm font-medium text-slate-700">
-                            Channel
+                            {t('usage.channel')}
                             <select
                                 className={inputClass}
                                 value={channelId ?? ''}
@@ -295,7 +305,7 @@ export default function UsageLogsPage() {
                         </label>
                         {mode === 'model' && (
                             <label className="text-sm font-medium text-slate-700">
-                                Model
+                                {t('usage.model')}
                                 <select
                                     className={inputClass}
                                     disabled={optionsLoading || models.length === 0}
@@ -312,7 +322,7 @@ export default function UsageLogsPage() {
                         )}
                         {(mode === 'key' || mode === 'deadline') && (
                             <label className="text-sm font-medium text-slate-700">
-                                API key
+                                {t('usage.apiKey')}
                                 <select
                                     className={inputClass}
                                     disabled={optionsLoading || keys.length === 0}
@@ -330,7 +340,7 @@ export default function UsageLogsPage() {
                         {mode === 'channel' && <div />}
                         {mode === 'deadline' ? (
                             <label className="text-sm font-medium text-slate-700">
-                                Period
+                                {t('usage.period')}
                                 <select
                                     className={inputClass}
                                     value={deadlinePreset}
@@ -338,10 +348,10 @@ export default function UsageLogsPage() {
                                         setDeadlinePreset(event.target.value as DeadlinePreset)
                                     }
                                 >
-                                    <option value="1">Last 24 hours</option>
-                                    <option value="7">Last 7 days</option>
-                                    <option value="30">Last 30 days</option>
-                                    <option value="90">Last 90 days</option>
+                                    <option value="1">{t('usage.last24Hours')}</option>
+                                    <option value="7">{t('usage.lastDays', { days: 7 })}</option>
+                                    <option value="30">{t('usage.lastDays', { days: 30 })}</option>
+                                    <option value="90">{t('usage.lastDays', { days: 90 })}</option>
                                 </select>
                             </label>
                         ) : (
@@ -349,24 +359,22 @@ export default function UsageLogsPage() {
                         )}
                         <button disabled={!canSearch || loading} className={buttonClass}>
                             <Search size={16} className="mr-2" />
-                            {loading ? 'Loading...' : 'Show usage'}
+                            {loading ? t('common.loading') : t('usage.showUsage')}
                         </button>
                     </form>
                     {optionsLoading && (
-                        <p className="mt-3 text-xs text-slate-500">
-                            Loading available resources...
-                        </p>
+                        <p className="mt-3 text-xs text-slate-500">{t('usage.loadingResources')}</p>
                     )}
                     {!optionsLoading && mode === 'model' && models.length === 0 && (
                         <p className="mt-3 text-xs font-medium text-amber-700">
-                            This channel has no models to select.
+                            {t('usage.noModels')}
                         </p>
                     )}
                     {!optionsLoading &&
                         (mode === 'key' || mode === 'deadline') &&
                         keys.length === 0 && (
                             <p className="mt-3 text-xs font-medium text-amber-700">
-                                This channel has no API keys to select.
+                                {t('usage.noKeys')}
                             </p>
                         )}
                 </section>
@@ -380,31 +388,31 @@ export default function UsageLogsPage() {
             {loading && !logs && <div className="h-48 animate-pulse rounded-2xl bg-white" />}
             {logs?.length === 0 && (
                 <EmptyState
-                    title="No matching usage"
-                    description={`No records were returned for ${activeFilter}.`}
+                    title={t('usage.noMatchingTitle')}
+                    description={t('usage.noMatchingDescription', { filter: activeFilter })}
                 />
             )}
             {!!logs?.length && (
                 <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
                     <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
                         <div>
-                            <h2 className="font-bold text-slate-900">Results</h2>
+                            <h2 className="font-bold text-slate-900">{t('usage.results')}</h2>
                             <p className="text-xs text-slate-500">{activeFilter}</p>
                         </div>
                         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                            {logs.length} records
+                            {t('common.records', { count: logs.length })}
                         </span>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm">
                             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                                 <tr>
-                                    <th className="px-5 py-3">Created</th>
-                                    <th className="px-5 py-3">Channel</th>
-                                    <th className="px-5 py-3">Model</th>
-                                    <th className="px-5 py-3">Key</th>
-                                    <th className="px-5 py-3">Prompt</th>
-                                    <th className="px-5 py-3">Completion</th>
+                                    <th className="px-5 py-3">{t('usage.created')}</th>
+                                    <th className="px-5 py-3">{t('usage.channel')}</th>
+                                    <th className="px-5 py-3">{t('usage.model')}</th>
+                                    <th className="px-5 py-3">{t('usage.key')}</th>
+                                    <th className="px-5 py-3">{t('dashboard.prompt')}</th>
+                                    <th className="px-5 py-3">{t('dashboard.completion')}</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -412,8 +420,8 @@ export default function UsageLogsPage() {
                                     <tr key={log.usageId || `${log.modelId}-${index}`}>
                                         <td className="whitespace-nowrap px-5 py-4 text-slate-500">
                                             {log.createdAt
-                                                ? new Date(log.createdAt).toLocaleString()
-                                                : 'Aggregated'}
+                                                ? formatDate(log.createdAt)
+                                                : t('common.aggregated')}
                                         </td>
                                         <td className="px-5 py-4">{log.channelId || '-'}</td>
                                         <td className="px-5 py-4">{log.modelId || '-'}</td>
@@ -421,10 +429,10 @@ export default function UsageLogsPage() {
                                             <KeyRound size={14} className="text-slate-400" />
                                         </td>
                                         <td className="px-5 py-4 font-medium">
-                                            {formatter.format(log.promptTokens)}
+                                            {formatNumber(log.promptTokens)}
                                         </td>
                                         <td className="px-5 py-4 font-medium">
-                                            {formatter.format(log.completionTokens)}
+                                            {formatNumber(log.completionTokens)}
                                         </td>
                                     </tr>
                                 ))}

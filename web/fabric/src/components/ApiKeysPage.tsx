@@ -17,8 +17,10 @@ import {
     PageHeader,
     RefreshWarning,
 } from './PageState';
+import { useI18n } from '../i18n';
 
 export default function ApiKeysPage() {
+    const { t, formatDate } = useI18n();
     const [channels, setChannels] = useState<Channel[] | null>(null);
     const [channelId, setChannelId] = useState<number | null>(null);
     const [keys, setKeys] = useState<ApiKey[] | null>(null);
@@ -46,11 +48,11 @@ export default function ApiKeysPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load channels',
+                            : t('apiKeys.loadChannelsError'),
                     );
             });
         return () => controller.abort();
-    }, [version]);
+    }, [version, t]);
     useEffect(() => {
         if (!channelId) {
             setKeys([]);
@@ -66,11 +68,11 @@ export default function ApiKeysPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load API keys',
+                            : t('apiKeys.loadError'),
                     );
             });
         return () => controller.abort();
-    }, [channelId, version]);
+    }, [channelId, version, t]);
     async function submit(event: FormEvent) {
         event.preventDefault();
         if (!channelId || !keyName.trim() || saving) return;
@@ -87,14 +89,14 @@ export default function ApiKeysPage() {
             ]);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : 'Unable to create API key',
+                requestError instanceof Error ? requestError.message : t('apiKeys.createError'),
             );
         } finally {
             setSaving(false);
         }
     }
     async function revoke(key: ApiKey) {
-        if (revoking || !window.confirm(`Revoke ${key.keyName}? This cannot be undone.`)) return;
+        if (revoking || !window.confirm(t('apiKeys.revokeConfirm', { name: key.keyName }))) return;
         setRevoking(key.keyHash);
         setError(null);
         try {
@@ -102,7 +104,7 @@ export default function ApiKeysPage() {
             setKeys((current) => current?.filter((item) => item.keyHash !== key.keyHash) ?? null);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : 'Unable to revoke API key',
+                requestError instanceof Error ? requestError.message : t('apiKeys.revokeError'),
             );
         } finally {
             setRevoking(null);
@@ -114,7 +116,7 @@ export default function ApiKeysPage() {
             await navigator.clipboard.writeText(created.rawKey);
             setCopied(true);
         } catch {
-            setError('Clipboard access was denied');
+            setError(t('apiKeys.clipboardDenied'));
         }
     }
     if (!channels && error)
@@ -126,9 +128,9 @@ export default function ApiKeysPage() {
     return (
         <div className="mx-auto max-w-7xl space-y-6 p-5 md:p-8">
             <PageHeader
-                eyebrow="Client access"
-                title="API Keys"
-                description="Issue and revoke gateway credentials by channel."
+                eyebrow={t('apiKeys.eyebrow')}
+                title={t('apiKeys.title')}
+                description={t('apiKeys.description')}
             />
             {error && channels && (
                 <RefreshWarning message={error} retry={() => setVersion((value) => value + 1)} />
@@ -136,8 +138,8 @@ export default function ApiKeysPage() {
             {!channels && <LoadingCards />}
             {channels?.length === 0 && (
                 <EmptyState
-                    title="Create a channel first"
-                    description="API keys route traffic through an existing channel."
+                    title={t('apiKeys.createChannelFirst')}
+                    description={t('apiKeys.channelFirstDescription')}
                 />
             )}
             {!!channels?.length && (
@@ -148,7 +150,7 @@ export default function ApiKeysPage() {
                             className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
                         >
                             <label className="text-sm font-medium text-slate-700">
-                                Channel
+                                {t('apiKeys.channel')}
                                 <select
                                     className={inputClass}
                                     value={channelId ?? ''}
@@ -162,7 +164,7 @@ export default function ApiKeysPage() {
                                 </select>
                             </label>
                             <label className="text-sm font-medium text-slate-700">
-                                Key name
+                                {t('apiKeys.keyName')}
                                 <input
                                     className={inputClass}
                                     value={keyName}
@@ -172,15 +174,15 @@ export default function ApiKeysPage() {
                             </label>
                             <button disabled={saving} className={buttonClass}>
                                 <Plus size={16} className="mr-2" />
-                                {saving ? 'Creating...' : 'Create key'}
+                                {saving ? t('common.creating') : t('apiKeys.createKey')}
                             </button>
                         </form>
                     </section>
                     {!keys && <LoadingCards />}
                     {keys?.length === 0 && (
                         <EmptyState
-                            title="No API keys"
-                            description="Create a key for applications using this channel."
+                            title={t('apiKeys.emptyTitle')}
+                            description={t('apiKeys.emptyDescription')}
                         />
                     )}
                     {!!keys?.length && (
@@ -204,7 +206,9 @@ export default function ApiKeysPage() {
                                             {key.keyHash}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-400">
-                                            Created {new Date(key.createdAt).toLocaleString()}
+                                            {t('common.created', {
+                                                date: formatDate(key.createdAt),
+                                            })}
                                         </p>
                                     </div>
                                     <button
@@ -214,7 +218,9 @@ export default function ApiKeysPage() {
                                         className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
                                     >
                                         <Trash2 size={15} />
-                                        {revoking === key.keyHash ? 'Revoking...' : 'Revoke'}
+                                        {revoking === key.keyHash
+                                            ? t('apiKeys.revoking')
+                                            : t('apiKeys.revoke')}
                                     </button>
                                 </article>
                             ))}
@@ -233,27 +239,25 @@ export default function ApiKeysPage() {
                         <div className="flex items-start justify-between">
                             <div>
                                 <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">
-                                    Shown once
+                                    {t('apiKeys.shownOnce')}
                                 </p>
                                 <h2
                                     id="created-key-title"
                                     className="mt-1 text-xl font-bold text-slate-900"
                                 >
-                                    Store your API key now
+                                    {t('apiKeys.storeNow')}
                                 </h2>
                             </div>
                             <button
                                 type="button"
-                                aria-label="Close"
+                                aria-label={t('apiKeys.close')}
                                 onClick={() => setCreated(null)}
                                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
                             >
                                 <X size={18} />
                             </button>
                         </div>
-                        <p className="mt-3 text-sm text-slate-600">
-                            Fabric cannot retrieve this raw key again after you close this window.
-                        </p>
+                        <p className="mt-3 text-sm text-slate-600">{t('apiKeys.rawWarning')}</p>
                         <div className="mt-4 flex items-center gap-2 rounded-xl bg-slate-950 p-3 text-white">
                             <code className="min-w-0 flex-1 break-all text-xs">
                                 {created.rawKey}
@@ -262,20 +266,20 @@ export default function ApiKeysPage() {
                                 type="button"
                                 onClick={() => void copyRawKey()}
                                 className="shrink-0 rounded-lg bg-white/10 p-2"
-                                aria-label="Copy API key"
+                                aria-label={t('apiKeys.copy')}
                             >
                                 <Copy size={16} />
                             </button>
                         </div>
                         <p className="mt-2 text-xs font-medium text-emerald-600" aria-live="polite">
-                            {copied ? 'Copied to clipboard' : ''}
+                            {copied ? t('apiKeys.copied') : ''}
                         </p>
                         <button
                             type="button"
                             onClick={() => setCreated(null)}
                             className={`${buttonClass} mt-5 w-full`}
                         >
-                            I have stored the key
+                            {t('apiKeys.stored')}
                         </button>
                     </div>
                 </div>

@@ -1,16 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Sparkles } from 'lucide-react';
 import { API_FORMATS, CATALOG_API_FORMATS, listChannels, type Channel } from '../api/channels';
-import { enumLabel } from '../api/format';
 import {
     createModel,
     listCatalogModels,
     listModels,
-    MODEL_STATUSES,
-    MODEL_TYPES,
     type CatalogModel,
     type Model,
 } from '../api/models';
+import { useI18n } from '../i18n';
 import {
     buttonClass,
     EmptyState,
@@ -22,6 +20,7 @@ import {
 } from './PageState';
 
 export default function ModelsPage() {
+    const { t } = useI18n();
     const [channels, setChannels] = useState<Channel[] | null>(null);
     const [channelId, setChannelId] = useState<number | null>(null);
     const [models, setModels] = useState<Model[] | null>(null);
@@ -37,8 +36,9 @@ export default function ModelsPage() {
 
     const selectedChannel = channels?.find((channel) => channel.channelId === channelId) ?? null;
     const providerLabel = selectedChannel
-        ? enumLabel(selectedChannel.apiFormat, API_FORMATS)
-        : 'No provider';
+        ? (API_FORMATS[selectedChannel.apiFormat as keyof typeof API_FORMATS] ??
+          t('common.unknown', { value: selectedChannel.apiFormat }))
+        : t('models.noProvider');
     const supportsCatalog = selectedChannel
         ? CATALOG_API_FORMATS.has(selectedChannel.apiFormat)
         : false;
@@ -64,11 +64,11 @@ export default function ModelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load channels',
+                            : t('models.loadChannelsError'),
                     );
             });
         return () => controller.abort();
-    }, [version]);
+    }, [version, t]);
     useEffect(() => {
         if (!channelId) {
             setModels([]);
@@ -84,11 +84,11 @@ export default function ModelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load models',
+                            : t('models.loadModelsError'),
                     );
             });
         return () => controller.abort();
-    }, [channelId, version]);
+    }, [channelId, version, t]);
 
     useEffect(() => {
         if (!supportsCatalog || !selectedChannel) {
@@ -113,11 +113,23 @@ export default function ModelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load catalog models',
+                            : t('models.loadCatalogError'),
                     );
             });
         return () => controller.abort();
-    }, [selectedChannel, supportsCatalog, version]);
+    }, [selectedChannel, supportsCatalog, version, t]);
+
+    function modelStatusLabel(value: number): string {
+        if (value === 1) return t('model.status.active');
+        if (value === 2) return t('model.status.banned');
+        return t('common.unknown', { value });
+    }
+
+    function modelTypeLabel(value: number): string {
+        if (value === 1) return t('model.type.text');
+        if (value === 2) return t('model.type.video');
+        return t('common.unknown', { value });
+    }
 
     useEffect(() => {
         if (!supportsCatalog) return;
@@ -149,7 +161,7 @@ export default function ModelsPage() {
             setModelName('');
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : 'Unable to create model',
+                requestError instanceof Error ? requestError.message : t('models.createError'),
             );
         } finally {
             setSaving(false);
@@ -177,9 +189,7 @@ export default function ModelsPage() {
             );
         } catch (requestError) {
             setError(
-                requestError instanceof Error
-                    ? requestError.message
-                    : 'Unable to add catalog model',
+                requestError instanceof Error ? requestError.message : t('models.addCatalogError'),
             );
         } finally {
             setAddingCatalog(false);
@@ -195,9 +205,9 @@ export default function ModelsPage() {
     return (
         <div className="mx-auto max-w-7xl space-y-6 p-5 md:p-8">
             <PageHeader
-                eyebrow="Model catalog"
-                title="Models"
-                description="Register model names under an upstream channel."
+                eyebrow={t('models.eyebrow')}
+                title={t('models.title')}
+                description={t('models.description')}
             />
             {error && channels && (
                 <RefreshWarning message={error} retry={() => setVersion((value) => value + 1)} />
@@ -205,8 +215,8 @@ export default function ModelsPage() {
             {!channels && <LoadingCards />}
             {channels?.length === 0 && (
                 <EmptyState
-                    title="Create a channel first"
-                    description="Models must belong to an existing upstream channel."
+                    title={t('models.createChannelFirst')}
+                    description={t('models.channelFirstDescription')}
                 />
             )}
             {!!channels?.length && (
@@ -215,7 +225,7 @@ export default function ModelsPage() {
                         <div className="border-b border-slate-100 bg-slate-50/70 p-5">
                             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
                                 <label className="text-sm font-medium text-slate-700">
-                                    Channel
+                                    {t('models.channel')}
                                     <select
                                         className={inputClass}
                                         value={channelId ?? ''}
@@ -235,7 +245,7 @@ export default function ModelsPage() {
                                 </label>
                                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
                                     <span className="font-semibold text-slate-900">
-                                        {selectedChannel?.channelName ?? 'No channel'}
+                                        {selectedChannel?.channelName ?? t('models.noChannel')}
                                     </span>
                                     <span className="mx-2 text-slate-300">/</span>
                                     {providerLabel}
@@ -253,38 +263,40 @@ export default function ModelsPage() {
                                             <div>
                                                 <div className="mb-2 inline-flex items-center rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-emerald-700 shadow-sm shadow-emerald-900/5">
                                                     <Sparkles size={13} className="mr-1.5" />
-                                                    Official catalog
+                                                    {t('models.officialCatalog')}
                                                 </div>
                                                 <h2 className="text-lg font-black text-emerald-950">
-                                                    Pick a known {providerLabel} model
+                                                    {t('models.pickKnown', {
+                                                        provider: providerLabel,
+                                                    })}
                                                 </h2>
                                                 <p className="mt-1 max-w-xl text-sm text-emerald-800">
-                                                    Add official model names to this channel without
-                                                    typing them manually.
+                                                    {t('models.catalogDescription')}
                                                 </p>
                                             </div>
                                             {catalogModels && (
                                                 <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-emerald-700 shadow-sm shadow-emerald-900/5">
-                                                    {availableCatalogModels.length} available
+                                                    {t('common.available', {
+                                                        count: availableCatalogModels.length,
+                                                    })}
                                                 </span>
                                             )}
                                         </div>
                                         {catalogModels === null && (
                                             <div className="rounded-xl border border-white/70 bg-white/70 p-4 text-sm font-medium text-emerald-800">
-                                                Loading catalog models...
+                                                {t('models.loadingCatalog')}
                                             </div>
                                         )}
                                         {catalogModels !== null &&
                                             availableCatalogModels.length === 0 && (
                                                 <div className="rounded-xl border border-white/70 bg-white/70 p-4 text-sm font-medium text-emerald-800">
-                                                    All official catalog models are already
-                                                    registered for this channel.
+                                                    {t('models.allCatalogRegistered')}
                                                 </div>
                                             )}
                                         {availableCatalogModels.length > 0 && (
                                             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                                                 <label className="text-sm font-bold text-emerald-950">
-                                                    Official model
+                                                    {t('models.officialModel')}
                                                     <select
                                                         className={`${inputClass} bg-white/90`}
                                                         value={catalogModelName}
@@ -309,7 +321,9 @@ export default function ModelsPage() {
                                                     className="inline-flex min-h-11 items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white shadow-lg shadow-emerald-900/15 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                 >
                                                     <Plus size={16} className="mr-2" />
-                                                    {addingCatalog ? 'Adding...' : 'Add official'}
+                                                    {addingCatalog
+                                                        ? t('common.adding')
+                                                        : t('models.addOfficial')}
                                                 </button>
                                             </div>
                                         )}
@@ -322,26 +336,25 @@ export default function ModelsPage() {
                             >
                                 <div className="mb-4">
                                     <h2 className="text-lg font-black text-slate-950">
-                                        Add a custom model
+                                        {t('models.addCustomTitle')}
                                     </h2>
                                     <p className="mt-1 text-sm text-slate-500">
-                                        Use any upstream-supported model name, including private or
-                                        router-specific aliases.
+                                        {t('models.addCustomDescription')}
                                     </p>
                                 </div>
                                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-end">
                                     <label className="text-sm font-medium text-slate-700 sm:col-span-2 xl:col-span-1">
-                                        Model name
+                                        {t('models.name')}
                                         <input
                                             className={inputClass}
                                             value={modelName}
                                             onChange={(event) => setModelName(event.target.value)}
-                                            placeholder="Custom upstream model name"
+                                            placeholder={t('models.customPlaceholder')}
                                             required
                                         />
                                     </label>
                                     <label className="text-sm font-medium text-slate-700">
-                                        Status
+                                        {t('models.status')}
                                         <select
                                             className={inputClass}
                                             value={status}
@@ -349,17 +362,15 @@ export default function ModelsPage() {
                                                 setStatus(Number(event.target.value))
                                             }
                                         >
-                                            {Object.entries(MODEL_STATUSES).map(
-                                                ([value, label]) => (
-                                                    <option key={value} value={value}>
-                                                        {label}
-                                                    </option>
-                                                ),
-                                            )}
+                                            {[1, 2].map((value) => (
+                                                <option key={value} value={value}>
+                                                    {modelStatusLabel(value)}
+                                                </option>
+                                            ))}
                                         </select>
                                     </label>
                                     <label className="text-sm font-medium text-slate-700">
-                                        Type
+                                        {t('models.type')}
                                         <select
                                             className={inputClass}
                                             value={modelType}
@@ -367,9 +378,9 @@ export default function ModelsPage() {
                                                 setModelType(Number(event.target.value))
                                             }
                                         >
-                                            {Object.entries(MODEL_TYPES).map(([value, label]) => (
+                                            {[1, 2].map((value) => (
                                                 <option key={value} value={value}>
-                                                    {label}
+                                                    {modelTypeLabel(value)}
                                                 </option>
                                             ))}
                                         </select>
@@ -377,7 +388,7 @@ export default function ModelsPage() {
                                 </div>
                                 <button disabled={saving} className={`${buttonClass} mt-4 w-full`}>
                                     <Plus size={16} className="mr-2" />
-                                    {saving ? 'Adding...' : 'Add custom'}
+                                    {saving ? t('common.adding') : t('models.addCustom')}
                                 </button>
                             </form>
                         </div>
@@ -385,8 +396,8 @@ export default function ModelsPage() {
                     {!models && <LoadingCards />}
                     {models?.length === 0 && (
                         <EmptyState
-                            title="No models for this channel"
-                            description="Register the upstream model names this channel can serve."
+                            title={t('models.emptyTitle')}
+                            description={t('models.emptyDescription')}
                         />
                     )}
                     {!!models?.length && (
@@ -395,10 +406,10 @@ export default function ModelsPage() {
                                 <table className="w-full text-left text-sm">
                                     <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                                         <tr>
-                                            <th className="px-5 py-3">Model</th>
-                                            <th className="px-5 py-3">Status</th>
-                                            <th className="px-5 py-3">Type</th>
-                                            <th className="px-5 py-3">ID</th>
+                                            <th className="px-5 py-3">{t('models.model')}</th>
+                                            <th className="px-5 py-3">{t('models.status')}</th>
+                                            <th className="px-5 py-3">{t('models.type')}</th>
+                                            <th className="px-5 py-3">{t('common.id')}</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -408,10 +419,10 @@ export default function ModelsPage() {
                                                     {model.modelName}
                                                 </td>
                                                 <td className="px-5 py-4">
-                                                    {enumLabel(model.status, MODEL_STATUSES)}
+                                                    {modelStatusLabel(model.status)}
                                                 </td>
                                                 <td className="px-5 py-4">
-                                                    {enumLabel(model.modelType, MODEL_TYPES)}
+                                                    {modelTypeLabel(model.modelType)}
                                                 </td>
                                                 <td className="px-5 py-4 text-slate-500">
                                                     {model.modelId}
