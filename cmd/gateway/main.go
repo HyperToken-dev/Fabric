@@ -97,6 +97,7 @@ func main() {
 		zap.Bool("enabled", loaded.Enabled),
 		zap.Int("count", loaded.DictionaryCount),
 	)
+
 	// db con str
 	dsn := config.GetDSN(cfg.DB)
 
@@ -177,6 +178,7 @@ func main() {
 	extrotecProxy, err := NewExtrotecProxy(ExtrotecProxyOptions{
 		ModelStore:         newModelStoreAdapter(proxyStore),
 		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+		TextPolicy:         textPolicy,
 	})
 	if err != nil {
 		zap.S().Fatalf("create extrotec proxy error: %v", err)
