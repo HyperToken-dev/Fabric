@@ -25,7 +25,7 @@ func ExtractPromptRequest(req *http.Request) (*PromptRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseGenerationPromptRequest(body)
+	return ParsePromptRequest(body)
 }
 
 func readAndRestoreRequestBody(req *http.Request) ([]byte, error) {
@@ -52,7 +52,7 @@ func readAndRestoreRequestBody(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
-func parseGenerationPromptRequest(body []byte) (*PromptRequest, error) {
+func ParsePromptRequest(body []byte) (*PromptRequest, error) {
 	var req generationRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err

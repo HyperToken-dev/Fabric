@@ -141,7 +141,7 @@ func (p *ExtrotecProxy) prepareRequest(r *http.Request, channelID int32) (int32,
 	if err != nil {
 		return 0, "", err
 	}
-	promptReq, err := sensitiveextrotec.ExtractPromptRequest(r)
+	promptReq, err := sensitiveextrotec.ParsePromptRequest(body)
 	if err != nil {
 		return 0, "", errInvalidRequestBody
 	}

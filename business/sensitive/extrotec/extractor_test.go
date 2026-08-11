@@ -35,6 +35,18 @@ func TestExtractPromptRequestExtractsPromptFields(t *testing.T) {
 	}
 }
 
+func TestParsePromptRequestExtractsPromptFields(t *testing.T) {
+	body := []byte(`{"model":"MiniMax-H3","prompt":"hello","forward_prompt":"forward","negative_prompt":"negative"}`)
+	got, err := ParsePromptRequest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"hello", "forward", "negative"}
+	if !reflect.DeepEqual(got.Prompts, want) {
+		t.Fatalf("Prompts = %#v, want %#v", got.Prompts, want)
+	}
+}
+
 func TestExtractPromptRequestIgnoresEmptyPromptFields(t *testing.T) {
 	tests := []struct {
 		name string

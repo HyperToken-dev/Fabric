@@ -68,7 +68,6 @@ func New(opts Options) *Proxy {
 
 			pr.SetURL(target)
 			pr.Out.Host = target.Host
-			pr.Out.Header.Add("Content-Type", "application/json")
 			authInjector(pr.Out, upstream)
 
 			if opts.Rewrite != nil {
