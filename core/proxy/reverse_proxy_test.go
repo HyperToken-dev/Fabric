@@ -219,6 +219,101 @@ func TestProxyOnCompleteReceivesDecodedBodyAndPreservesRawPassthrough(t *testing
 	}
 }
 
+func TestProxyOnCompleteSkipsBinaryResponseBodyCapture(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		headers     map[string]string
+	}{
+		{name: "video", contentType: "video/mp4"},
+		{name: "octet stream", contentType: "application/octet-stream"},
+		{name: "attachment", contentType: "application/json", headers: map[string]string{"Content-Disposition": `attachment; filename="download.json"`}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tt.contentType)
+				for key, value := range tt.headers {
+					w.Header().Set(key, value)
+				}
+				_, _ = w.Write([]byte("binary payload"))
+			}))
+			defer upstreamServer.Close()
+
+			completeCalled := false
+			p := New(Options{
+				OnComplete: func(resp *http.Response, decodedBody []byte) {
+					completeCalled = true
+					if decodedBody != nil {
+						t.Errorf("decoded body = %q, want nil", decodedBody)
+					}
+				},
+			})
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/download", nil)
+			p.ServeHTTP(rec, req, Upstream{BaseURL: upstreamServer.URL, APIKey: "provider-key"})
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() != "binary payload" {
+				t.Fatalf("body = %q, want binary payload", rec.Body.String())
+			}
+			if !completeCalled {
+				t.Fatal("onComplete was not called")
+			}
+		})
+	}
+}
+
+func TestProxyOnCompleteCapturesTextAndJSONResponseBodies(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{name: "json", contentType: "application/json", body: `{"ok":true}`},
+		{name: "problem json", contentType: "application/problem+json", body: `{"error":"bad"}`},
+		{name: "text", contentType: "text/plain", body: "hello"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tt.contentType)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer upstreamServer.Close()
+
+			completeCalled := false
+			p := New(Options{
+				OnComplete: func(resp *http.Response, decodedBody []byte) {
+					completeCalled = true
+					if string(decodedBody) != tt.body {
+						t.Errorf("decoded body = %q, want %q", decodedBody, tt.body)
+					}
+				},
+			})
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/payload", nil)
+			p.ServeHTTP(rec, req, Upstream{BaseURL: upstreamServer.URL, APIKey: "provider-key"})
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() != tt.body {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tt.body)
+			}
+			if !completeCalled {
+				t.Fatal("onComplete was not called")
+			}
+		})
+	}
+}
+
 func TestProxyOnCompleteCanMutateResponse(t *testing.T) {
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"unsafe":true}`))

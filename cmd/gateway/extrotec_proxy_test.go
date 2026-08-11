@@ -115,7 +115,6 @@ func TestExtrotecProxyVideoGenerateForwards(t *testing.T) {
 func TestExtrotecProxyStatusCheckForwardsWithoutModelValidation(t *testing.T) {
 	tests := []string{
 		"/v1/videos/task-1",
-		"/v1/videos/task-1/content",
 	}
 
 	for _, path := range tests {
@@ -163,6 +162,55 @@ func TestExtrotecProxyStatusCheckForwardsWithoutModelValidation(t *testing.T) {
 				t.Fatalf("context = %+v", loggedContext)
 			}
 		})
+	}
+}
+
+func TestExtrotecProxyContentDownloadSkipsIntegralResponseBody(t *testing.T) {
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewExtrotecProxy(ExtrotecProxyOptions{ModelStore: fakeModelStore{err: errors.New("should not resolve model")}, IntegralLogHandler: integralLogs})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/v1/videos/task-1/content" {
+			t.Errorf("path = %s, want content path", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("video payload"))
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/videos/task-1/content", nil)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "video payload" {
+		t.Fatalf("response body = %q, want video payload", rec.Body.String())
+	}
+
+	got := receiveIntegralLog(t, integralLogs.ch)
+	if got.response != "" {
+		t.Fatalf("integral log response = %q, want empty", got.response)
+	}
+	var loggedContext struct {
+		Provider            string `json:"provider"`
+		APIFormat           int32  `json:"api_format"`
+		Path                string `json:"path"`
+		ResponseStatus      int    `json:"response_status"`
+		ResponseContentType string `json:"response_content_type"`
+		DecodeOK            bool   `json:"decode_ok"`
+	}
+	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Provider != "extrotec" || loggedContext.APIFormat != models.APIFormatExtrotec || loggedContext.Path != "/v1/videos/task-1/content" || loggedContext.ResponseStatus != http.StatusOK || loggedContext.ResponseContentType != "video/mp4" || loggedContext.DecodeOK {
+		t.Fatalf("context = %+v", loggedContext)
 	}
 }
 
