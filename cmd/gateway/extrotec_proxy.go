@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	extrotecVideoPath = "/v1/video/generations"
-	extrotecImagePath = "/v1/images/generations"
+	extrotecTextToVideoPath       = "/v1/video/generations"
+	extrotecImageToVideoPath      = "/v1/video/i2v"
+	extrotecMultiImageToVideoPath = "/v1/video/ref2v"
+	extrotecImagePath             = "/v1/images/generations"
 
 	extrotecCheckOrGetPath = "/v1/videos"
 )
@@ -190,7 +192,10 @@ func (p *ExtrotecProxy) writePromptRejected(w http.ResponseWriter, r *http.Reque
 }
 
 func isExtrotecGenerateRequest(r *http.Request) bool {
-	return r.Method == http.MethodPost && (r.URL.Path == extrotecVideoPath || r.URL.Path == extrotecImagePath)
+	if r.Method != http.MethodPost {
+		return false
+	}
+	return r.URL.Path == extrotecTextToVideoPath || r.URL.Path == extrotecImageToVideoPath || r.URL.Path == extrotecMultiImageToVideoPath || r.URL.Path == extrotecImagePath
 }
 
 func isExtrotecCheckRequest(r *http.Request) bool {

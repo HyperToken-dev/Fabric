@@ -72,75 +72,97 @@ func TestExtrotecProxyGenerateForwardsWithProviderAuth(t *testing.T) {
 }
 
 func TestExtrotecProxyVideoGenerateForwards(t *testing.T) {
-	proxy, err := NewExtrotecProxy(ExtrotecProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 7, Status: ModelStatusActive}}})
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "text to video", path: extrotecTextToVideoPath},
+		{name: "image to video", path: extrotecImageToVideoPath},
+		{name: "multi image to video", path: extrotecMultiImageToVideoPath},
 	}
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != extrotecVideoPath {
-			t.Errorf("path = %s, want %s", r.URL.Path, extrotecVideoPath)
-		}
-		_, _ = w.Write([]byte(`{"id":"video-job-1"}`))
-	}))
-	defer upstream.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proxy, err := NewExtrotecProxy(ExtrotecProxyOptions{ModelStore: fakeModelStore{model: &ModelInfo{ID: 7, Status: ModelStatusActive}}})
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	req := httptest.NewRequest(http.MethodPost, extrotecVideoPath, strings.NewReader(`{"model":"MiniMax-H3","prompt":"hello"}`))
-	rec := httptest.NewRecorder()
-	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "video-job-1") {
-		t.Fatalf("response body = %q, want upstream response", rec.Body.String())
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %s, want POST", r.Method)
+				}
+				if r.URL.Path != tt.path {
+					t.Errorf("path = %s, want %s", r.URL.Path, tt.path)
+				}
+				_, _ = w.Write([]byte(`{"id":"video-job-1"}`))
+			}))
+			defer upstream.Close()
+
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(`{"model":"MiniMax-H3","prompt":"hello"}`))
+			rec := httptest.NewRecorder()
+			proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "video-job-1") {
+				t.Fatalf("response body = %q, want upstream response", rec.Body.String())
+			}
+		})
 	}
 }
 
 func TestExtrotecProxyStatusCheckForwardsWithoutModelValidation(t *testing.T) {
-	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
-	proxy, err := NewExtrotecProxy(ExtrotecProxyOptions{ModelStore: fakeModelStore{err: errors.New("should not resolve model")}, IntegralLogHandler: integralLogs})
-	if err != nil {
-		t.Fatal(err)
+	tests := []string{
+		"/v1/videos/task-1",
+		"/v1/videos/task-1/content",
 	}
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %s, want GET", r.Method)
-		}
-		if r.URL.Path != "/v1/videos/task-1" {
-			t.Errorf("path = %s, want task path", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer provider-key" {
-			t.Errorf("Authorization = %q, want provider key", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"task-1","status":"succeeded"}`))
-	}))
-	defer upstream.Close()
+	for _, path := range tests {
+		t.Run(path, func(t *testing.T) {
+			integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+			proxy, err := NewExtrotecProxy(ExtrotecProxyOptions{ModelStore: fakeModelStore{err: errors.New("should not resolve model")}, IntegralLogHandler: integralLogs})
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/videos/task-1", nil)
-	rec := httptest.NewRecorder()
-	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
-	}
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("method = %s, want GET", r.Method)
+				}
+				if r.URL.Path != path {
+					t.Errorf("path = %s, want %s", r.URL.Path, path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer provider-key" {
+					t.Errorf("Authorization = %q, want provider key", got)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"task-1","status":"succeeded"}`))
+			}))
+			defer upstream.Close()
 
-	got := receiveIntegralLog(t, integralLogs.ch)
-	var loggedContext struct {
-		Provider  string `json:"provider"`
-		APIFormat int32  `json:"api_format"`
-		Model     string `json:"model"`
-		ModelID   int32  `json:"model_id"`
-		ChannelID int32  `json:"channel_id"`
-	}
-	if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
-		t.Fatal(err)
-	}
-	if loggedContext.Provider != "extrotec" || loggedContext.APIFormat != models.APIFormatExtrotec || loggedContext.Model != "" || loggedContext.ModelID != 0 || loggedContext.ChannelID != 20 {
-		t.Fatalf("context = %+v", loggedContext)
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body=%q", rec.Code, rec.Body.String())
+			}
+
+			got := receiveIntegralLog(t, integralLogs.ch)
+			var loggedContext struct {
+				Provider  string `json:"provider"`
+				APIFormat int32  `json:"api_format"`
+				Model     string `json:"model"`
+				ModelID   int32  `json:"model_id"`
+				ChannelID int32  `json:"channel_id"`
+			}
+			if err := json.Unmarshal([]byte(got.context), &loggedContext); err != nil {
+				t.Fatal(err)
+			}
+			if loggedContext.Provider != "extrotec" || loggedContext.APIFormat != models.APIFormatExtrotec || loggedContext.Model != "" || loggedContext.ModelID != 0 || loggedContext.ChannelID != 20 {
+				t.Fatalf("context = %+v", loggedContext)
+			}
+		})
 	}
 }
 
@@ -171,7 +193,7 @@ func TestExtrotecProxyGenerateValidation(t *testing.T) {
 			}))
 			defer upstream.Close()
 
-			req := httptest.NewRequest(http.MethodPost, extrotecVideoPath, strings.NewReader(tt.body))
+			req := httptest.NewRequest(http.MethodPost, extrotecTextToVideoPath, strings.NewReader(tt.body))
 			rec := httptest.NewRecorder()
 			proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, tt.providerKey)
 			if rec.Code != tt.wantStatus {
@@ -207,7 +229,7 @@ func TestExtrotecProxyRejectsSensitivePromptFields(t *testing.T) {
 			}))
 			defer upstream.Close()
 
-			req := httptest.NewRequest(http.MethodPost, extrotecVideoPath, strings.NewReader(tt.body))
+			req := httptest.NewRequest(http.MethodPost, extrotecTextToVideoPath, strings.NewReader(tt.body))
 			rec := httptest.NewRecorder()
 			proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
 			if rec.Code != http.StatusForbidden {
@@ -257,7 +279,7 @@ func TestExtrotecProxyAllowsEmptyPromptFields(t *testing.T) {
 	defer upstream.Close()
 
 	body := `{"model":"MiniMax-H3","prompt":"","forward_prompt":"  ","negative_prompt":null}`
-	req := httptest.NewRequest(http.MethodPost, extrotecVideoPath, strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, extrotecTextToVideoPath, strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req, 10, 20, upstream.URL, "provider-key")
 	if rec.Code != http.StatusOK {
