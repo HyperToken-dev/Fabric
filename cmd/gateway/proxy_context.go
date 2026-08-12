@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 )
 
 type Provider string
@@ -13,6 +16,7 @@ const (
 	ProviderAlibaba  Provider = "alibaba"
 	ProviderSeedance Provider = "seedance"
 	ProviderGoogle   Provider = "google"
+	ProviderExtrotec Provider = "extrotec"
 )
 
 type contextKey string
@@ -47,6 +51,8 @@ func getContextString(r *http.Request, key contextKey) string {
 
 var errModelDisabled = errors.New("model disabled")
 var errModelUnsupported = errors.New("model unsupported")
+var errMissingModel = errors.New("missing model")
+var errInvalidRequestBody = errors.New("invalid request body")
 
 func (p *OpenAIProxy) resolveModel(ctx context.Context, channelID int32, modelName string) (int32, error) {
 	return resolveModelFromStore(ctx, p.modelStore, channelID, modelName)
@@ -68,4 +74,13 @@ func resolveModelFromStore(ctx context.Context, store ModelStore, channelID int3
 	default:
 		return 0, errModelUnsupported
 	}
+}
+
+func restoreRequestBody(req *http.Request, body []byte) {
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Length", strconv.Itoa(len(body)))
 }

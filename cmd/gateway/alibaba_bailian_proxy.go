@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 
 	corealibaba "github.com/HyperToken-dev/fabric/core/providers/Alibaba"
@@ -154,15 +152,3 @@ func isBailianVideoSynthesisRequest(r *http.Request) bool {
 func isBailianTaskFetchRequest(r *http.Request) bool {
 	return r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, bailianTasksPathPrefix) && strings.TrimPrefix(r.URL.Path, bailianTasksPathPrefix) != ""
 }
-
-func restoreRequestBody(req *http.Request, body []byte) {
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
-	}
-	req.ContentLength = int64(len(body))
-	req.Header.Set("Content-Length", strconv.Itoa(len(body)))
-}
-
-var errInvalidRequestBody = errors.New("invalid request body")
-var errMissingModel = errors.New("missing model")
