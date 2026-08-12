@@ -24,6 +24,7 @@ type openAIStreamSafetyProcessor struct {
 	modelID    int32
 	parser     sensitiveopenai.SSEParser
 	tail       string       // tail string of sliding window
+	rawBody    bytes.Buffer // upstream SSE bytes received before refusal, used for fallback usage
 	clientBody bytes.Buffer // log all data that sent to client.use to log instantly when stream refused
 	rejected   bool         // when stream was refused change this to true
 	logged     bool         // make sure just log once
@@ -61,6 +62,7 @@ func (p *openAIStreamSafetyProcessor) Write(chunk []byte) (coreproxy.StreamResul
 	if p.rejected {
 		return coreproxy.StreamResult{Stop: true}, nil
 	}
+	_, _ = p.rawBody.Write(chunk)
 
 	// put the net fragmentation to state machine,extract logically meaningful event
 	events, err := p.parser.Write(chunk)
@@ -190,6 +192,8 @@ func (p *openAIStreamSafetyProcessor) reject(err error) coreproxy.StreamResult {
 	rejection := openAIStreamRejectionSSE()
 	if !p.logged {
 		p.logged = true
+		rawBody := append([]byte(nil), p.rawBody.Bytes()...)
+		go p.proxy.processStreamingUsageAsync(p.req, rawBody, p.keyID, p.channelID, p.modelID, p.model)
 		// concatenate the part already sent to the user (which may contain the first half of the sensitive word) with the final packet that triggered the error
 		responseBody := append([]byte(nil), p.clientBody.Bytes()...)
 		responseBody = append(responseBody, rejection...)

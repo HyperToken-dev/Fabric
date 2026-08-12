@@ -171,7 +171,7 @@ func TestInjectOpenAIChatStreamOptionsDoesNotModifyNonStreamingRequest(t *testin
 }
 
 func TestOpenAIProxyOnCompleteProcessesStreamingUsage(t *testing.T) {
-	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1)}
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1), streamingBodyCh: make(chan []byte, 1)}
 	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler})
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestOpenAIProxyOnCompleteProcessesStreamingUsage(t *testing.T) {
 }
 
 func TestOpenAIProxyModifyResponseRecordsStreamingIntegralLog(t *testing.T) {
-	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1)}
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1), streamingBodyCh: make(chan []byte, 1)}
 	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
 	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{UsageHandler: usageHandler, IntegralLogHandler: integralLogs})
 	if err != nil {
@@ -439,7 +439,7 @@ func TestOpenAIProxyRejectsSensitiveOutputSplitAcrossStreamChunks(t *testing.T) 
 	openAIStreamSafetyTailRunes = 6
 	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
 
-	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1)}
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1), streamingBodyCh: make(chan []byte, 1)}
 	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
 	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
 		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 33, Status: ModelStatusActive}},
@@ -502,10 +502,17 @@ func TestOpenAIProxyRejectsSensitiveOutputSplitAcrossStreamChunks(t *testing.T) 
 	if loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "output" || loggedContext.RejectionReason != "sensitive" || loggedContext.ResponseStatus != http.StatusOK || loggedContext.ModelID != 33 || loggedContext.ChannelID != 8 {
 		t.Fatalf("context = %+v", loggedContext)
 	}
+	usageInfo := receiveUsageContext(t, usageHandler.streamingCh)
+	if usageInfo.KeyID != 7 || usageInfo.ChannelID != 8 || usageInfo.ModelID != 33 || usageInfo.Model != "gpt-5.5" {
+		t.Fatalf("usage context = %+v", usageInfo)
+	}
 	select {
-	case got := <-usageHandler.streamingCh:
-		t.Fatalf("unexpected usage for rejected stream: %+v", got)
-	case <-time.After(100 * time.Millisecond):
+	case rawUsageBody := <-usageHandler.streamingBodyCh:
+		if !strings.Contains(string(rawUsageBody), "cked") || strings.Contains(string(rawUsageBody), "sensitive_output") {
+			t.Fatalf("usage body = %q, want upstream rejected stream fragment", rawUsageBody)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for streaming usage body")
 	}
 }
 
@@ -532,8 +539,9 @@ func (rejectingPolicy) Detect(ctx context.Context, model, text string) sensitive
 }
 
 type recordingUsageHandler struct {
-	streamingCh    chan UsageContext
-	nonStreamingCh chan UsageContext
+	streamingCh     chan UsageContext
+	nonStreamingCh  chan UsageContext
+	streamingBodyCh chan []byte
 }
 
 func (h *recordingUsageHandler) ProcessNonStreamingResponse(ctx context.Context, req *http.Request, rawBody []byte, contentEncoding string, contentType string, info UsageContext) error {
@@ -549,6 +557,9 @@ func (h *recordingUsageHandler) ProcessStreamingResponse(ctx context.Context, re
 		h.streamingCh = make(chan UsageContext, 1)
 	}
 	h.streamingCh <- info
+	if h.streamingBodyCh != nil {
+		h.streamingBodyCh <- append([]byte(nil), decodedBody...)
+	}
 	return nil
 }
 
