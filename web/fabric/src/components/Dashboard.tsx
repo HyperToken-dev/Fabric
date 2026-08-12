@@ -23,18 +23,10 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { getUsageDashboard, type UsageDashboard } from '../api/dashboard';
-
-const numberFormatter = new Intl.NumberFormat('en-US');
-const compactFormatter = new Intl.NumberFormat('en-US', {
-    notation: 'compact',
-    maximumFractionDigits: 1,
-});
-
-function formatNumber(value: number) {
-    return numberFormatter.format(value);
-}
+import { useI18n } from '../i18n';
 
 export default function Dashboard() {
+    const { t, formatNumber, formatCompactNumber, formatErrorMessage } = useI18n();
     const [dashboard, setDashboard] = useState<UsageDashboard | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [requestVersion, setRequestVersion] = useState(0);
@@ -49,7 +41,7 @@ export default function Dashboard() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load usage data',
+                            : 'i18n:dashboard.loadError',
                     );
                 }
             });
@@ -60,7 +52,7 @@ export default function Dashboard() {
         return (
             <div
                 className="mx-auto max-w-7xl space-y-6 p-5 animate-pulse md:p-8"
-                aria-label="Loading usage dashboard"
+                aria-label={t('dashboard.loading')}
             >
                 <div className="h-56 rounded-3xl bg-slate-900" />
                 <div className="grid gap-4 md:grid-cols-3">
@@ -80,14 +72,16 @@ export default function Dashboard() {
                     <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
                         <Activity size={24} />
                     </div>
-                    <h1 className="text-xl font-bold text-slate-900">Usage data unavailable</h1>
-                    <p className="mt-2 text-sm text-slate-500">{error}</p>
+                    <h1 className="text-xl font-bold text-slate-900">
+                        {t('dashboard.unavailable')}
+                    </h1>
+                    <p className="mt-2 text-sm text-slate-500">{formatErrorMessage(error)}</p>
                     <button
                         type="button"
                         onClick={() => setRequestVersion((version) => version + 1)}
                         className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
                     >
-                        <RefreshCw size={16} /> Retry
+                        <RefreshCw size={16} /> {t('common.retry')}
                     </button>
                 </div>
             </div>
@@ -117,25 +111,29 @@ export default function Dashboard() {
     const hasUsage = sevenDay.tokens > 0;
     const supportingStats = [
         {
-            title: '7-day volume',
+            title: t('dashboard.volume'),
             value: sevenDay.tokens,
-            detail: `${formatNumber(sevenDay.requests)} requests`,
+            detail: t('dashboard.requestCount', { count: formatNumber(sevenDay.requests) }),
             icon: CalendarDays,
             color: 'text-emerald-700',
             bg: 'bg-emerald-50',
         },
         {
-            title: 'Daily average',
+            title: t('dashboard.dailyAverage'),
             value: dailyAverage,
-            detail: `${formatNumber(Math.round(sevenDay.requests / Math.max(dashboard.recentDays.length, 1)))} requests / day`,
+            detail: t('dashboard.requestsPerDay', {
+                count: formatNumber(
+                    Math.round(sevenDay.requests / Math.max(dashboard.recentDays.length, 1)),
+                ),
+            }),
             icon: Gauge,
             color: 'text-sky-600',
             bg: 'bg-sky-50',
         },
         {
-            title: 'Peak day',
+            title: t('dashboard.peakDay'),
             value: peakDay?.totalTokens ?? 0,
-            detail: peakDay?.date ?? 'No activity',
+            detail: peakDay?.date ?? t('dashboard.noActivity'),
             icon: Sparkles,
             color: 'text-amber-600',
             bg: 'bg-amber-50',
@@ -155,7 +153,7 @@ export default function Dashboard() {
                 <div className="relative grid gap-8 lg:grid-cols-[1.35fr_1fr] lg:items-end">
                     <div>
                         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
-                            <Activity size={14} /> Live gateway pulse
+                            <Activity size={14} /> {t('dashboard.livePulse')}
                         </div>
                         <div
                             className="relative mt-3 h-10 max-w-xl overflow-hidden"
@@ -197,41 +195,42 @@ export default function Dashboard() {
                             />
                         </div>
                         <h1 className="mt-2 text-4xl font-bold tracking-tight md:text-5xl">
-                            {compactFormatter.format(dashboard.today.totalTokens)}{' '}
+                            {formatCompactNumber(dashboard.today.totalTokens)}{' '}
                             <span className="text-2xl font-medium text-emerald-800/55 md:text-3xl">
-                                tokens today
+                                {t('dashboard.tokensToday')}
                             </span>
                         </h1>
                         <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
-                            A focused view of today's traffic and how it compares with the last
-                            seven calendar days.
+                            {t('dashboard.description')}
                         </p>
                         <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white/70 px-3 py-1.5 text-xs text-emerald-800 shadow-sm">
                             <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_10px_#34d399]" />{' '}
-                            Reporting in {dashboard.timeZone}
+                            {t('dashboard.reporting', { timeZone: dashboard.timeZone })}
                         </div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                         <div className="rounded-2xl border border-emerald-100 bg-white/70 p-4 shadow-sm backdrop-blur">
                             <Cpu size={17} className="text-emerald-600" />
                             <p className="mt-4 text-xl font-bold text-slate-900">
-                                {compactFormatter.format(dashboard.today.promptTokens)}
+                                {formatCompactNumber(dashboard.today.promptTokens)}
                             </p>
-                            <p className="mt-1 text-xs text-slate-500">Prompt</p>
+                            <p className="mt-1 text-xs text-slate-500">{t('dashboard.prompt')}</p>
                         </div>
                         <div className="rounded-2xl border border-lime-100 bg-white/70 p-4 shadow-sm backdrop-blur">
                             <Zap size={17} className="text-lime-600" />
                             <p className="mt-4 text-xl font-bold text-slate-900">
-                                {compactFormatter.format(dashboard.today.completionTokens)}
+                                {formatCompactNumber(dashboard.today.completionTokens)}
                             </p>
-                            <p className="mt-1 text-xs text-slate-500">Completion</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                                {t('dashboard.completion')}
+                            </p>
                         </div>
                         <div className="rounded-2xl border border-teal-100 bg-white/70 p-4 shadow-sm backdrop-blur">
                             <Send size={17} className="text-teal-600" />
                             <p className="mt-4 text-xl font-bold text-slate-900">
-                                {compactFormatter.format(dashboard.today.requestCount)}
+                                {formatCompactNumber(dashboard.today.requestCount)}
                             </p>
-                            <p className="mt-1 text-xs text-slate-500">Requests</p>
+                            <p className="mt-1 text-xs text-slate-500">{t('dashboard.requests')}</p>
                         </div>
                     </div>
                 </div>
@@ -239,13 +238,13 @@ export default function Dashboard() {
 
             {error && (
                 <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    <span>Refresh failed: {error}. Showing the last loaded snapshot.</span>
+                    <span>{t('common.refreshFailed', { message: formatErrorMessage(error) })}</span>
                     <button
                         type="button"
                         onClick={() => setRequestVersion((version) => version + 1)}
                         className="font-semibold underline"
                     >
-                        Retry
+                        {t('common.retry')}
                     </button>
                 </div>
             )}
@@ -282,20 +281,20 @@ export default function Dashboard() {
                     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-                                Traffic shape
+                                {t('dashboard.trafficShape')}
                             </p>
                             <h2 className="mt-1 text-lg font-bold text-slate-900">
-                                Seven-day token flow
+                                {t('dashboard.tokenFlow')}
                             </h2>
-                            <p className="text-sm text-slate-500">
-                                Prompt, completion, and request activity
-                            </p>
+                            <p className="text-sm text-slate-500">{t('dashboard.activity')}</p>
                         </div>
                         <div
                             className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${todayVsAverage >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}
                         >
                             {todayVsAverage >= 0 ? '+' : ''}
-                            {todayVsAverage}% vs daily avg
+                            {t('dashboard.vsAverage', {
+                                value: `${todayVsAverage >= 0 ? '+' : ''}${todayVsAverage}`,
+                            })}
                         </div>
                     </div>
                     <div className="h-[350px] w-full">
@@ -339,14 +338,12 @@ export default function Dashboard() {
                                     tickLine={false}
                                     tick={{ fill: '#64748b', fontSize: 12 }}
                                     width={58}
-                                    tickFormatter={(value: number) =>
-                                        compactFormatter.format(value)
-                                    }
+                                    tickFormatter={(value: number) => formatCompactNumber(value)}
                                 />
                                 <YAxis yAxisId="requests" orientation="right" hide />
                                 <Tooltip
                                     formatter={(value, name) => [formatNumber(Number(value)), name]}
-                                    labelFormatter={(date) => `Date ${date}`}
+                                    labelFormatter={(date) => t('dashboard.date', { date })}
                                     contentStyle={{
                                         borderRadius: '14px',
                                         border: '1px solid #a7f3d0',
@@ -358,7 +355,7 @@ export default function Dashboard() {
                                     yAxisId="tokens"
                                     type="monotone"
                                     dataKey="promptTokens"
-                                    name="Prompt Tokens"
+                                    name={t('dashboard.promptTokens')}
                                     stroke="#10b981"
                                     strokeWidth={2.5}
                                     fill="url(#promptUsage)"
@@ -367,7 +364,7 @@ export default function Dashboard() {
                                     yAxisId="tokens"
                                     type="monotone"
                                     dataKey="completionTokens"
-                                    name="Completion Tokens"
+                                    name={t('dashboard.completionTokens')}
                                     stroke="#84cc16"
                                     strokeWidth={2.5}
                                     fill="url(#completionUsage)"
@@ -376,7 +373,7 @@ export default function Dashboard() {
                                     yAxisId="requests"
                                     type="monotone"
                                     dataKey="requestCount"
-                                    name="Requests"
+                                    name={t('dashboard.requests')}
                                     stroke="#0d9488"
                                     strokeWidth={2}
                                     dot={{ r: 3, fill: '#0d9488' }}
@@ -389,9 +386,11 @@ export default function Dashboard() {
                 <aside className="space-y-6">
                     <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                            Today's mix
+                            {t('dashboard.todaysMix')}
                         </p>
-                        <h2 className="mt-1 font-bold text-slate-900">Token composition</h2>
+                        <h2 className="mt-1 font-bold text-slate-900">
+                            {t('dashboard.tokenComposition')}
+                        </h2>
                         <div className="mt-6 flex items-center justify-center">
                             <div
                                 className="relative flex h-36 w-36 items-center justify-center rounded-full"
@@ -403,19 +402,21 @@ export default function Dashboard() {
                                     <span className="text-2xl font-bold text-slate-900">
                                         {completionShare}%
                                     </span>
-                                    <span className="text-[11px] text-slate-500">completion</span>
+                                    <span className="text-[11px] text-slate-500">
+                                        {t('dashboard.completion')}
+                                    </span>
                                 </div>
                             </div>
                         </div>
                         <div className="mt-6 grid grid-cols-2 gap-3 text-xs">
                             <div className="rounded-xl bg-emerald-50 p-3">
                                 <span className="block h-2 w-2 rounded-full bg-emerald-500" />
-                                <p className="mt-2 text-slate-500">Prompt</p>
+                                <p className="mt-2 text-slate-500">{t('dashboard.prompt')}</p>
                                 <p className="font-bold text-slate-800">{100 - completionShare}%</p>
                             </div>
                             <div className="rounded-xl bg-amber-50 p-3">
                                 <span className="block h-2 w-2 rounded-full bg-amber-500" />
-                                <p className="mt-2 text-slate-500">Completion</p>
+                                <p className="mt-2 text-slate-500">{t('dashboard.completion')}</p>
                                 <p className="font-bold text-slate-800">{completionShare}%</p>
                             </div>
                         </div>
@@ -424,13 +425,15 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                             <div>
                                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                                    Recent days
+                                    {t('dashboard.recentDays')}
                                 </p>
-                                <h2 className="mt-1 font-bold text-slate-900">Daily totals</h2>
+                                <h2 className="mt-1 font-bold text-slate-900">
+                                    {t('dashboard.dailyTotals')}
+                                </h2>
                             </div>
                             {!hasUsage && (
                                 <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">
-                                    No usage
+                                    {t('dashboard.noUsage')}
                                 </span>
                             )}
                         </div>
@@ -448,11 +451,13 @@ export default function Dashboard() {
                                                 {day.date.slice(5)}
                                             </p>
                                             <p className="text-xs text-slate-400">
-                                                {formatNumber(day.requestCount)} requests
+                                                {t('dashboard.requestCount', {
+                                                    count: formatNumber(day.requestCount),
+                                                })}
                                             </p>
                                         </div>
                                         <p className="text-sm font-bold text-slate-900">
-                                            {compactFormatter.format(day.totalTokens)}
+                                            {formatCompactNumber(day.totalTokens)}
                                         </p>
                                     </div>
                                 ))}

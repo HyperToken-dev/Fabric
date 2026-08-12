@@ -10,8 +10,10 @@ const (
 	APIFormatAlibabaBailian int32 = 2
 	APIFormatSeedance       int32 = 3
 	APIFormatGoogle         int32 = 4
+	APIFormatExtrotec       int32 = 5
 	ModelTypeText           int32 = 1
 	ModelTypeVideo          int32 = 2
+	ModelTypeImage          int32 = 3
 )
 
 type CatalogModel struct {
@@ -59,6 +61,8 @@ func catalogForAPIFormat(apiFormat int32) map[string]CatalogModel {
 		return seedance
 	case APIFormatGoogle:
 		return google
+	case APIFormatExtrotec:
+		return extrotec
 	default:
 		return nil
 	}

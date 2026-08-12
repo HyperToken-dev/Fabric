@@ -3,7 +3,6 @@ import { Check, Pencil, Plus, X } from 'lucide-react';
 import {
     API_FORMAT_DEFAULT_BASE_URLS,
     API_FORMATS,
-    CHANNEL_STATUSES,
     createChannel,
     listChannels,
     updateChannelApiFormat,
@@ -13,7 +12,7 @@ import {
     updateChannelStatus,
     type Channel,
 } from '../api/channels';
-import { enumLabel } from '../api/format';
+import { useI18n } from '../i18n';
 import {
     buttonClass,
     EmptyState,
@@ -33,6 +32,7 @@ type Draft = {
 };
 
 const defaultAPIFormat = 1;
+const channelStatuses = [1, 2, 3] as const;
 
 function defaultBaseUrl(apiFormat: number): string {
     return API_FORMAT_DEFAULT_BASE_URLS[apiFormat] ?? '';
@@ -49,6 +49,7 @@ function newDraft(): Draft {
 }
 
 export default function ChannelsPage() {
+    const { t } = useI18n();
     const [channels, setChannels] = useState<Channel[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [version, setVersion] = useState(0);
@@ -67,11 +68,25 @@ export default function ChannelsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load channels',
+                            : 'i18n:channels.loadError',
                     );
             });
         return () => controller.abort();
     }, [version]);
+
+    function channelStatusLabel(status: number): string {
+        if (status === 1) return t('status.active');
+        if (status === 2) return t('status.banned');
+        if (status === 3) return t('status.pending');
+        return t('common.unknown', { value: status });
+    }
+
+    function apiFormatLabel(apiFormat: number): string {
+        return (
+            API_FORMATS[apiFormat as keyof typeof API_FORMATS] ??
+            t('common.unknown', { value: apiFormat })
+        );
+    }
 
     function startEdit(channel: Channel) {
         setEditing(channel.channelId);
@@ -102,7 +117,7 @@ export default function ChannelsPage() {
             setDraft(newDraft());
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : 'Unable to create channel',
+                requestError instanceof Error ? requestError.message : 'i18n:channels.createError',
             );
         } finally {
             setSaving(false);
@@ -141,7 +156,7 @@ export default function ChannelsPage() {
             setEditing(null);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : 'Unable to update channel',
+                requestError instanceof Error ? requestError.message : 'i18n:channels.updateError',
             );
         } finally {
             setSaving(false);
@@ -151,7 +166,7 @@ export default function ChannelsPage() {
     const form = (onSubmit: (event: FormEvent) => void, includeStatus: boolean) => (
         <form onSubmit={onSubmit} className="grid gap-3 md:grid-cols-2">
             <label className="text-sm font-medium text-slate-700">
-                Name
+                {t('channels.name')}
                 <input
                     className={inputClass}
                     maxLength={20}
@@ -161,7 +176,7 @@ export default function ChannelsPage() {
                 />
             </label>
             <label className="text-sm font-medium text-slate-700">
-                Base URL
+                {t('channels.baseUrl')}
                 <input
                     className={inputClass}
                     maxLength={100}
@@ -172,7 +187,7 @@ export default function ChannelsPage() {
             </label>
             {includeStatus && (
                 <label className="text-sm font-medium text-slate-700">
-                    Status
+                    {t('channels.status')}
                     <select
                         className={inputClass}
                         value={draft.status}
@@ -180,16 +195,16 @@ export default function ChannelsPage() {
                             setDraft({ ...draft, status: Number(event.target.value) })
                         }
                     >
-                        {Object.entries(CHANNEL_STATUSES).map(([value, label]) => (
+                        {channelStatuses.map((value) => (
                             <option key={value} value={value}>
-                                {label}
+                                {channelStatusLabel(value)}
                             </option>
                         ))}
                     </select>
                 </label>
             )}
             <label className="text-sm font-medium text-slate-700">
-                API format
+                {t('channels.apiFormat')}
                 <select
                     className={inputClass}
                     value={draft.apiFormat}
@@ -210,22 +225,20 @@ export default function ChannelsPage() {
                 </select>
             </label>
             <label className="text-sm font-medium text-slate-700 md:col-span-2">
-                Provider key
+                {t('channels.providerKey')}
                 <input
                     type="password"
                     autoComplete="new-password"
                     className={inputClass}
                     value={draft.providerKey}
                     onChange={(event) => setDraft({ ...draft, providerKey: event.target.value })}
-                    placeholder={
-                        includeStatus ? 'Leave blank to keep current key' : 'Provider credential'
-                    }
+                    placeholder={includeStatus ? t('channels.keepKey') : t('channels.credential')}
                     required={!includeStatus}
                 />
             </label>
             <div className="flex gap-2 md:col-span-2">
                 <button disabled={saving} className={buttonClass}>
-                    {saving ? 'Saving...' : 'Save'}
+                    {saving ? t('common.saving') : t('common.save')}
                 </button>
                 <button
                     type="button"
@@ -235,7 +248,7 @@ export default function ChannelsPage() {
                     }}
                     className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600"
                 >
-                    Cancel
+                    {t('common.cancel')}
                 </button>
             </div>
         </form>
@@ -244,9 +257,9 @@ export default function ChannelsPage() {
     return (
         <div className="mx-auto max-w-7xl space-y-6 p-5 md:p-8">
             <PageHeader
-                eyebrow="Gateway setup"
-                title="Channels"
-                description="Configure upstream providers and their availability."
+                eyebrow={t('channels.eyebrow')}
+                title={t('channels.title')}
+                description={t('channels.description')}
                 action={
                     <button
                         type="button"
@@ -257,7 +270,7 @@ export default function ChannelsPage() {
                         }}
                         className={buttonClass}
                     >
-                        <Plus size={16} className="mr-2" /> New channel
+                        <Plus size={16} className="mr-2" /> {t('channels.new')}
                     </button>
                 }
             />
@@ -266,7 +279,7 @@ export default function ChannelsPage() {
             )}
             {creating && (
                 <section className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
-                    <h2 className="mb-4 font-bold text-slate-900">Create channel</h2>
+                    <h2 className="mb-4 font-bold text-slate-900">{t('channels.create')}</h2>
                     {form(submitCreate, false)}
                 </section>
             )}
@@ -276,8 +289,8 @@ export default function ChannelsPage() {
             )}
             {channels?.length === 0 && !creating && (
                 <EmptyState
-                    title="No channels yet"
-                    description="Create a channel to connect Fabric to an upstream provider."
+                    title={t('channels.emptyTitle')}
+                    description={t('channels.emptyDescription')}
                 />
             )}
             <div className="grid gap-4 lg:grid-cols-2">
@@ -306,7 +319,9 @@ export default function ChannelsPage() {
                                         type="button"
                                         onClick={() => startEdit(channel)}
                                         className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
-                                        aria-label={`Edit ${channel.channelName}`}
+                                        aria-label={t('channels.editAria', {
+                                            name: channel.channelName,
+                                        })}
                                     >
                                         <Pencil size={17} />
                                     </button>
@@ -320,13 +335,13 @@ export default function ChannelsPage() {
                                         ) : (
                                             <X className="mr-1 inline" size={12} />
                                         )}
-                                        {enumLabel(channel.status, CHANNEL_STATUSES)}
+                                        {channelStatusLabel(channel.status)}
                                     </span>
                                     <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
-                                        {enumLabel(channel.apiFormat, API_FORMATS)}
+                                        {apiFormatLabel(channel.apiFormat)}
                                     </span>
                                     <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
-                                        ID {channel.channelId}
+                                        {t('common.id')} {channel.channelId}
                                     </span>
                                 </div>
                             </>

@@ -10,12 +10,9 @@ import {
     PageHeader,
     RefreshWarning,
 } from './PageState';
+import { useI18n } from '../i18n';
 
 const pageSize = 50;
-
-function formatDate(value: string): string {
-    return new Date(value).toLocaleString();
-}
 
 function prettyJSON(value: string): string {
     try {
@@ -105,17 +102,20 @@ function logSummary(log: IntegralLog): {
 }
 
 function StatusBadge({ outcome, rejectionStage }: { outcome: string; rejectionStage: string }) {
+    const { t } = useI18n();
+
     if (outcome === 'rejected') {
         return (
             <span className="inline-flex w-fit items-center rounded-full bg-rose-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-rose-700">
-                Rejected{rejectionStage ? ` · ${rejectionStage}` : ''}
+                {t('integral.rejected')}
+                {rejectionStage ? ` · ${rejectionStage}` : ''}
             </span>
         );
     }
     if (outcome === 'error') {
         return (
             <span className="inline-flex w-fit items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-amber-700">
-                Error
+                {t('integral.error')}
             </span>
         );
     }
@@ -127,10 +127,12 @@ function StatusBadge({ outcome, rejectionStage }: { outcome: string; rejectionSt
 }
 
 function ResponseContent({ response }: { response: string }) {
+    const { t } = useI18n();
+
     if (!response.trim()) {
         return (
             <pre className="max-h-[42vh] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-100 p-4 text-xs leading-relaxed text-slate-700">
-                No response
+                {t('integral.noResponse')}
             </pre>
         );
     }
@@ -153,7 +155,7 @@ function ResponseContent({ response }: { response: string }) {
                     className="rounded-lg bg-white shadow-sm"
                 >
                     <div className="border-b border-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                        Chunk {index + 1}
+                        {t('integral.chunk', { number: index + 1 })}
                     </div>
                     <pre className="whitespace-pre-wrap p-3 text-xs leading-relaxed text-slate-700">
                         {chunk}
@@ -165,6 +167,7 @@ function ResponseContent({ response }: { response: string }) {
 }
 
 export default function IntegralLogsPage() {
+    const { t, formatDate } = useI18n();
     const [logs, setLogs] = useState<IntegralLog[] | null>(null);
     const [total, setTotal] = useState(0);
     const [error, setError] = useState<string | null>(null);
@@ -192,7 +195,7 @@ export default function IntegralLogsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load integral logs',
+                            : 'i18n:integral.loadError',
                     );
                 }
             });
@@ -211,7 +214,7 @@ export default function IntegralLogsPage() {
 
         const parsed = Number(trimmed);
         if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-            setError('key_id must be a positive integer');
+            setError('i18n:integral.invalidKeyId');
             return;
         }
         setOffset(0);
@@ -235,16 +238,16 @@ export default function IntegralLogsPage() {
         return (
             <div className="mx-auto max-w-5xl space-y-6 p-5 md:p-8">
                 <PageHeader
-                    eyebrow="Integral audit"
+                    eyebrow={t('integral.eyebrow')}
                     title={formatDate(selectedLog.createdAt)}
-                    description="Integral log detail"
+                    description={t('integral.detail')}
                     action={
                         <button
                             type="button"
                             onClick={() => setSelectedLog(null)}
                             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                         >
-                            <ArrowLeft size={16} /> Back
+                            <ArrowLeft size={16} /> {t('common.back')}
                         </button>
                     }
                 />
@@ -262,7 +265,7 @@ export default function IntegralLogsPage() {
                 </div>
                 <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900">
-                        <FileJson size={18} className="text-emerald-600" /> Context
+                        <FileJson size={18} className="text-emerald-600" /> {t('integral.context')}
                     </div>
                     <pre className="max-h-[42vh] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-xs leading-relaxed text-emerald-50">
                         {prettyJSON(selectedLog.context)}
@@ -270,7 +273,7 @@ export default function IntegralLogsPage() {
                 </section>
                 <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900">
-                        <FileJson size={18} className="text-teal-600" /> Response
+                        <FileJson size={18} className="text-teal-600" /> {t('integral.response')}
                     </div>
                     <ResponseContent response={selectedLog.response} />
                 </section>
@@ -281,13 +284,13 @@ export default function IntegralLogsPage() {
     return (
         <div className="mx-auto max-w-7xl space-y-6 p-5 md:p-8">
             <PageHeader
-                eyebrow="Integral audit"
-                title="Integral Logs"
-                description="Inspect gateway request and response logs."
+                eyebrow={t('integral.eyebrow')}
+                title={t('integral.title')}
+                description={t('integral.description')}
                 action={
                     <form onSubmit={applyFilter} className="flex w-full gap-2 sm:w-auto">
                         <label className="sr-only" htmlFor="integral-key-filter">
-                            API key ID
+                            {t('integral.apiKeyId')}
                         </label>
                         <input
                             id="integral-key-filter"
@@ -297,7 +300,7 @@ export default function IntegralLogsPage() {
                             onChange={(event) => setKeyFilter(event.target.value)}
                             placeholder="key_id"
                         />
-                        <button className={buttonClass} aria-label="Apply key filter">
+                        <button className={buttonClass} aria-label={t('integral.applyFilter')}>
                             <Search size={16} />
                         </button>
                     </form>
@@ -309,15 +312,19 @@ export default function IntegralLogsPage() {
             {!logs && <LoadingCards />}
             {logs?.length === 0 && (
                 <EmptyState
-                    title="No integral logs"
-                    description="Change the key_id filter or wait for new proxy traffic."
+                    title={t('integral.emptyTitle')}
+                    description={t('integral.emptyDescription')}
                 />
             )}
             {!!logs?.length && (
                 <section className="space-y-4">
                     <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                         <span>
-                            Showing {offset + 1}-{Math.min(offset + logs.length, total)} of {total}
+                            {t('integral.showing', {
+                                start: offset + 1,
+                                end: Math.min(offset + logs.length, total),
+                                total,
+                            })}
                         </span>
                         <div className="flex gap-2">
                             <button
@@ -326,7 +333,7 @@ export default function IntegralLogsPage() {
                                 onClick={() => setOffset((value) => Math.max(0, value - pageSize))}
                                 className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 disabled:opacity-50"
                             >
-                                Previous
+                                {t('common.previous')}
                             </button>
                             <button
                                 type="button"
@@ -334,7 +341,7 @@ export default function IntegralLogsPage() {
                                 onClick={() => setOffset((value) => value + pageSize)}
                                 className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 disabled:opacity-50"
                             >
-                                Next
+                                {t('common.next')}
                             </button>
                         </div>
                     </div>
@@ -354,6 +361,7 @@ export default function IntegralLogsPage() {
 }
 
 function LogListItem({ log, onClick }: { log: IntegralLog; onClick: () => void }) {
+    const { t, formatDate } = useI18n();
     const summary = logSummary(log);
 
     return (
@@ -368,8 +376,12 @@ function LogListItem({ log, onClick }: { log: IntegralLog; onClick: () => void }
                 </span>
                 {formatDate(log.createdAt)}
             </span>
-            <span className="text-sm text-slate-600">key_id {log.keyId}</span>
-            <span className="text-sm text-slate-600">channel_id {summary.channelId}</span>
+            <span className="text-sm text-slate-600">
+                {t('integral.keyId', { value: log.keyId })}
+            </span>
+            <span className="text-sm text-slate-600">
+                {t('integral.channelId', { value: summary.channelId })}
+            </span>
             <div className="flex flex-col gap-1">
                 <span className="truncate text-sm font-medium text-slate-700" title={summary.model}>
                     {summary.model}

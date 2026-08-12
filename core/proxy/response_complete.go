@@ -26,6 +26,10 @@ func DefaultModifyResponse(onComplete OnCompleteFunc) ModifyResponseFunc {
 			resp.Header.Del("Content-Length")
 			return nil
 		}
+		if !shouldCaptureResponseBody(resp) {
+			onComplete(resp, nil)
+			return nil
+		}
 
 		rawBody, err := io.ReadAll(resp.Body)
 		closeErr := resp.Body.Close()
@@ -77,6 +81,38 @@ func DecodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) 
 
 func isStreamingResponse(resp *http.Response) bool {
 	return strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), eventStreamContentType)
+}
+
+func shouldCaptureResponseBody(resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Disposition")), "attachment") {
+		return false
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+	mediaType := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	if mediaType == "" {
+		return true
+	}
+	if strings.HasPrefix(mediaType, "video/") || strings.HasPrefix(mediaType, "audio/") || strings.HasPrefix(mediaType, "image/") || strings.HasPrefix(mediaType, "font/") {
+		return false
+	}
+
+	switch mediaType {
+	case "application/octet-stream",
+		"application/pdf",
+		"application/zip",
+		"application/gzip",
+		"application/x-tar",
+		"application/x-7z-compressed",
+		"application/x-rar-compressed",
+		"application/wasm":
+		return false
+	}
+
+	return true
 }
 
 func restoreResponseBody(resp *http.Response, body []byte) {
