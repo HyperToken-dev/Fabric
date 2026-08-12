@@ -14,13 +14,32 @@ import (
 
 const eventStreamContentType = "text/event-stream"
 
-func DefaultModifyResponse(onComplete OnCompleteFunc) ModifyResponseFunc {
+func DefaultModifyResponse(onComplete OnCompleteFunc, transforms ...StreamTransformFunc) ModifyResponseFunc {
+	var streamTransform StreamTransformFunc
+	if len(transforms) > 0 {
+		streamTransform = transforms[0]
+	}
 	return func(resp *http.Response) error {
-		if onComplete == nil || resp == nil || resp.Body == nil {
+		if resp == nil || resp.Body == nil {
 			return nil
 		}
 
 		if isStreamingResponse(resp) {
+			if streamTransform != nil {
+				processor, ok, err := streamTransform(resp)
+				if err != nil {
+					return err
+				}
+				if ok && processor != nil {
+					resp.Body = newTransformingReadCloser(resp, resp.Body, processor, onComplete)
+					resp.ContentLength = -1
+					resp.Header.Del("Content-Length")
+					return nil
+				}
+			}
+			if onComplete == nil {
+				return nil
+			}
 			resp.Body = newCompletionReadCloser(resp, resp.Body, onComplete)
 			resp.ContentLength = -1
 			resp.Header.Del("Content-Length")
@@ -51,6 +70,123 @@ func DefaultModifyResponse(onComplete OnCompleteFunc) ModifyResponseFunc {
 		onComplete(resp, decodedBody)
 		return nil
 	}
+}
+
+type transformingReadCloser struct {
+	resp       *http.Response
+	body       io.ReadCloser
+	processor  StreamProcessor
+	onComplete OnCompleteFunc
+	raw        bytes.Buffer
+	out        bytes.Buffer
+	pendingErr error
+	finished   bool
+	stopped    bool
+	once       sync.Once
+	closeOnce  sync.Once
+}
+
+func newTransformingReadCloser(resp *http.Response, body io.ReadCloser, processor StreamProcessor, onComplete OnCompleteFunc) *transformingReadCloser {
+	return &transformingReadCloser{resp: resp, body: body, processor: processor, onComplete: onComplete}
+}
+
+func (r *transformingReadCloser) Read(p []byte) (int, error) {
+	if r.out.Len() == 0 && r.pendingErr != nil {
+		err := r.pendingErr
+		r.pendingErr = nil
+		return 0, err
+	}
+	for r.out.Len() == 0 && !r.finished {
+		buf := make([]byte, len(p))
+		if len(buf) == 0 {
+			buf = make([]byte, 32*1024)
+		}
+		n, err := r.body.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			_, _ = r.raw.Write(chunk)
+			result, writeErr := r.processor.Write(chunk)
+			if len(result.Data) > 0 {
+				_, _ = r.out.Write(result.Data)
+			}
+			if result.Stop {
+				r.stopped = true
+				r.finished = true
+				r.closeBodyAndProcessor()
+				break
+			}
+			if writeErr != nil {
+				r.finished = true
+				r.pendingErr = writeErr
+				break
+			}
+		}
+		if err == io.EOF {
+			finishResult, finishErr := r.processor.Finish()
+			if len(finishResult.Data) > 0 {
+				_, _ = r.out.Write(finishResult.Data)
+			}
+			r.finished = true
+			if finishResult.Stop {
+				r.stopped = true
+				r.closeBodyAndProcessor()
+			} else {
+				r.complete()
+				r.closeProcessor()
+			}
+			if finishErr != nil {
+				r.pendingErr = finishErr
+			}
+			break
+		}
+		if err != nil {
+			r.finished = true
+			r.pendingErr = err
+			break
+		}
+	}
+	if r.out.Len() > 0 {
+		return r.out.Read(p)
+	}
+	if r.pendingErr != nil {
+		err := r.pendingErr
+		r.pendingErr = nil
+		return 0, err
+	}
+	return 0, io.EOF
+}
+
+func (r *transformingReadCloser) Close() error {
+	err := r.body.Close()
+	r.closeProcessor()
+	if !r.stopped {
+		r.complete()
+	}
+	return err
+}
+
+func (r *transformingReadCloser) complete() {
+	if r.onComplete == nil {
+		return
+	}
+	r.once.Do(func() {
+		decodedBody, err := DecodeResponseBody(r.raw.Bytes(), r.resp.Header.Get("Content-Encoding"))
+		if err != nil {
+			decodedBody = nil
+		}
+		r.onComplete(r.resp, decodedBody)
+	})
+}
+
+func (r *transformingReadCloser) closeBodyAndProcessor() {
+	_ = r.body.Close()
+	r.closeProcessor()
+}
+
+func (r *transformingReadCloser) closeProcessor() {
+	r.closeOnce.Do(func() {
+		_ = r.processor.Close()
+	})
 }
 
 func DecodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) {

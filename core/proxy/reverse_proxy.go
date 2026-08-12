@@ -24,16 +24,30 @@ type ModifyResponseFunc func(resp *http.Response) error
 
 type OnCompleteFunc func(resp *http.Response, decodedBody []byte)
 
+type StreamTransformFunc func(resp *http.Response) (StreamProcessor, bool, error)
+
+type StreamProcessor interface {
+	Write(chunk []byte) (StreamResult, error)
+	Finish() (StreamResult, error)
+	Close() error
+}
+
+type StreamResult struct {
+	Data []byte
+	Stop bool
+}
+
 type AuthInjector func(req *http.Request, upstream Upstream)
 
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 type Options struct {
-	Rewrite        RewriteFunc
-	ModifyResponse ModifyResponseFunc
-	OnComplete     OnCompleteFunc
-	AuthInjector   AuthInjector
-	ErrorHandler   ErrorHandler
+	Rewrite         RewriteFunc
+	ModifyResponse  ModifyResponseFunc
+	OnComplete      OnCompleteFunc
+	StreamTransform StreamTransformFunc
+	AuthInjector    AuthInjector
+	ErrorHandler    ErrorHandler
 }
 
 type Proxy struct {
@@ -52,7 +66,7 @@ func New(opts Options) *Proxy {
 
 	modifyResponse := opts.ModifyResponse
 	if modifyResponse == nil {
-		modifyResponse = DefaultModifyResponse(opts.OnComplete)
+		modifyResponse = DefaultModifyResponse(opts.OnComplete, opts.StreamTransform)
 	}
 
 	return &Proxy{proxy: &httputil.ReverseProxy{

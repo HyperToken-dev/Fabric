@@ -51,7 +51,8 @@ func NewOpenAIProxy(opts OpenAIProxyOptions) (*OpenAIProxy, error) {
 		textPolicy:   opts.TextPolicy,
 	}
 	coreProxy := coreopenai.New(coreproxy.Options{
-		OnComplete: p.onComplete,
+		OnComplete:      p.onComplete,
+		StreamTransform: p.openAIStreamTransform,
 	})
 	p.coreProxy = coreProxy
 	return p, nil

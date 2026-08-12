@@ -495,3 +495,152 @@ func TestProxyStreamingOnCompleteTriggeredByCloseBeforeEOF(t *testing.T) {
 		t.Fatal("timed out waiting for onComplete")
 	}
 }
+
+func TestDefaultModifyResponseTransformsStreamingBody(t *testing.T) {
+	body := &chunkReadCloser{chunks: [][]byte{[]byte("hold"), []byte("go")}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       body,
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	resp.Header.Set("Content-Length", "6")
+	resp.ContentLength = 6
+
+	completeCh := make(chan string, 1)
+	processor := &testStreamProcessor{
+		write: func(chunk []byte) (StreamResult, error) {
+			switch string(chunk) {
+			case "hold":
+				return StreamResult{}, nil
+			case "go":
+				return StreamResult{Data: []byte("GO")}, nil
+			default:
+				return StreamResult{Data: chunk}, nil
+			}
+		},
+		finish: func() (StreamResult, error) {
+			return StreamResult{Data: []byte("TAIL")}, nil
+		},
+	}
+	modify := DefaultModifyResponse(func(resp *http.Response, decodedBody []byte) {
+		completeCh <- string(decodedBody)
+	}, func(resp *http.Response) (StreamProcessor, bool, error) {
+		return processor, true, nil
+	})
+
+	if err := modify(resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "" {
+		t.Fatalf("Content-Length = %q, want empty", got)
+	}
+	if resp.ContentLength != -1 {
+		t.Fatalf("ContentLength = %d, want -1", resp.ContentLength)
+	}
+
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "GOTAIL" {
+		t.Fatalf("transformed body = %q, want GOTAIL", out)
+	}
+	select {
+	case got := <-completeCh:
+		if got != "holdgo" {
+			t.Fatalf("complete body = %q, want holdgo", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for onComplete")
+	}
+	if processor.closeCalls != 1 {
+		t.Fatalf("processor close calls = %d, want 1", processor.closeCalls)
+	}
+}
+
+func TestDefaultModifyResponseStopsTransformedStreamingBody(t *testing.T) {
+	body := &chunkReadCloser{chunks: [][]byte{[]byte("stop"), []byte("unsafe")}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       body,
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+
+	completeCalled := false
+	processor := &testStreamProcessor{
+		write: func(chunk []byte) (StreamResult, error) {
+			return StreamResult{Data: []byte("blocked"), Stop: true}, nil
+		},
+	}
+	modify := DefaultModifyResponse(func(resp *http.Response, decodedBody []byte) {
+		completeCalled = true
+	}, func(resp *http.Response) (StreamProcessor, bool, error) {
+		return processor, true, nil
+	})
+
+	if err := modify(resp); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "blocked" {
+		t.Fatalf("transformed body = %q, want blocked", out)
+	}
+	if !body.closed {
+		t.Fatal("upstream body was not closed after stop")
+	}
+	if completeCalled {
+		t.Fatal("onComplete should not be called for stopped stream")
+	}
+	if processor.closeCalls != 1 {
+		t.Fatalf("processor close calls = %d, want 1", processor.closeCalls)
+	}
+}
+
+type chunkReadCloser struct {
+	chunks [][]byte
+	closed bool
+}
+
+func (r *chunkReadCloser) Read(p []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	chunk := r.chunks[0]
+	r.chunks = r.chunks[1:]
+	return copy(p, chunk), nil
+}
+
+func (r *chunkReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+type testStreamProcessor struct {
+	write      func([]byte) (StreamResult, error)
+	finish     func() (StreamResult, error)
+	closeCalls int
+}
+
+func (p *testStreamProcessor) Write(chunk []byte) (StreamResult, error) {
+	if p.write == nil {
+		return StreamResult{Data: chunk}, nil
+	}
+	return p.write(chunk)
+}
+
+func (p *testStreamProcessor) Finish() (StreamResult, error) {
+	if p.finish == nil {
+		return StreamResult{}, nil
+	}
+	return p.finish()
+}
+
+func (p *testStreamProcessor) Close() error {
+	p.closeCalls++
+	return nil
+}

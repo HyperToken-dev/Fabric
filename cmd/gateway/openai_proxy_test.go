@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -391,6 +392,125 @@ func TestOpenAIProxyModifyResponseRejectsOutputAndRestoresBody(t *testing.T) {
 	if loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "output" || loggedContext.RejectionReason != "sensitive" || loggedContext.ResponseStatus != http.StatusUnprocessableEntity {
 		t.Fatalf("context = %+v", loggedContext)
 	}
+}
+
+func TestOpenAIProxyStreamsSafeOutputWithRetainedTail(t *testing.T) {
+	previousTail := openAIStreamSafetyTailRunes
+	openAIStreamSafetyTailRunes = 1
+	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
+
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write(openAIChatContentEvent("ab"))
+		flusher.Flush()
+		_, _ = w.Write(openAIChatContentEvent("cd"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	for _, want := range []string{`"content":"a"`, `"content":"bc"`, `"content":"d"`, "data: [DONE]"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stream body = %q, want %s", got, want)
+		}
+	}
+}
+
+func TestOpenAIProxyRejectsSensitiveOutputSplitAcrossStreamChunks(t *testing.T) {
+	previousTail := openAIStreamSafetyTailRunes
+	openAIStreamSafetyTailRunes = 6
+	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
+
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1)}
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 33, Status: ModelStatusActive}},
+		UsageHandler:       usageHandler,
+		IntegralLogHandler: integralLogs,
+		TextPolicy:         newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write(openAIChatContentEvent("hello blo"))
+		flusher.Flush()
+		_, _ = w.Write(openAIChatContentEvent("cked"))
+		flusher.Flush()
+		_, _ = w.Write(openAIChatContentEvent(" should not continue"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 7, 8, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	gotBody := rec.Body.String()
+	if !strings.Contains(gotBody, `"content":"hel"`) {
+		t.Fatalf("body = %q, want safe prefix", gotBody)
+	}
+	if strings.Contains(gotBody, "blocked") || strings.Contains(gotBody, "should not continue") {
+		t.Fatalf("body leaked unsafe upstream content: %q", gotBody)
+	}
+	if !strings.Contains(gotBody, `"code":"sensitive_output"`) || !strings.Contains(gotBody, "data: [DONE]") {
+		t.Fatalf("body = %q, want rejection SSE", gotBody)
+	}
+
+	gotLog := receiveIntegralLog(t, integralLogs.ch)
+	if gotLog.keyID != 7 {
+		t.Fatalf("keyID = %d, want 7", gotLog.keyID)
+	}
+	if strings.Contains(gotLog.response, "blocked") {
+		t.Fatalf("integral response leaked blocked text: %q", gotLog.response)
+	}
+	var loggedContext struct {
+		Outcome         string `json:"outcome"`
+		RejectionStage  string `json:"rejection_stage"`
+		RejectionReason string `json:"rejection_reason"`
+		ResponseStatus  int    `json:"response_status"`
+		ModelID         int32  `json:"model_id"`
+		ChannelID       int32  `json:"channel_id"`
+	}
+	if err := json.Unmarshal([]byte(gotLog.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "output" || loggedContext.RejectionReason != "sensitive" || loggedContext.ResponseStatus != http.StatusOK || loggedContext.ModelID != 33 || loggedContext.ChannelID != 8 {
+		t.Fatalf("context = %+v", loggedContext)
+	}
+	select {
+	case got := <-usageHandler.streamingCh:
+		t.Fatalf("unexpected usage for rejected stream: %+v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func openAIChatContentEvent(content string) []byte {
+	return []byte(`data: {"choices":[{"index":0,"delta":{"content":` + strconv.Quote(content) + `}}]}` + "\n\n")
 }
 
 type fakeModelStore struct {
