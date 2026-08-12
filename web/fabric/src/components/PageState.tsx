@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { AlertCircle, Inbox, RefreshCw } from 'lucide-react';
+import { useI18n } from '../i18n';
 
 export function PageHeader({
     eyebrow,
@@ -27,17 +28,19 @@ export function PageHeader({
 }
 
 export function ErrorState({ message, retry }: { message: string; retry: () => void }) {
+    const { t, formatErrorMessage } = useI18n();
+
     return (
         <div className="rounded-2xl border border-rose-100 bg-white p-8 text-center shadow-sm">
             <AlertCircle className="mx-auto text-rose-500" />
-            <p className="mt-3 font-semibold text-slate-900">Unable to load data</p>
-            <p className="mt-1 text-sm text-slate-500">{message}</p>
+            <p className="mt-3 font-semibold text-slate-900">{t('common.unableToLoadData')}</p>
+            <p className="mt-1 text-sm text-slate-500">{formatErrorMessage(message)}</p>
             <button
                 type="button"
                 onClick={retry}
                 className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
             >
-                <RefreshCw size={15} /> Retry
+                <RefreshCw size={15} /> {t('common.retry')}
             </button>
         </div>
     );
@@ -64,11 +67,13 @@ export function LoadingCards() {
 }
 
 export function RefreshWarning({ message, retry }: { message: string; retry: () => void }) {
+    const { t, formatErrorMessage } = useI18n();
+
     return (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <span>{message}</span>
+            <span>{formatErrorMessage(message)}</span>
             <button type="button" onClick={retry} className="font-semibold underline">
-                Retry
+                {t('common.retry')}
             </button>
         </div>
     );

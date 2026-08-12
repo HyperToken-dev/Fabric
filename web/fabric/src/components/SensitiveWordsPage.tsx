@@ -24,8 +24,10 @@ import {
     PageHeader,
     RefreshWarning,
 } from './PageState';
+import { useI18n } from '../i18n';
 
 export default function SensitiveWordsPage() {
+    const { t } = useI18n();
     const [status, setStatus] = useState<SensitiveWordStatus | null>(null);
     const [dictionaries, setDictionaries] = useState<SensitiveDictionarySummary[] | null>(null);
     const [selectedName, setSelectedName] = useState('');
@@ -61,7 +63,7 @@ export default function SensitiveWordsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load sensitive words',
+                            : 'i18n:sensitive.loadError',
                     );
                 }
             });
@@ -87,7 +89,7 @@ export default function SensitiveWordsPage() {
                     setError(
                         requestError instanceof Error
                             ? requestError.message
-                            : 'Unable to load dictionary',
+                            : 'i18n:sensitive.loadDictionaryError',
                     );
                 }
             });
@@ -105,7 +107,7 @@ export default function SensitiveWordsPage() {
             setError(
                 requestError instanceof Error
                     ? requestError.message
-                    : 'Unable to update sensitive word detection',
+                    : 'i18n:sensitive.updateDetectionError',
             );
         } finally {
             setSaving(false);
@@ -117,7 +119,7 @@ export default function SensitiveWordsPage() {
         if (saving) return;
         const name = newName.trim();
         if (!name) {
-            setError('Dictionary name is required.');
+            setError('i18n:sensitive.nameRequired');
             return;
         }
         setSaving(true);
@@ -148,9 +150,7 @@ export default function SensitiveWordsPage() {
             setVersion((value) => value + 1);
         } catch (requestError) {
             setError(
-                requestError instanceof Error
-                    ? requestError.message
-                    : 'Unable to create dictionary',
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.createError',
             );
         } finally {
             setSaving(false);
@@ -171,7 +171,7 @@ export default function SensitiveWordsPage() {
             setError(
                 requestError instanceof Error
                     ? requestError.message
-                    : 'Unable to update effect models',
+                    : 'i18n:sensitive.updateModelsError',
             );
         } finally {
             setSaving(false);
@@ -192,7 +192,7 @@ export default function SensitiveWordsPage() {
             setError(
                 requestError instanceof Error
                     ? requestError.message
-                    : 'Unable to update dictionary status',
+                    : 'i18n:sensitive.updateStatusError',
             );
         } finally {
             setSaving(false);
@@ -210,7 +210,9 @@ export default function SensitiveWordsPage() {
             updateSelected(dictionary);
             setNewWordsText('');
         } catch (requestError) {
-            setError(requestError instanceof Error ? requestError.message : 'Unable to add words');
+            setError(
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.addError',
+            );
         } finally {
             setSaving(false);
         }
@@ -225,7 +227,7 @@ export default function SensitiveWordsPage() {
             updateSelected(dictionary);
         } catch (requestError) {
             setError(
-                requestError instanceof Error ? requestError.message : 'Unable to remove word',
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.removeError',
             );
         } finally {
             setSaving(false);
@@ -234,7 +236,7 @@ export default function SensitiveWordsPage() {
 
     async function deleteDictionary() {
         if (!selected || saving) return;
-        if (!window.confirm(`Delete sensitive dictionary "${selected.name}"?`)) return;
+        if (!window.confirm(t('sensitive.deleteConfirm', { name: selected.name }))) return;
         setSaving(true);
         setError(null);
         try {
@@ -247,9 +249,7 @@ export default function SensitiveWordsPage() {
             setVersion((value) => value + 1);
         } catch (requestError) {
             setError(
-                requestError instanceof Error
-                    ? requestError.message
-                    : 'Unable to delete dictionary',
+                requestError instanceof Error ? requestError.message : 'i18n:sensitive.deleteError',
             );
         } finally {
             setSaving(false);
@@ -285,16 +285,16 @@ export default function SensitiveWordsPage() {
     return (
         <div className="mx-auto max-w-7xl space-y-6 p-5 md:p-8">
             <PageHeader
-                eyebrow="Policy control"
-                title="Fire Wall"
-                description="Control detection, model scopes, and dictionary words from one place."
+                eyebrow={t('sensitive.eyebrow')}
+                title={t('sensitive.title')}
+                description={t('sensitive.description')}
                 action={
                     <button
                         type="button"
                         onClick={() => setCreateOpen((value) => !value)}
                         className={buttonClass}
                     >
-                        <Plus size={16} /> New dictionary
+                        <Plus size={16} /> {t('sensitive.newDictionary')}
                     </button>
                 }
             />
@@ -308,12 +308,12 @@ export default function SensitiveWordsPage() {
                         <div className="flex items-center justify-between gap-4">
                             <div>
                                 <p className="text-sm font-semibold text-slate-900">
-                                    Global detection
+                                    {t('sensitive.globalDetection')}
                                 </p>
                                 <p className="text-sm text-slate-500">
                                     {status.enabled
-                                        ? 'Requests are checked against enabled dictionaries.'
-                                        : 'Dictionaries are saved but request detection is disabled.'}
+                                        ? t('sensitive.globalEnabledDescription')
+                                        : t('sensitive.globalDisabledDescription')}
                                 </p>
                             </div>
                             <button
@@ -326,7 +326,7 @@ export default function SensitiveWordsPage() {
                                         : 'bg-slate-100 text-slate-600'
                                 }`}
                             >
-                                {status.enabled ? 'Enabled' : 'Disabled'}
+                                {status.enabled ? t('common.enabled') : t('common.disabled')}
                             </button>
                         </div>
                     </div>
@@ -339,30 +339,30 @@ export default function SensitiveWordsPage() {
                 >
                     <div className="grid gap-4 lg:grid-cols-3">
                         <label className="text-sm font-medium text-slate-700">
-                            Dictionary name
+                            {t('sensitive.dictionaryName')}
                             <input
                                 className={inputClass}
                                 value={newName}
                                 onChange={(event) => setNewName(event.target.value)}
-                                placeholder="Default dictionary"
+                                placeholder={t('sensitive.dictionaryPlaceholder')}
                             />
                         </label>
                         <label className="text-sm font-medium text-slate-700">
-                            Effect models
+                            {t('sensitive.effectModels')}
                             <textarea
                                 className={`${inputClass} min-h-28`}
                                 value={newEffectModelsText}
                                 onChange={(event) => setNewEffectModelsText(event.target.value)}
-                                placeholder="One model per line; empty means all models"
+                                placeholder={t('sensitive.effectModelsPlaceholder')}
                             />
                         </label>
                         <label className="text-sm font-medium text-slate-700">
-                            Initial words
+                            {t('sensitive.initialWords')}
                             <textarea
                                 className={`${inputClass} min-h-28`}
                                 value={newDictionaryWordsText}
                                 onChange={(event) => setNewDictionaryWordsText(event.target.value)}
-                                placeholder="One word per line"
+                                placeholder={t('sensitive.wordsPlaceholder')}
                             />
                         </label>
                     </div>
@@ -371,14 +371,14 @@ export default function SensitiveWordsPage() {
                         disabled={saving || !newName.trim()}
                         className={`${buttonClass} mt-4`}
                     >
-                        Create dictionary
+                        {t('sensitive.createDictionary')}
                     </button>
                 </form>
             )}
             {dictionaries?.length === 0 && (
                 <EmptyState
-                    title="No sensitive dictionaries yet"
-                    description="Create a dictionary to start adding UI-managed sensitive words."
+                    title={t('sensitive.emptyTitle')}
+                    description={t('sensitive.emptyDescription')}
                 />
             )}
             {!!dictionaries?.length && (
@@ -406,14 +406,16 @@ export default function SensitiveWordsPage() {
                                                 : 'bg-slate-100 text-slate-500'
                                         }`}
                                     >
-                                        {dictionary.enabled ? 'On' : 'Off'}
+                                        {dictionary.enabled ? t('common.on') : t('common.off')}
                                     </span>
                                 </div>
                                 <p className="mt-2 text-sm text-slate-500">
-                                    {dictionary.wordCount} words ·{' '}
+                                    {t('common.words', { count: dictionary.wordCount })} ·{' '}
                                     {dictionary.effectModels.length
-                                        ? `${dictionary.effectModels.length} models`
-                                        : 'All models'}
+                                        ? t('common.models', {
+                                              count: dictionary.effectModels.length,
+                                          })
+                                        : t('common.allModels')}
                                 </p>
                             </button>
                         ))}
@@ -462,11 +464,13 @@ function DictionaryEditor({
     removeWord: (word: string) => void;
     deleteDictionary: () => void;
 }) {
+    const { t } = useI18n();
+
     if (!dictionary) {
         return (
             <div className="rounded-3xl border border-slate-100 bg-white p-8 text-center text-slate-500 shadow-sm">
                 <ShieldAlert className="mx-auto mb-3 text-slate-400" />
-                Select a dictionary to edit its scope and words.
+                {t('sensitive.selectDictionary')}
             </div>
         );
     }
@@ -479,7 +483,7 @@ function DictionaryEditor({
                     <p className="text-sm text-slate-500">
                         {dictionary.effectModels.length
                             ? dictionary.effectModels.join(', ')
-                            : 'Applies to all models'}
+                            : t('common.appliesToAllModels')}
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -489,7 +493,7 @@ function DictionaryEditor({
                         disabled={saving}
                         className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
                     >
-                        {dictionary.enabled ? 'Disable' : 'Enable'}
+                        {dictionary.enabled ? t('common.disable') : t('common.enable')}
                     </button>
                     <button
                         type="button"
@@ -497,17 +501,17 @@ function DictionaryEditor({
                         disabled={saving}
                         className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-600"
                     >
-                        <Trash2 size={15} /> Delete
+                        <Trash2 size={15} /> {t('common.delete')}
                     </button>
                 </div>
             </div>
             <label className="block text-sm font-medium text-slate-700">
-                Effect models
+                {t('sensitive.effectModels')}
                 <textarea
                     className={`${inputClass} mt-1 min-h-28`}
                     value={effectModelsText}
                     onChange={(event) => setEffectModelsText(event.target.value)}
-                    placeholder="One model per line; empty means all models"
+                    placeholder={t('sensitive.effectModelsPlaceholder')}
                 />
             </label>
             <button
@@ -516,15 +520,17 @@ function DictionaryEditor({
                 disabled={saving}
                 className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
             >
-                <Save size={15} /> Save models
+                <Save size={15} /> {t('sensitive.saveModels')}
             </button>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
                 <div>
-                    <p className="mb-2 text-sm font-semibold text-slate-900">Words</p>
+                    <p className="mb-2 text-sm font-semibold text-slate-900">
+                        {t('sensitive.words')}
+                    </p>
                     <div className="max-h-96 space-y-2 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50 p-3">
                         {dictionary.words.length === 0 && (
                             <p className="py-6 text-center text-sm text-slate-500">
-                                No words in this dictionary.
+                                {t('sensitive.noWords')}
                             </p>
                         )}
                         {dictionary.words.map((word) => (
@@ -539,7 +545,7 @@ function DictionaryEditor({
                                     disabled={saving}
                                     className="text-rose-600 disabled:opacity-50"
                                 >
-                                    Remove
+                                    {t('common.remove')}
                                 </button>
                             </div>
                         ))}
@@ -547,12 +553,12 @@ function DictionaryEditor({
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-slate-700">
-                        Add words
+                        {t('sensitive.addWords')}
                         <textarea
                             className={`${inputClass} mt-1 min-h-40`}
                             value={newWordsText}
                             onChange={(event) => setNewWordsText(event.target.value)}
-                            placeholder="One word per line"
+                            placeholder={t('sensitive.wordsPlaceholder')}
                         />
                     </label>
                     <button
@@ -561,7 +567,7 @@ function DictionaryEditor({
                         disabled={saving || parseLines(newWordsText).length === 0}
                         className={`${buttonClass} mt-3 w-full`}
                     >
-                        Add words
+                        {t('sensitive.addWords')}
                     </button>
                 </div>
             </div>
