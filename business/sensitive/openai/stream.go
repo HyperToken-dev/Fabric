@@ -1,127 +1,12 @@
 package openai
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/HyperToken-dev/fabric/protocol/sse"
 )
-
-type SSEEvent struct {
-	Event string
-	Data  string
-	Raw   []byte
-}
-
-type SSEParser struct {
-	line  bytes.Buffer
-	event sseEventBuilder
-}
-
-type sseEventBuilder struct {
-	event string
-	data  bytes.Buffer
-	raw   bytes.Buffer
-}
-
-func (p *SSEParser) Write(chunk []byte) ([]SSEEvent, error) {
-	var events []SSEEvent
-	for len(chunk) > 0 {
-		idx := bytes.IndexByte(chunk, '\n')
-		if idx < 0 {
-			_, err := p.line.Write(chunk)
-			return events, err
-		}
-
-		if _, err := p.line.Write(chunk[:idx+1]); err != nil {
-			return events, err
-		}
-		lineBytes := append([]byte(nil), p.line.Bytes()...)
-		p.line.Reset()
-
-		event, ok, err := p.consumeLine(lineBytes)
-		if err != nil {
-			return events, err
-		}
-		if ok {
-			events = append(events, event)
-		}
-		chunk = chunk[idx+1:]
-	}
-	return events, nil
-}
-
-func (p *SSEParser) Finish() ([]SSEEvent, error) {
-	if p.line.Len() > 0 {
-		lineBytes := append([]byte(nil), p.line.Bytes()...)
-		p.line.Reset()
-		if !bytes.HasSuffix(lineBytes, []byte("\n")) {
-			lineBytes = append(lineBytes, '\n')
-		}
-		if _, _, err := p.consumeLine(lineBytes); err != nil {
-			return nil, err
-		}
-	}
-	if p.event.raw.Len() == 0 {
-		return nil, nil
-	}
-	event := p.event.finish()
-	p.event = sseEventBuilder{}
-	return []SSEEvent{event}, nil
-}
-
-func (p *SSEParser) consumeLine(lineBytes []byte) (SSEEvent, bool, error) {
-	line := strings.TrimSuffix(string(lineBytes), "\n")
-	line = strings.TrimSuffix(line, "\r")
-	if line == "" {
-		if _, err := p.event.raw.Write(lineBytes); err != nil {
-			return SSEEvent{}, false, err
-		}
-		event := p.event.finish()
-		p.event = sseEventBuilder{}
-		return event, true, nil
-	}
-	if _, err := p.event.raw.Write(lineBytes); err != nil {
-		return SSEEvent{}, false, err
-	}
-	if strings.HasPrefix(line, ":") {
-		return SSEEvent{}, false, nil
-	}
-
-	field, value, found := strings.Cut(line, ":")
-	if !found {
-		field = line
-		value = ""
-	} else if strings.HasPrefix(value, " ") {
-		value = strings.TrimPrefix(value, " ")
-	}
-
-	switch field {
-	case "event":
-		p.event.event = value
-	case "data":
-		if p.event.data.Len() > 0 {
-			if err := p.event.data.WriteByte('\n'); err != nil {
-				return SSEEvent{}, false, err
-			}
-		}
-		_, err := p.event.data.WriteString(value)
-		return SSEEvent{}, false, err
-	}
-	return SSEEvent{}, false, nil
-}
-
-func (b *sseEventBuilder) finish() SSEEvent {
-	return SSEEvent{
-		Event: b.event,
-		Data:  b.data.String(),
-		Raw:   append([]byte(nil), b.raw.Bytes()...),
-	}
-}
-
-func (e SSEEvent) Done() bool {
-	return strings.TrimSpace(e.Data) == "[DONE]"
-}
 
 type chatStreamChunk struct {
 	Choices []chatStreamChoice `json:"choices"`
@@ -135,7 +20,46 @@ type chatStreamDelta struct {
 	Content json.RawMessage `json:"content,omitempty"`
 }
 
-func ExtractChatCompletionStreamText(event SSEEvent) (string, bool, error) {
+type StreamTextKind int
+
+const (
+	StreamTextDelta StreamTextKind = iota
+	StreamTextSnapshot
+)
+
+type StreamText struct {
+	Text string
+	Kind StreamTextKind
+}
+
+type responsesStreamEvent struct {
+	Type         string `json:"type"`
+	Delta        string `json:"delta"`
+	Text         string `json:"text"`
+	ItemID       string `json:"item_id"`
+	OutputIndex  int    `json:"output_index"`
+	ContentIndex int    `json:"content_index"`
+	Part         struct {
+		Text string `json:"text"`
+	} `json:"part"`
+	Item struct {
+		Content []openAIContentPart `json:"content"`
+	} `json:"item"`
+	Response struct {
+		OutputText string `json:"output_text"`
+		Output     []struct {
+			Content []openAIContentPart `json:"content"`
+		} `json:"output"`
+	} `json:"response"`
+}
+
+type ResponsesStreamDeltaMetadata struct {
+	ItemID       string
+	OutputIndex  int
+	ContentIndex int
+}
+
+func ExtractChatCompletionStreamText(event sse.Event) (string, bool, error) {
 	data := strings.TrimSpace(event.Data)
 	if data == "" || data == "[DONE]" {
 		return "", false, nil
@@ -162,7 +86,7 @@ func ExtractChatCompletionStreamText(event SSEEvent) (string, bool, error) {
 	return text.String(), true, nil
 }
 
-func RewriteChatCompletionStreamText(event SSEEvent, text string) ([]byte, error) {
+func RewriteChatCompletionStreamText(event sse.Event, text string) ([]byte, error) {
 	if text == "" {
 		return nil, nil
 	}
@@ -189,7 +113,7 @@ func RewriteChatCompletionStreamText(event SSEEvent, text string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	return formatSSEData(event.Event, encoded), nil
+	return sse.FormatData(event.Event, encoded), nil
 }
 
 func NewChatCompletionStreamTextEvent(text string) []byte {
@@ -208,18 +132,132 @@ func NewChatCompletionStreamTextEvent(text string) []byte {
 	if err != nil {
 		return nil
 	}
-	return formatSSEData("", encoded)
+	return sse.FormatData("", encoded)
 }
 
-func formatSSEData(event string, data []byte) []byte {
-	var out bytes.Buffer
-	if event != "" {
-		_, _ = out.WriteString("event: ")
-		_, _ = out.WriteString(event)
-		_, _ = out.WriteString("\n")
+func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
+	data := strings.TrimSpace(event.Data)
+	if data == "" || data == "[DONE]" {
+		return StreamText{}, false, nil
 	}
-	_, _ = out.WriteString("data: ")
-	_, _ = out.Write(data)
-	_, _ = out.WriteString("\n\n")
-	return out.Bytes()
+
+	var streamEvent responsesStreamEvent
+	if err := json.Unmarshal([]byte(data), &streamEvent); err != nil {
+		return StreamText{}, false, fmt.Errorf("parse openai responses stream event: %w", err)
+	}
+	eventType := streamEvent.Type
+	if eventType == "" {
+		eventType = event.Event
+	}
+	switch eventType {
+	case "response.output_text.delta":
+		if streamEvent.Delta == "" {
+			return StreamText{}, false, nil
+		}
+		return StreamText{Text: streamEvent.Delta, Kind: StreamTextDelta}, true, nil
+	case "response.output_text.done":
+		if strings.TrimSpace(streamEvent.Text) == "" {
+			return StreamText{}, false, nil
+		}
+		return StreamText{Text: streamEvent.Text, Kind: StreamTextSnapshot}, true, nil
+	case "response.content_part.done":
+		if strings.TrimSpace(streamEvent.Part.Text) == "" {
+			return StreamText{}, false, nil
+		}
+		return StreamText{Text: streamEvent.Part.Text, Kind: StreamTextSnapshot}, true, nil
+	case "response.output_item.done":
+		text := joinContentPartTexts(streamEvent.Item.Content)
+		if strings.TrimSpace(text) == "" {
+			return StreamText{}, false, nil
+		}
+		return StreamText{Text: text, Kind: StreamTextSnapshot}, true, nil
+	case "response.completed":
+		texts := []string{streamEvent.Response.OutputText}
+		for _, output := range streamEvent.Response.Output {
+			texts = append(texts, joinContentPartTexts(output.Content))
+		}
+		text := strings.Join(nonEmptyStrings(texts), "\n")
+		if strings.TrimSpace(text) == "" {
+			return StreamText{}, false, nil
+		}
+		return StreamText{Text: text, Kind: StreamTextSnapshot}, true, nil
+	default:
+		return StreamText{}, false, nil
+	}
+}
+
+func RewriteResponsesStreamDelta(event sse.Event, text string) ([]byte, error) {
+	if text == "" {
+		return nil, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(event.Data), &payload); err != nil {
+		return nil, fmt.Errorf("parse openai responses stream event for rewrite: %w", err)
+	}
+	payload["delta"] = text
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return sse.FormatData(event.Event, encoded), nil
+}
+
+func ExtractResponsesStreamDeltaMetadata(event sse.Event) (ResponsesStreamDeltaMetadata, bool, error) {
+	data := strings.TrimSpace(event.Data)
+	if data == "" || data == "[DONE]" {
+		return ResponsesStreamDeltaMetadata{}, false, nil
+	}
+	var streamEvent responsesStreamEvent
+	if err := json.Unmarshal([]byte(data), &streamEvent); err != nil {
+		return ResponsesStreamDeltaMetadata{}, false, fmt.Errorf("parse openai responses stream metadata: %w", err)
+	}
+	eventType := streamEvent.Type
+	if eventType == "" {
+		eventType = event.Event
+	}
+	if eventType != "response.output_text.delta" {
+		return ResponsesStreamDeltaMetadata{}, false, nil
+	}
+	return ResponsesStreamDeltaMetadata{
+		ItemID:       streamEvent.ItemID,
+		OutputIndex:  streamEvent.OutputIndex,
+		ContentIndex: streamEvent.ContentIndex,
+	}, true, nil
+}
+
+func NewResponsesStreamDeltaEvent(text string, metadata ResponsesStreamDeltaMetadata) []byte {
+	if text == "" {
+		return nil
+	}
+	payload := map[string]any{
+		"type":          "response.output_text.delta",
+		"item_id":       metadata.ItemID,
+		"output_index":  metadata.OutputIndex,
+		"content_index": metadata.ContentIndex,
+		"delta":         text,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return sse.FormatData("response.output_text.delta", encoded)
+}
+
+func joinContentPartTexts(parts []openAIContentPart) string {
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		texts = append(texts, part.Text)
+	}
+	return strings.Join(nonEmptyStrings(texts), "\n")
+}
+
+func nonEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }

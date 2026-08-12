@@ -4,51 +4,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/HyperToken-dev/fabric/protocol/sse"
 )
 
-func TestSSEParserEmitsEventsSplitAcrossChunks(t *testing.T) {
-	var parser SSEParser
-	events, err := parser.Write([]byte("event: message\ndata: {\"choices\""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 0 {
-		t.Fatalf("events = %d, want 0", len(events))
-	}
-	events, err = parser.Write([]byte(":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1", len(events))
-	}
-	if events[0].Event != "message" {
-		t.Fatalf("event = %q, want message", events[0].Event)
-	}
-	if !strings.Contains(events[0].Data, `"content":"hi"`) {
-		t.Fatalf("data = %q", events[0].Data)
-	}
-}
-
-func TestSSEParserHandlesCommentsAndDone(t *testing.T) {
-	var parser SSEParser
-	events, err := parser.Write([]byte(": keep-alive\n\ndata: [DONE]\n\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("events = %d, want 2", len(events))
-	}
-	if _, ok, err := ExtractChatCompletionStreamText(events[0]); err != nil || ok {
-		t.Fatalf("comment extraction ok = %v, err = %v; want no text", ok, err)
-	}
-	if !events[1].Done() {
-		t.Fatal("second event should be DONE")
-	}
-}
-
 func TestExtractChatCompletionStreamText(t *testing.T) {
-	event := SSEEvent{Data: `{"choices":[{"delta":{"content":"hello"}}]}`}
+	event := sse.Event{Data: `{"choices":[{"delta":{"content":"hello"}}]}`}
 	text, ok, err := ExtractChatCompletionStreamText(event)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +18,7 @@ func TestExtractChatCompletionStreamText(t *testing.T) {
 		t.Fatalf("text = %q, ok = %v; want hello true", text, ok)
 	}
 
-	noText := SSEEvent{Data: `{"choices":[{"delta":{"role":"assistant"}}]}`}
+	noText := sse.Event{Data: `{"choices":[{"delta":{"role":"assistant"}}]}`}
 	text, ok, err = ExtractChatCompletionStreamText(noText)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +29,7 @@ func TestExtractChatCompletionStreamText(t *testing.T) {
 }
 
 func TestRewriteChatCompletionStreamText(t *testing.T) {
-	event := SSEEvent{Data: `{"id":"chatcmpl","choices":[{"index":0,"delta":{"content":"unsafe"}}]}`}
+	event := sse.Event{Data: `{"id":"chatcmpl","choices":[{"index":0,"delta":{"content":"unsafe"}}]}`}
 	rewritten, err := RewriteChatCompletionStreamText(event, "safe")
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +54,7 @@ func TestRewriteChatCompletionStreamText(t *testing.T) {
 }
 
 func TestRewriteChatCompletionStreamTextSkipsEmptySafeText(t *testing.T) {
-	rewritten, err := RewriteChatCompletionStreamText(SSEEvent{Data: `{"choices":[{"delta":{"content":"held"}}]}`}, "")
+	rewritten, err := RewriteChatCompletionStreamText(sse.Event{Data: `{"choices":[{"delta":{"content":"held"}}]}`}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +64,74 @@ func TestRewriteChatCompletionStreamTextSkipsEmptySafeText(t *testing.T) {
 }
 
 func TestExtractChatCompletionStreamTextInvalidJSON(t *testing.T) {
-	_, _, err := ExtractChatCompletionStreamText(SSEEvent{Data: `{`})
+	_, _, err := ExtractChatCompletionStreamText(sse.Event{Data: `{`})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestExtractResponsesStreamTextDelta(t *testing.T) {
+	event := sse.Event{Event: "response.output_text.delta", Data: `{"type":"response.output_text.delta","delta":"Hi"}`}
+	text, ok, err := ExtractResponsesStreamText(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || text.Kind != StreamTextDelta || text.Text != "Hi" {
+		t.Fatalf("text = %+v, ok = %v; want delta Hi", text, ok)
+	}
+}
+
+func TestExtractResponsesStreamTextSnapshots(t *testing.T) {
+	tests := []struct {
+		name  string
+		event sse.Event
+	}{
+		{name: "output text done", event: sse.Event{Event: "response.output_text.done", Data: `{"type":"response.output_text.done","text":"Hi there"}`}},
+		{name: "content part done", event: sse.Event{Event: "response.content_part.done", Data: `{"type":"response.content_part.done","part":{"type":"output_text","text":"Hi there"}}`}},
+		{name: "output item done", event: sse.Event{Event: "response.output_item.done", Data: `{"type":"response.output_item.done","item":{"content":[{"type":"output_text","text":"Hi there"}]}}`}},
+		{name: "completed", event: sse.Event{Event: "response.completed", Data: `{"type":"response.completed","response":{"output_text":"Hi there"}}`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, ok, err := ExtractResponsesStreamText(tt.event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok || text.Kind != StreamTextSnapshot || text.Text != "Hi there" {
+				t.Fatalf("text = %+v, ok = %v; want snapshot Hi there", text, ok)
+			}
+		})
+	}
+}
+
+func TestRewriteResponsesStreamDelta(t *testing.T) {
+	event := sse.Event{Event: "response.output_text.delta", Data: `{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"unsafe"}`}
+	rewritten, err := RewriteResponsesStreamDelta(event, "safe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(rewritten), "event: response.output_text.delta\n") {
+		t.Fatalf("rewritten event = %q", rewritten)
+	}
+	data := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(string(rewritten), "data: ", 2)[1], "data: "))
+	var payload struct {
+		Delta string `json:"delta"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Delta != "safe" {
+		t.Fatalf("delta = %q, want safe", payload.Delta)
+	}
+}
+
+func TestNewResponsesStreamDeltaEventUsesMetadata(t *testing.T) {
+	metadata := ResponsesStreamDeltaMetadata{ItemID: "msg_1", OutputIndex: 2, ContentIndex: 3}
+	event := NewResponsesStreamDeltaEvent("tail", metadata)
+	if !strings.Contains(string(event), "event: response.output_text.delta") {
+		t.Fatalf("event = %q", event)
+	}
+	if !strings.Contains(string(event), `"item_id":"msg_1"`) || !strings.Contains(string(event), `"output_index":2`) || !strings.Contains(string(event), `"content_index":3`) {
+		t.Fatalf("event = %q, want metadata", event)
 	}
 }

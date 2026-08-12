@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,7 +32,19 @@ func DefaultModifyResponse(onComplete OnCompleteFunc, transforms ...StreamTransf
 					return err
 				}
 				if ok && processor != nil {
-					resp.Body = newTransformingReadCloser(resp, resp.Body, processor, onComplete)
+					body, err := newStreamingDecodeReadCloser(resp.Body, resp.Header.Get("Content-Encoding"))
+					if err != nil {
+						return err
+					}
+					readCloser, err := newTransformingReadCloser(resp, body, resp.Header.Get("Content-Encoding"), processor, onComplete)
+					if err != nil {
+						closeErr := body.Close()
+						if closeErr != nil {
+							return fmt.Errorf("create stream transformer: %w; close decoded body: %v", err, closeErr)
+						}
+						return err
+					}
+					resp.Body = readCloser
 					resp.ContentLength = -1
 					resp.Header.Del("Content-Length")
 					return nil
@@ -75,6 +88,7 @@ func DefaultModifyResponse(onComplete OnCompleteFunc, transforms ...StreamTransf
 type transformingReadCloser struct {
 	resp       *http.Response
 	body       io.ReadCloser
+	encoder    streamOutputEncoder
 	processor  StreamProcessor
 	onComplete OnCompleteFunc
 	raw        bytes.Buffer
@@ -86,8 +100,14 @@ type transformingReadCloser struct {
 	closeOnce  sync.Once
 }
 
-func newTransformingReadCloser(resp *http.Response, body io.ReadCloser, processor StreamProcessor, onComplete OnCompleteFunc) *transformingReadCloser {
-	return &transformingReadCloser{resp: resp, body: body, processor: processor, onComplete: onComplete}
+func newTransformingReadCloser(resp *http.Response, body io.ReadCloser, contentEncoding string, processor StreamProcessor, onComplete OnCompleteFunc) (*transformingReadCloser, error) {
+	readCloser := &transformingReadCloser{resp: resp, body: body, processor: processor, onComplete: onComplete}
+	encoder, err := newStreamOutputEncoder(contentEncoding, &readCloser.out)
+	if err != nil {
+		return nil, err
+	}
+	readCloser.encoder = encoder
+	return readCloser, nil
 }
 
 func (r *transformingReadCloser) Read(p []byte) (int, error) {
@@ -107,11 +127,18 @@ func (r *transformingReadCloser) Read(p []byte) (int, error) {
 			_, _ = r.raw.Write(chunk)
 			result, writeErr := r.processor.Write(chunk)
 			if len(result.Data) > 0 {
-				_, _ = r.out.Write(result.Data)
+				if encodeErr := r.writeEncoded(result.Data); encodeErr != nil {
+					r.finished = true
+					r.pendingErr = encodeErr
+					break
+				}
 			}
 			if result.Stop {
 				r.stopped = true
 				r.finished = true
+				if finishErr := r.encoder.Finish(); finishErr != nil {
+					r.pendingErr = finishErr
+				}
 				r.closeBodyAndProcessor()
 				break
 			}
@@ -124,13 +151,21 @@ func (r *transformingReadCloser) Read(p []byte) (int, error) {
 		if err == io.EOF {
 			finishResult, finishErr := r.processor.Finish()
 			if len(finishResult.Data) > 0 {
-				_, _ = r.out.Write(finishResult.Data)
+				if encodeErr := r.writeEncoded(finishResult.Data); encodeErr != nil {
+					finishErr = errors.Join(finishErr, encodeErr)
+				}
 			}
 			r.finished = true
 			if finishResult.Stop {
 				r.stopped = true
+				if encodeErr := r.encoder.Finish(); encodeErr != nil {
+					finishErr = errors.Join(finishErr, encodeErr)
+				}
 				r.closeBodyAndProcessor()
 			} else {
+				if encodeErr := r.encoder.Finish(); encodeErr != nil {
+					finishErr = errors.Join(finishErr, encodeErr)
+				}
 				r.complete()
 				r.closeProcessor()
 			}
@@ -159,10 +194,20 @@ func (r *transformingReadCloser) Read(p []byte) (int, error) {
 func (r *transformingReadCloser) Close() error {
 	err := r.body.Close()
 	r.closeProcessor()
+	if encodeErr := r.encoder.Finish(); encodeErr != nil {
+		err = errors.Join(err, encodeErr)
+	}
 	if !r.stopped {
 		r.complete()
 	}
 	return err
+}
+
+func (r *transformingReadCloser) writeEncoded(data []byte) error {
+	if err := r.encoder.Write(data); err != nil {
+		return err
+	}
+	return r.encoder.Flush()
 }
 
 func (r *transformingReadCloser) complete() {
@@ -170,11 +215,7 @@ func (r *transformingReadCloser) complete() {
 		return
 	}
 	r.once.Do(func() {
-		decodedBody, err := DecodeResponseBody(r.raw.Bytes(), r.resp.Header.Get("Content-Encoding"))
-		if err != nil {
-			decodedBody = nil
-		}
-		r.onComplete(r.resp, decodedBody)
+		r.onComplete(r.resp, append([]byte(nil), r.raw.Bytes()...))
 	})
 }
 
@@ -213,6 +254,146 @@ func DecodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) 
 	default:
 		return nil, fmt.Errorf("unsupported content encoding: %s", contentEncoding)
 	}
+}
+
+func newStreamingDecodeReadCloser(body io.ReadCloser, contentEncoding string) (io.ReadCloser, error) {
+	encoding := strings.ToLower(strings.TrimSpace(contentEncoding))
+	switch encoding {
+	case "", "identity":
+		return body, nil
+	case "gzip":
+		reader, err := gzip.NewReader(body)
+		if err != nil {
+			closeErr := body.Close()
+			if closeErr != nil {
+				return nil, fmt.Errorf("create gzip stream decoder: %w; close response body: %v", err, closeErr)
+			}
+			return nil, err
+		}
+		return joinedReadCloser{reader: reader, closers: []io.Closer{reader, body}}, nil
+	case "br":
+		return joinedReadCloser{reader: brotli.NewReader(body), closers: []io.Closer{body}}, nil
+	default:
+		closeErr := body.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("unsupported stream content encoding %q; close response body: %v", contentEncoding, closeErr)
+		}
+		return nil, fmt.Errorf("unsupported stream content encoding: %s", contentEncoding)
+	}
+}
+
+type joinedReadCloser struct {
+	reader  io.Reader
+	closers []io.Closer
+}
+
+func (r joinedReadCloser) Read(p []byte) (int, error) {
+	return r.reader.Read(p)
+}
+
+func (r joinedReadCloser) Close() error {
+	var err error
+	for _, closer := range r.closers {
+		err = errors.Join(err, closer.Close())
+	}
+	return err
+}
+
+type streamOutputEncoder interface {
+	Write([]byte) error
+	Flush() error
+	Finish() error
+}
+
+func newStreamOutputEncoder(contentEncoding string, out *bytes.Buffer) (streamOutputEncoder, error) {
+	encoding := strings.ToLower(strings.TrimSpace(contentEncoding))
+	switch encoding {
+	case "", "identity":
+		return &identityStreamEncoder{out: out}, nil
+	case "gzip":
+		return newGzipStreamEncoder(out), nil
+	case "br":
+		return newBrotliStreamEncoder(out), nil
+	default:
+		return nil, fmt.Errorf("unsupported stream content encoding: %s", contentEncoding)
+	}
+}
+
+type identityStreamEncoder struct {
+	out *bytes.Buffer
+}
+
+func (e *identityStreamEncoder) Write(data []byte) error {
+	_, err := e.out.Write(data)
+	return err
+}
+
+func (e *identityStreamEncoder) Flush() error { return nil }
+
+func (e *identityStreamEncoder) Finish() error { return nil }
+
+type gzipStreamEncoder struct {
+	out    *bytes.Buffer
+	writer *gzip.Writer
+	done   bool
+}
+
+func newGzipStreamEncoder(out *bytes.Buffer) *gzipStreamEncoder {
+	encoder := &gzipStreamEncoder{out: out}
+	encoder.writer = gzip.NewWriter(out)
+	return encoder
+}
+
+func (e *gzipStreamEncoder) Write(data []byte) error {
+	_, err := e.writer.Write(data)
+	return err
+}
+
+func (e *gzipStreamEncoder) Flush() error {
+	if e.done {
+		return nil
+	}
+	return e.writer.Flush()
+}
+
+func (e *gzipStreamEncoder) Finish() error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	return e.writer.Close()
+}
+
+type brotliStreamEncoder struct {
+	out    *bytes.Buffer
+	writer *brotli.Writer
+	done   bool
+}
+
+func newBrotliStreamEncoder(out *bytes.Buffer) *brotliStreamEncoder {
+	encoder := &brotliStreamEncoder{out: out}
+	encoder.writer = brotli.NewWriter(out)
+	return encoder
+}
+
+func (e *brotliStreamEncoder) Write(data []byte) error {
+	_, err := e.writer.Write(data)
+	return err
+}
+
+func (e *brotliStreamEncoder) Flush() error {
+	if e.done {
+		return nil
+	}
+	return e.writer.Flush()
+}
+
+func (e *brotliStreamEncoder) Finish() error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	return e.writer.Close()
 }
 
 func isStreamingResponse(resp *http.Response) bool {

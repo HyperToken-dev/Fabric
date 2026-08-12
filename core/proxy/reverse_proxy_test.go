@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"io"
 	"net/http"
@@ -598,6 +599,75 @@ func TestDefaultModifyResponseStopsTransformedStreamingBody(t *testing.T) {
 	}
 	if processor.closeCalls != 1 {
 		t.Fatalf("processor close calls = %d, want 1", processor.closeCalls)
+	}
+}
+
+func TestDefaultModifyResponseTransformsGzipStreamingBody(t *testing.T) {
+	var encoded bytes.Buffer
+	gzipWriter := gzip.NewWriter(&encoded)
+	if _, err := gzipWriter.Write([]byte("data: hello\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(encoded.Bytes())),
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	resp.Header.Set("Content-Encoding", "gzip")
+	resp.Header.Set("Content-Length", "999")
+	resp.ContentLength = 999
+
+	completeCh := make(chan string, 1)
+	processor := &testStreamProcessor{
+		write: func(chunk []byte) (StreamResult, error) {
+			return StreamResult{Data: bytes.ReplaceAll(chunk, []byte("hello"), []byte("safe"))}, nil
+		},
+	}
+	modify := DefaultModifyResponse(func(resp *http.Response, decodedBody []byte) {
+		completeCh <- string(decodedBody)
+	}, func(resp *http.Response) (StreamProcessor, bool, error) {
+		return processor, true, nil
+	})
+
+	if err := modify(resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "" {
+		t.Fatalf("Content-Length = %q, want empty", got)
+	}
+	compressedOut, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedOut))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedOut, readErr := io.ReadAll(gzipReader)
+	closeErr := gzipReader.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if string(decodedOut) != "data: safe\n\n" {
+		t.Fatalf("decoded transformed body = %q, want safe SSE", decodedOut)
+	}
+	select {
+	case got := <-completeCh:
+		if got != "data: hello\n\n" {
+			t.Fatalf("complete body = %q, want decoded upstream", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for onComplete")
 	}
 }
 

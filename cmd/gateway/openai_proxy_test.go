@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -516,8 +517,257 @@ func TestOpenAIProxyRejectsSensitiveOutputSplitAcrossStreamChunks(t *testing.T) 
 	}
 }
 
+func TestOpenAIProxyStreamsSafeResponsesOutputWithRetainedTail(t *testing.T) {
+	previousTail := openAIStreamSafetyTailRunes
+	openAIStreamSafetyTailRunes = 1
+	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
+
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write(openAIResponsesDeltaEvent("ab"))
+		flusher.Flush()
+		_, _ = w.Write(openAIResponsesDeltaEvent("cd"))
+		flusher.Flush()
+		_, _ = w.Write(openAIResponsesDoneEvent("abcd"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	for _, want := range []string{`"delta":"a"`, `"delta":"bc"`, `"delta":"d"`, "event: response.output_text.done"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stream body = %q, want %s", got, want)
+		}
+	}
+}
+
+func TestOpenAIProxyRejectsSensitiveResponsesOutputSplitAcrossDeltas(t *testing.T) {
+	previousTail := openAIStreamSafetyTailRunes
+	openAIStreamSafetyTailRunes = 6
+	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
+
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1), streamingBodyCh: make(chan []byte, 1)}
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 44, Status: ModelStatusActive}},
+		UsageHandler:       usageHandler,
+		IntegralLogHandler: integralLogs,
+		TextPolicy:         newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write(openAIResponsesDeltaEvent("hello blo"))
+		flusher.Flush()
+		_, _ = w.Write(openAIResponsesDeltaEvent("cked"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 9, 10, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	gotBody := rec.Body.String()
+	if !strings.Contains(gotBody, `"delta":"hel"`) {
+		t.Fatalf("body = %q, want safe prefix", gotBody)
+	}
+	if strings.Contains(gotBody, "blocked") || !strings.Contains(gotBody, `"code":"sensitive_output"`) {
+		t.Fatalf("body = %q, want rejection without sensitive text", gotBody)
+	}
+
+	gotLog := receiveIntegralLog(t, integralLogs.ch)
+	var loggedContext struct {
+		Outcome         string `json:"outcome"`
+		RejectionStage  string `json:"rejection_stage"`
+		RejectionReason string `json:"rejection_reason"`
+		ModelID         int32  `json:"model_id"`
+		ChannelID       int32  `json:"channel_id"`
+	}
+	if err := json.Unmarshal([]byte(gotLog.context), &loggedContext); err != nil {
+		t.Fatal(err)
+	}
+	if loggedContext.Outcome != "rejected" || loggedContext.RejectionStage != "output" || loggedContext.RejectionReason != "sensitive" || loggedContext.ModelID != 44 || loggedContext.ChannelID != 10 {
+		t.Fatalf("context = %+v", loggedContext)
+	}
+	usageInfo := receiveUsageContext(t, usageHandler.streamingCh)
+	if usageInfo.KeyID != 9 || usageInfo.ChannelID != 10 || usageInfo.ModelID != 44 || usageInfo.Model != "gpt-5.5" {
+		t.Fatalf("usage context = %+v", usageInfo)
+	}
+	select {
+	case rawUsageBody := <-usageHandler.streamingBodyCh:
+		if !strings.Contains(string(rawUsageBody), "cked") || strings.Contains(string(rawUsageBody), "sensitive_output") {
+			t.Fatalf("usage body = %q, want upstream responses stream fragment", rawUsageBody)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for streaming usage body")
+	}
+}
+
+func TestOpenAIProxyRejectsSensitiveResponsesSnapshotOutput(t *testing.T) {
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1), streamingBodyCh: make(chan []byte, 1)}
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 55, Status: ModelStatusActive}},
+		UsageHandler:       usageHandler,
+		IntegralLogHandler: integralLogs,
+		TextPolicy:         newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write(openAIResponsesDoneEvent("blocked snapshot"))
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 11, 12, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	gotBody := rec.Body.String()
+	if strings.Contains(gotBody, "blocked snapshot") || !strings.Contains(gotBody, `"code":"sensitive_output"`) {
+		t.Fatalf("body = %q, want snapshot rejection without unsafe text", gotBody)
+	}
+	_ = receiveIntegralLog(t, integralLogs.ch)
+	usageInfo := receiveUsageContext(t, usageHandler.streamingCh)
+	if usageInfo.KeyID != 11 || usageInfo.ChannelID != 12 || usageInfo.ModelID != 55 || usageInfo.Model != "gpt-5.5" {
+		t.Fatalf("usage context = %+v", usageInfo)
+	}
+}
+
+func TestOpenAIProxyRejectsGzipSensitiveResponsesStream(t *testing.T) {
+	usageHandler := &recordingUsageHandler{streamingCh: make(chan UsageContext, 1), streamingBodyCh: make(chan []byte, 1)}
+	integralLogs := &recordingIntegralLogHandler{ch: make(chan recordedIntegralLog, 1)}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore:         fakeModelStore{model: &ModelInfo{ID: 66, Status: ModelStatusActive}},
+		UsageHandler:       usageHandler,
+		IntegralLogHandler: integralLogs,
+		TextPolicy:         newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req = setContextInt32(req, ctxKeyID, 13)
+	req = setContextInt32(req, ctxChannelID, 14)
+	req = setContextInt32(req, ctxModelID, 66)
+	req = setContextString(req, ctxModel, "gpt-5.5")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(gzipBytes(t, openAIResponsesDeltaEvent("blocked")))),
+		Request:    req,
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	resp.Header.Set("Content-Encoding", "gzip")
+
+	if err := coreproxy.DefaultModifyResponse(proxy.onComplete, proxy.openAIStreamTransform)(resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	compressedBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedBody := string(gunzipBytes(t, compressedBody))
+	if strings.Contains(decodedBody, "blocked") || !strings.Contains(decodedBody, `"code":"sensitive_output"`) {
+		t.Fatalf("decoded body = %q, want gzip rejection without unsafe text", decodedBody)
+	}
+	_ = receiveIntegralLog(t, integralLogs.ch)
+	usageInfo := receiveUsageContext(t, usageHandler.streamingCh)
+	if usageInfo.KeyID != 13 || usageInfo.ChannelID != 14 || usageInfo.ModelID != 66 || usageInfo.Model != "gpt-5.5" {
+		t.Fatalf("usage context = %+v", usageInfo)
+	}
+	select {
+	case rawUsageBody := <-usageHandler.streamingBodyCh:
+		if !strings.Contains(string(rawUsageBody), "blocked") || strings.Contains(string(rawUsageBody), "sensitive_output") {
+			t.Fatalf("usage body = %q, want decoded upstream gzip stream fragment", rawUsageBody)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for streaming usage body")
+	}
+}
+
 func openAIChatContentEvent(content string) []byte {
 	return []byte(`data: {"choices":[{"index":0,"delta":{"content":` + strconv.Quote(content) + `}}]}` + "\n\n")
+}
+
+func openAIResponsesDeltaEvent(delta string) []byte {
+	return []byte(`event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":` + strconv.Quote(delta) + `}
+
+`)
+}
+
+func openAIResponsesDoneEvent(text string) []byte {
+	return []byte(`event: response.output_text.done
+data: {"type":"response.output_text.done","item_id":"msg_1","output_index":0,"content_index":0,"text":` + strconv.Quote(text) + `}
+
+`)
+}
+
+func gzipBytes(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func gunzipBytes(t *testing.T, data []byte) []byte {
+	t.Helper()
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	return decoded
 }
 
 type fakeModelStore struct {
