@@ -22,8 +22,9 @@ type openAIMessage struct {
 }
 
 type openAIContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type    string          `json:"type"`
+	Text    string          `json:"text"`
+	Content json.RawMessage `json:"content"`
 }
 
 func ExtractPromptRequest(req *http.Request) (*PromptRequest, error) {

@@ -45,7 +45,8 @@ type responsesStreamEvent struct {
 	OutputIndex  int    `json:"output_index"`
 	ContentIndex int    `json:"content_index"`
 	Part         struct {
-		Text string `json:"text"`
+		Text    string          `json:"text"`
+		Content json.RawMessage `json:"content"`
 	} `json:"part"`
 	Item struct {
 		ID      string              `json:"id"`
@@ -178,20 +179,25 @@ func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
 		return StreamText{Text: streamEvent.Text, Kind: StreamTextSnapshot, Lane: fmt.Sprintf("responses:%s:%d:%d", metadata.ItemID, metadata.OutputIndex, metadata.ContentIndex), ResponsesMetadata: metadata}, true, nil
 	case "response.content_part.done":
 		metadata := ResponsesStreamDeltaMetadata{ItemID: streamEvent.ItemID, OutputIndex: streamEvent.OutputIndex, ContentIndex: streamEvent.ContentIndex}
-		return StreamText{Text: streamEvent.Part.Text, Kind: StreamTextSnapshot, Lane: fmt.Sprintf("responses:%s:%d:%d", metadata.ItemID, metadata.OutputIndex, metadata.ContentIndex), ResponsesMetadata: metadata}, true, nil
+		texts := []string{streamEvent.Part.Text}
+		texts = append(texts, rawTexts(streamEvent.Part.Content)...)
+		return StreamText{Text: strings.Join(nonEmptyStrings(texts), "\n"), Kind: StreamTextSnapshot, Lane: fmt.Sprintf("responses:%s:%d:%d", metadata.ItemID, metadata.OutputIndex, metadata.ContentIndex), ResponsesMetadata: metadata}, true, nil
 	case "response.output_item.done":
-		text := joinContentPartTexts(streamEvent.Item.Content)
+		text := strings.Join(partTexts(streamEvent.Item.Content), "\n")
 		itemID := streamEvent.ItemID
 		if itemID == "" {
 			itemID = streamEvent.Item.ID
 		}
 		return StreamText{Text: text, Kind: StreamTextSnapshot, LanePrefix: fmt.Sprintf("responses:%s:%d:", itemID, streamEvent.OutputIndex)}, true, nil
 	case "response.completed":
-		texts := []string{streamEvent.Response.OutputText}
-		for _, output := range streamEvent.Response.Output {
-			texts = append(texts, joinContentPartTexts(output.Content))
+		text := streamEvent.Response.OutputText
+		if strings.TrimSpace(text) == "" {
+			var texts []string
+			for _, output := range streamEvent.Response.Output {
+				texts = append(texts, partTexts(output.Content)...)
+			}
+			text = strings.Join(texts, "\n")
 		}
-		text := strings.Join(nonEmptyStrings(texts), "\n")
 		return StreamText{Text: text, Kind: StreamTextSnapshot}, true, nil
 	default:
 		return StreamText{}, false, nil
@@ -215,12 +221,41 @@ func RewriteResponsesStreamDelta(event sse.Event, text string) ([]byte, error) {
 	return sse.FormatData(event.Event, encoded), nil
 }
 
-func joinContentPartTexts(parts []openAIContentPart) string {
-	texts := make([]string, 0, len(parts))
+func partTexts(parts []openAIContentPart) []string {
+	var texts []string
 	for _, part := range parts {
 		texts = append(texts, part.Text)
+		texts = append(texts, rawTexts(part.Content)...)
 	}
-	return strings.Join(nonEmptyStrings(texts), "\n")
+	return nonEmptyStrings(texts)
+}
+
+func rawTexts(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return nonEmptyStrings([]string{text})
+	}
+
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err == nil {
+		var texts []string
+		for _, item := range items {
+			texts = append(texts, rawTexts(item)...)
+		}
+		return texts
+	}
+
+	var part openAIContentPart
+	if err := json.Unmarshal(raw, &part); err != nil {
+		return nil
+	}
+	texts := []string{part.Text}
+	texts = append(texts, rawTexts(part.Content)...)
+	return nonEmptyStrings(texts)
 }
 
 func nonEmptyStrings(values []string) []string {

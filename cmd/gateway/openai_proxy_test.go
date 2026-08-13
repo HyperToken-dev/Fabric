@@ -906,6 +906,134 @@ func TestResponsesSnapshotChecksFullText(t *testing.T) {
 	}
 }
 
+func TestResponsesCompletedUsesOutputTextOnce(t *testing.T) {
+	detector, err := sensitive.NewDetector(sensitive.Dictionary{
+		Name:         "scoped",
+		Words:        []string{"answer\nanswer"},
+		EffectModels: []string{"gpt-5.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: detectorPolicy{detector: detector},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`event: response.completed
+data: {"type":"response.completed","response":{"output_text":"answer","output":[{"content":[{"type":"output_text","text":"answer"}]}]}}
+
+`))
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); strings.Contains(got, `"code":"sensitive_output"`) {
+		t.Fatalf("body = %q, want no rejection from duplicate completed output fields", got)
+	}
+}
+
+func TestResponsesCompletedDetectsNestedContent(t *testing.T) {
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`event: response.completed
+data: {"type":"response.completed","response":{"output":[{"content":[{"type":"output_text","content":[{"type":"text","text":"blocked"}]}]}]}}
+
+`))
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); strings.Contains(got, "blocked") || !strings.Contains(got, `"code":"sensitive_output"`) {
+		t.Fatalf("body = %q, want nested completed content rejection", got)
+	}
+}
+
+func TestResponsesItemDoneDetectsNestedContent(t *testing.T) {
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_1","content":[{"type":"output_text","content":[{"type":"text","text":"blocked"}]}]}}
+
+`))
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); strings.Contains(got, "blocked") || !strings.Contains(got, `"code":"sensitive_output"`) {
+		t.Fatalf("body = %q, want nested item content rejection", got)
+	}
+}
+
+func TestResponsesContentPartDoneDetectsNestedContent(t *testing.T) {
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"msg_1","output_index":0,"content_index":0,"part":{"type":"output_text","content":[{"type":"text","text":"blocked"}]}}
+
+`))
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); strings.Contains(got, "blocked") || !strings.Contains(got, `"code":"sensitive_output"`) {
+		t.Fatalf("body = %q, want nested content part rejection", got)
+	}
+}
+
 func TestOpenAIProxyRejectsSensitiveResponsesOutputSplitAcrossDeltas(t *testing.T) {
 	previousTail := openAIStreamSafetyTailRunes
 	openAIStreamSafetyTailRunes = 6
