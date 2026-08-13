@@ -136,15 +136,17 @@ func (p *openAIStreamSafetyProcessor) Close() error {
 func (p *openAIStreamSafetyProcessor) processEvents(events []sse.Event) coreproxy.StreamResult {
 	var out []byte
 	for _, event := range events {
-		data, stop := p.processEvent(event)
+		data, rejected, err := p.processEvent(event)
 		if len(data) > 0 {
 			out = append(out, data...)
 		}
 		// if any of these events triggers sensitive detector,stop immediately and return
-		if stop {
+		if rejected || err != nil {
 			if len(out) > 0 {
 				_, _ = p.clientBody.Write(out)
 			}
+			rejectResult := p.reject(err)
+			out = append(out, rejectResult.Data...)
 			return coreproxy.StreamResult{Data: out, Stop: true}
 		}
 	}
@@ -155,30 +157,29 @@ func (p *openAIStreamSafetyProcessor) processEvents(events []sse.Event) coreprox
 }
 
 // for just one complete event use sliding window to splice and detect
-func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, bool) {
+func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, bool, error) {
 	// if encounter a stream complete sign
 	if p.codec.IsDone(event) {
 		out := p.flushAllTails()
 		// append [DONE] stream event
 		out = append(out, event.Raw...)
-		return out, false
+		return out, false, nil
 	}
 	streamTexts, ok, err := p.codec.Extract(event)
 	if err != nil {
-		result := p.reject(err)
-		return result.Data, result.Stop
+		return nil, false, err
 	}
 	if ok && len(streamTexts) == 0 {
-		return event.Raw, false
+		return event.Raw, false, nil
 	}
 	if !ok {
 		// unrecognizable content,may be tool call,just allow
 		if p.codec.FlushBefore(event) && len(p.tails) > 0 {
 			out := p.flushAllTails()
 			out = append(out, event.Raw...)
-			return out, false
+			return out, false, nil
 		}
-		return event.Raw, false
+		return event.Raw, false, nil
 	}
 	snapshotEvent := true
 	for _, streamText := range streamTexts {
@@ -188,6 +189,22 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 		}
 	}
 	if snapshotEvent {
+		for _, streamText := range streamTexts {
+			if streamText.Lane == "" {
+				for _, tail := range p.tails {
+					if p.detectRejected(tail.Text + streamText.Text) {
+						return nil, true, nil
+					}
+				}
+				if strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
+					return nil, true, nil
+				}
+				continue
+			}
+			if p.detectRejected(p.tails[streamText.Lane].Text + streamText.Text) {
+				return nil, true, nil
+			}
+		}
 		var out []byte
 		flushAll := false
 		for _, streamText := range streamTexts {
@@ -200,19 +217,12 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 		if flushAll {
 			out = append(out, p.flushAllTails()...)
 		}
-		for _, streamText := range streamTexts {
-			if strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
-				rejectResult := p.reject(nil)
-				return rejectResult.Data, rejectResult.Stop
-			}
-		}
 		out = append(out, event.Raw...)
-		return out, false
+		return out, false, nil
 	}
 	for _, streamText := range streamTexts {
 		if streamText.Kind != sensitiveopenai.StreamTextDelta {
-			result := p.reject(fmt.Errorf("mixed openai stream text kinds"))
-			return result.Data, result.Stop
+			return nil, false, fmt.Errorf("mixed openai stream text kinds")
 		}
 	}
 
@@ -225,8 +235,7 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 		}
 		candidate := p.tails[lane].Text + streamText.Text
 		if p.detectRejected(candidate) {
-			rejectResult := p.reject(nil)
-			return rejectResult.Data, rejectResult.Stop
+			return nil, true, nil
 		}
 
 		// safeText is sent now; tail stays private until the next chunk can be reviewed with it.
@@ -244,10 +253,9 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 	// encapsulate the safe text back into the SSE packet
 	rewritten, err := p.codec.RewriteDelta(event, rewrittenTexts)
 	if err != nil {
-		result := p.reject(err)
-		return result.Data, result.Stop
+		return nil, false, err
 	}
-	return rewritten, false
+	return rewritten, false, nil
 }
 
 func (p *openAIStreamSafetyProcessor) detectRejected(text string) bool {
