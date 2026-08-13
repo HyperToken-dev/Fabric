@@ -58,6 +58,9 @@ func DefaultModifyResponse(onComplete OnCompleteFunc, transforms ...StreamTransf
 			resp.Header.Del("Content-Length")
 			return nil
 		}
+		if onComplete == nil {
+			return nil
+		}
 		if !shouldCaptureResponseBody(resp) {
 			onComplete(resp, nil)
 			return nil
