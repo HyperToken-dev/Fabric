@@ -27,11 +27,11 @@ type openAIStreamSafetyProcessor struct {
 	channelID  int32
 	modelID    int32
 	parser     sse.Parser
-	tails      map[string]sensitiveopenai.StreamText
-	rawBody    bytes.Buffer // upstream SSE bytes received before refusal, used for fallback usage
-	clientBody bytes.Buffer // log all data that sent to client.use to log instantly when stream refused
-	rejected   bool         // when stream was refused change this to true
-	logged     bool         // make sure just log once
+	tails      map[string]sensitiveopenai.StreamText // lane => sensitiveopenai.StreamText
+	rawBody    bytes.Buffer                          // upstream SSE bytes received before refusal, used for fallback usage
+	clientBody bytes.Buffer                          // log all data that sent to client.use to log instantly when stream refused
+	rejected   bool                                  // when stream was refused change this to true
+	logged     bool                                  // make sure just log once
 }
 
 type openAIStreamSafetyCodec interface {
@@ -190,6 +190,22 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 	}
 	if snapshotEvent {
 		for _, streamText := range streamTexts {
+			if streamText.LanePrefix != "" {
+				matched := false
+				for lane, tail := range p.tails {
+					if !strings.HasPrefix(lane, streamText.LanePrefix) {
+						continue
+					}
+					matched = true
+					if p.detectRejected(tail.Text + streamText.Text) {
+						return nil, true, nil
+					}
+				}
+				if !matched && strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
+					return nil, true, nil
+				}
+				continue
+			}
 			if streamText.Lane == "" {
 				for _, tail := range p.tails {
 					if p.detectRejected(tail.Text + streamText.Text) {
@@ -208,6 +224,19 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 		var out []byte
 		flushAll := false
 		for _, streamText := range streamTexts {
+			if streamText.LanePrefix != "" {
+				lanes := make([]string, 0)
+				for lane := range p.tails {
+					if strings.HasPrefix(lane, streamText.LanePrefix) {
+						lanes = append(lanes, lane)
+					}
+				}
+				sort.Strings(lanes)
+				for _, lane := range lanes {
+					out = append(out, p.flushTail(lane)...)
+				}
+				continue
+			}
 			if streamText.Lane == "" {
 				flushAll = true
 				continue

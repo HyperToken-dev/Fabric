@@ -32,6 +32,7 @@ type StreamText struct {
 	Text              string
 	Kind              StreamTextKind
 	Lane              string
+	LanePrefix        string
 	ChoiceIndex       int
 	ResponsesMetadata ResponsesStreamDeltaMetadata
 }
@@ -47,6 +48,7 @@ type responsesStreamEvent struct {
 		Text string `json:"text"`
 	} `json:"part"`
 	Item struct {
+		ID      string              `json:"id"`
 		Content []openAIContentPart `json:"content"`
 	} `json:"item"`
 	Response struct {
@@ -179,7 +181,11 @@ func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
 		return StreamText{Text: streamEvent.Part.Text, Kind: StreamTextSnapshot, Lane: fmt.Sprintf("responses:%s:%d:%d", metadata.ItemID, metadata.OutputIndex, metadata.ContentIndex), ResponsesMetadata: metadata}, true, nil
 	case "response.output_item.done":
 		text := joinContentPartTexts(streamEvent.Item.Content)
-		return StreamText{Text: text, Kind: StreamTextSnapshot}, true, nil
+		itemID := streamEvent.ItemID
+		if itemID == "" {
+			itemID = streamEvent.Item.ID
+		}
+		return StreamText{Text: text, Kind: StreamTextSnapshot, LanePrefix: fmt.Sprintf("responses:%s:%d:", itemID, streamEvent.OutputIndex)}, true, nil
 	case "response.completed":
 		texts := []string{streamEvent.Response.OutputText}
 		for _, output := range streamEvent.Response.Output {

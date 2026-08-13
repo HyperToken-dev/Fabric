@@ -735,6 +735,94 @@ data: {"type":"response.output_text.done","item_id":"msg_1","output_index":0,"co
 	}
 }
 
+func TestResponsesItemDoneKeepsOtherItemTail(t *testing.T) {
+	previousTail := openAIStreamSafetyTailRunes
+	openAIStreamSafetyTailRunes = 1
+	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
+
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write(respDeltaEvent("msg_1", 0, 0, "ab"))
+		flusher.Flush()
+		_, _ = w.Write(respDeltaEvent("msg_2", 1, 0, "xy"))
+		flusher.Flush()
+		_, _ = w.Write(itemDoneEvent("msg_1", 0, "done one"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	itemDone := strings.Index(got, "response.output_item.done")
+	msg2Tail := strings.Index(got, `"delta":"y"`)
+	if itemDone < 0 || msg2Tail < 0 || msg2Tail < itemDone {
+		t.Fatalf("stream body = %q, want msg_2 tail after msg_1 item done", got)
+	}
+	if !strings.Contains(got, `"delta":"b"`) {
+		t.Fatalf("stream body = %q, want msg_1 tail flushed by item done", got)
+	}
+}
+
+func TestResponsesItemDoneDoesNotRejectOtherItemTail(t *testing.T) {
+	previousTail := openAIStreamSafetyTailRunes
+	openAIStreamSafetyTailRunes = 3
+	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
+
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: newSensitiveTestPolicy(t, []string{"gpt-5.5"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write(respDeltaEvent("msg_2", 1, 0, "blo"))
+		flusher.Flush()
+		_, _ = w.Write(itemDoneEvent("msg_1", 0, "cked"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if strings.Contains(got, `"code":"sensitive_output"`) {
+		t.Fatalf("stream body = %q, want no rejection from unrelated item tail", got)
+	}
+	itemDone := strings.Index(got, "response.output_item.done")
+	msg2Tail := strings.Index(got, `"delta":"blo"`)
+	if itemDone < 0 || msg2Tail < 0 || msg2Tail < itemDone {
+		t.Fatalf("stream body = %q, want msg_2 tail after msg_1 item done", got)
+	}
+}
+
 func TestResponsesSnapshotRejectsBeforeTailFlush(t *testing.T) {
 	previousTail := openAIStreamSafetyTailRunes
 	openAIStreamSafetyTailRunes = 3
@@ -997,6 +1085,13 @@ func openAIResponsesDeltaEvent(delta string) []byte {
 func respDeltaEvent(itemID string, outputIndex, contentIndex int, delta string) []byte {
 	return []byte(`event: response.output_text.delta
 data: {"type":"response.output_text.delta","item_id":` + strconv.Quote(itemID) + `,"output_index":` + strconv.Itoa(outputIndex) + `,"content_index":` + strconv.Itoa(contentIndex) + `,"delta":` + strconv.Quote(delta) + `}
+
+`)
+}
+
+func itemDoneEvent(itemID string, outputIndex int, text string) []byte {
+	return []byte(`event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":` + strconv.Itoa(outputIndex) + `,"item":{"id":` + strconv.Quote(itemID) + `,"content":[{"type":"output_text","text":` + strconv.Quote(text) + `}]}}
 
 `)
 }

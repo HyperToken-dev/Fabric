@@ -97,7 +97,7 @@ func TestExtractResponsesStreamTextSnapshots(t *testing.T) {
 	}{
 		{name: "output text done", event: sse.Event{Event: "response.output_text.done", Data: `{"type":"response.output_text.done","text":"Hi there"}`}},
 		{name: "content part done", event: sse.Event{Event: "response.content_part.done", Data: `{"type":"response.content_part.done","part":{"type":"output_text","text":"Hi there"}}`}},
-		{name: "output item done", event: sse.Event{Event: "response.output_item.done", Data: `{"type":"response.output_item.done","item":{"content":[{"type":"output_text","text":"Hi there"}]}}`}},
+		{name: "output item done", event: sse.Event{Event: "response.output_item.done", Data: `{"type":"response.output_item.done","output_index":2,"item":{"id":"msg_1","content":[{"type":"output_text","text":"Hi there"}]}}`}},
 		{name: "completed", event: sse.Event{Event: "response.completed", Data: `{"type":"response.completed","response":{"output_text":"Hi there"}}`}},
 	}
 	for _, tt := range tests {
@@ -110,6 +110,17 @@ func TestExtractResponsesStreamTextSnapshots(t *testing.T) {
 				t.Fatalf("text = %+v, ok = %v; want snapshot Hi there", text, ok)
 			}
 		})
+	}
+}
+
+func TestExtractResponsesOutputItemDoneUsesItemScope(t *testing.T) {
+	event := sse.Event{Event: "response.output_item.done", Data: `{"type":"response.output_item.done","output_index":2,"item":{"id":"msg_1","content":[{"type":"output_text","text":"Hi there"}]}}`}
+	text, ok, err := ExtractResponsesStreamText(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || text.LanePrefix != "responses:msg_1:2:" {
+		t.Fatalf("text = %+v, ok = %v; want item lane prefix", text, ok)
 	}
 }
 
