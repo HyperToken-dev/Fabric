@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	sensitiveopenai "github.com/HyperToken-dev/fabric/business/sensitive/openai"
@@ -25,7 +27,7 @@ type openAIStreamSafetyProcessor struct {
 	channelID  int32
 	modelID    int32
 	parser     sse.Parser
-	tail       string       // tail string of sliding window
+	tails      map[string]sensitiveopenai.StreamText
 	rawBody    bytes.Buffer // upstream SSE bytes received before refusal, used for fallback usage
 	clientBody bytes.Buffer // log all data that sent to client.use to log instantly when stream refused
 	rejected   bool         // when stream was refused change this to true
@@ -33,18 +35,16 @@ type openAIStreamSafetyProcessor struct {
 }
 
 type openAIStreamSafetyCodec interface {
-	Extract(event sse.Event) (sensitiveopenai.StreamText, bool, error)
-	RewriteDelta(event sse.Event, text string) ([]byte, error)
-	NewDelta(text string) []byte
+	Extract(event sse.Event) ([]sensitiveopenai.StreamText, bool, error)
+	RewriteDelta(event sse.Event, texts []sensitiveopenai.StreamText) ([]byte, error)
+	NewDelta(text sensitiveopenai.StreamText) []byte
 	IsDone(event sse.Event) bool
 	FlushBefore(event sse.Event) bool
 }
 
 type chatCompletionStreamSafetyCodec struct{}
 
-type responsesStreamSafetyCodec struct {
-	metadata sensitiveopenai.ResponsesStreamDeltaMetadata
-}
+type responsesStreamSafetyCodec struct{}
 
 func (p *OpenAIProxy) openAIStreamTransform(resp *http.Response) (coreproxy.StreamProcessor, bool, error) {
 	if resp == nil || resp.Request == nil {
@@ -72,6 +72,7 @@ func (p *OpenAIProxy) openAIStreamTransform(resp *http.Response) (coreproxy.Stre
 		keyID:     getContextInt32(resp.Request, ctxKeyID),
 		channelID: getContextInt32(resp.Request, ctxChannelID),
 		modelID:   getContextInt32(resp.Request, ctxModelID),
+		tails:     make(map[string]sensitiveopenai.StreamText),
 	}, true, nil
 }
 
@@ -119,11 +120,10 @@ func (p *openAIStreamSafetyProcessor) Finish() (coreproxy.StreamResult, error) {
 
 	// no sensitive words were triggered throughout the process and the connection is about to close
 	// the tail data must now be sent to the frontend
-	if p.tail != "" {
-		tailEvent := p.codec.NewDelta(p.tail)
-		result.Data = append(result.Data, tailEvent...)
-		_, _ = p.clientBody.Write(tailEvent)
-		p.tail = ""
+	if len(p.tails) > 0 {
+		tailEvents := p.flushAllTails()
+		result.Data = append(result.Data, tailEvents...)
+		_, _ = p.clientBody.Write(tailEvents)
 	}
 	return result, nil
 }
@@ -158,59 +158,91 @@ func (p *openAIStreamSafetyProcessor) processEvents(events []sse.Event) coreprox
 func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, bool) {
 	// if encounter a stream complete sign
 	if p.codec.IsDone(event) {
-		var out []byte
-		if p.tail != "" {
-			out = append(out, p.codec.NewDelta(p.tail)...)
-			p.tail = ""
-		}
+		out := p.flushAllTails()
 		// append [DONE] stream event
 		out = append(out, event.Raw...)
 		return out, false
 	}
-	streamText, ok, err := p.codec.Extract(event)
+	streamTexts, ok, err := p.codec.Extract(event)
 	if err != nil {
 		result := p.reject(err)
 		return result.Data, result.Stop
 	}
+	if ok && len(streamTexts) == 0 {
+		return event.Raw, false
+	}
 	if !ok {
 		// unrecognizable content,may be tool call,just allow
-		if p.codec.FlushBefore(event) && p.tail != "" {
-			out := p.codec.NewDelta(p.tail)
-			p.tail = ""
+		if p.codec.FlushBefore(event) && len(p.tails) > 0 {
+			out := p.flushAllTails()
 			out = append(out, event.Raw...)
 			return out, false
 		}
 		return event.Raw, false
 	}
-	if streamText.Kind == sensitiveopenai.StreamTextSnapshot {
-		if p.detectRejected(streamText.Text) {
-			rejectResult := p.reject(nil)
-			return rejectResult.Data, rejectResult.Stop
+	snapshotEvent := true
+	for _, streamText := range streamTexts {
+		if streamText.Kind != sensitiveopenai.StreamTextSnapshot {
+			snapshotEvent = false
+			break
 		}
+	}
+	if snapshotEvent {
 		var out []byte
-		if p.tail != "" {
-			out = append(out, p.codec.NewDelta(p.tail)...)
-			p.tail = ""
+		flushAll := false
+		for _, streamText := range streamTexts {
+			if streamText.Lane == "" {
+				flushAll = true
+				continue
+			}
+			out = append(out, p.flushTail(streamText.Lane)...)
+		}
+		if flushAll {
+			out = append(out, p.flushAllTails()...)
+		}
+		for _, streamText := range streamTexts {
+			if strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
+				rejectResult := p.reject(nil)
+				return rejectResult.Data, rejectResult.Stop
+			}
 		}
 		out = append(out, event.Raw...)
 		return out, false
 	}
-
-	// history tail + latest string = all of the text that need to detect now
-	candidate := p.tail + streamText.Text
-	if p.detectRejected(candidate) {
-		rejectResult := p.reject(nil)
-		return rejectResult.Data, rejectResult.Stop
+	for _, streamText := range streamTexts {
+		if streamText.Kind != sensitiveopenai.StreamTextDelta {
+			result := p.reject(fmt.Errorf("mixed openai stream text kinds"))
+			return result.Data, result.Stop
+		}
 	}
 
-	// program run to this site means it is safe content
-	// safeText: the content prepare sending to client
-	// tail: remain in the sliding window and used by next round
-	safeText, tail := splitSafeStreamText(candidate, openAIStreamSafetyTailRunes)
-	p.tail = tail
+	rewrittenTexts := make([]sensitiveopenai.StreamText, 0, len(streamTexts))
+	for _, streamText := range streamTexts {
+		lane := streamText.Lane
+		if lane == "" {
+			lane = "default"
+			streamText.Lane = lane
+		}
+		candidate := p.tails[lane].Text + streamText.Text
+		if p.detectRejected(candidate) {
+			rejectResult := p.reject(nil)
+			return rejectResult.Data, rejectResult.Stop
+		}
+
+		// safeText is sent now; tail stays private until the next chunk can be reviewed with it.
+		safeText, tail := splitSafeStreamText(candidate, openAIStreamSafetyTailRunes)
+		if tail == "" {
+			delete(p.tails, lane)
+		} else {
+			streamText.Text = tail
+			p.tails[lane] = streamText
+		}
+		streamText.Text = safeText
+		rewrittenTexts = append(rewrittenTexts, streamText)
+	}
 
 	// encapsulate the safe text back into the SSE packet
-	rewritten, err := p.codec.RewriteDelta(event, safeText)
+	rewritten, err := p.codec.RewriteDelta(event, rewrittenTexts)
 	if err != nil {
 		result := p.reject(err)
 		return result.Data, result.Stop
@@ -236,20 +268,31 @@ func (p *openAIStreamSafetyProcessor) detectRejected(text string) bool {
 	return true
 }
 
-func (chatCompletionStreamSafetyCodec) Extract(event sse.Event) (sensitiveopenai.StreamText, bool, error) {
-	text, ok, err := sensitiveopenai.ExtractChatCompletionStreamText(event)
-	if err != nil || !ok {
-		return sensitiveopenai.StreamText{}, ok, err
+func (chatCompletionStreamSafetyCodec) Extract(event sse.Event) ([]sensitiveopenai.StreamText, bool, error) {
+	return sensitiveopenai.ExtractChatCompletionStreamText(event)
+}
+
+func (chatCompletionStreamSafetyCodec) RewriteDelta(event sse.Event, texts []sensitiveopenai.StreamText) ([]byte, error) {
+	return sensitiveopenai.RewriteChatCompletionStreamText(event, texts)
+}
+
+func (chatCompletionStreamSafetyCodec) NewDelta(text sensitiveopenai.StreamText) []byte {
+	if text.Text == "" {
+		return nil
 	}
-	return sensitiveopenai.StreamText{Text: text, Kind: sensitiveopenai.StreamTextDelta}, true, nil
-}
-
-func (chatCompletionStreamSafetyCodec) RewriteDelta(event sse.Event, text string) ([]byte, error) {
-	return sensitiveopenai.RewriteChatCompletionStreamText(event, text)
-}
-
-func (chatCompletionStreamSafetyCodec) NewDelta(text string) []byte {
-	return sensitiveopenai.NewChatCompletionStreamTextEvent(text)
+	payload := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{"content": text.Text},
+				"index": text.ChoiceIndex,
+			},
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return sse.FormatData("", encoded)
 }
 
 func (chatCompletionStreamSafetyCodec) IsDone(event sse.Event) bool {
@@ -260,23 +303,37 @@ func (chatCompletionStreamSafetyCodec) FlushBefore(event sse.Event) bool {
 	return false
 }
 
-func (c *responsesStreamSafetyCodec) Extract(event sse.Event) (sensitiveopenai.StreamText, bool, error) {
-	metadata, ok, err := sensitiveopenai.ExtractResponsesStreamDeltaMetadata(event)
+func (c *responsesStreamSafetyCodec) Extract(event sse.Event) ([]sensitiveopenai.StreamText, bool, error) {
+	streamText, ok, err := sensitiveopenai.ExtractResponsesStreamText(event)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return []sensitiveopenai.StreamText{streamText}, true, nil
+}
+
+func (c *responsesStreamSafetyCodec) RewriteDelta(event sse.Event, texts []sensitiveopenai.StreamText) ([]byte, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	return sensitiveopenai.RewriteResponsesStreamDelta(event, texts[0].Text)
+}
+
+func (c *responsesStreamSafetyCodec) NewDelta(text sensitiveopenai.StreamText) []byte {
+	if text.Text == "" {
+		return nil
+	}
+	payload := map[string]any{
+		"type":          "response.output_text.delta",
+		"item_id":       text.ResponsesMetadata.ItemID,
+		"output_index":  text.ResponsesMetadata.OutputIndex,
+		"content_index": text.ResponsesMetadata.ContentIndex,
+		"delta":         text.Text,
+	}
+	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return sensitiveopenai.StreamText{}, false, err
+		return nil
 	}
-	if ok {
-		c.metadata = metadata
-	}
-	return sensitiveopenai.ExtractResponsesStreamText(event)
-}
-
-func (c *responsesStreamSafetyCodec) RewriteDelta(event sse.Event, text string) ([]byte, error) {
-	return sensitiveopenai.RewriteResponsesStreamDelta(event, text)
-}
-
-func (c *responsesStreamSafetyCodec) NewDelta(text string) []byte {
-	return sensitiveopenai.NewResponsesStreamDeltaEvent(text, c.metadata)
+	return sse.FormatData("response.output_text.delta", encoded)
 }
 
 func (c *responsesStreamSafetyCodec) IsDone(event sse.Event) bool {
@@ -293,7 +350,7 @@ func (p *openAIStreamSafetyProcessor) reject(err error) coreproxy.StreamResult {
 		zap.L().Error("openai stream output safety rejected stream", zap.Error(err), zap.Int32("key_id", p.keyID), zap.Int32("channel_id", p.channelID), zap.Int32("model_id", p.modelID), zap.String("model", p.model))
 	}
 	p.rejected = true
-	p.tail = ""
+	p.tails = nil
 	rejection := openAIStreamRejectionSSE()
 	if !p.logged {
 		p.logged = true
@@ -319,6 +376,31 @@ func (p *openAIStreamSafetyProcessor) reject(err error) coreproxy.StreamResult {
 	}
 	// return the struct that contains error data,notice core layer to stop proxy
 	return coreproxy.StreamResult{Data: rejection, Stop: true}
+}
+
+func (p *openAIStreamSafetyProcessor) flushTail(lane string) []byte {
+	tail, ok := p.tails[lane]
+	if !ok || tail.Text == "" {
+		return nil
+	}
+	delete(p.tails, lane)
+	return p.codec.NewDelta(tail)
+}
+
+func (p *openAIStreamSafetyProcessor) flushAllTails() []byte {
+	if len(p.tails) == 0 {
+		return nil
+	}
+	lanes := make([]string, 0, len(p.tails))
+	for lane := range p.tails {
+		lanes = append(lanes, lane)
+	}
+	sort.Strings(lanes)
+	var out []byte
+	for _, lane := range lanes {
+		out = append(out, p.flushTail(lane)...)
+	}
+	return out
 }
 
 // split text after confirming text is safe

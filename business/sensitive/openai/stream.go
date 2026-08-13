@@ -13,6 +13,7 @@ type chatStreamChunk struct {
 }
 
 type chatStreamChoice struct {
+	Index *int            `json:"index"`
 	Delta chatStreamDelta `json:"delta"`
 }
 
@@ -28,8 +29,11 @@ const (
 )
 
 type StreamText struct {
-	Text string
-	Kind StreamTextKind
+	Text              string
+	Kind              StreamTextKind
+	Lane              string
+	ChoiceIndex       int
+	ResponsesMetadata ResponsesStreamDeltaMetadata
 }
 
 type responsesStreamEvent struct {
@@ -59,35 +63,50 @@ type ResponsesStreamDeltaMetadata struct {
 	ContentIndex int
 }
 
-func ExtractChatCompletionStreamText(event sse.Event) (string, bool, error) {
+func ExtractChatCompletionStreamText(event sse.Event) ([]StreamText, bool, error) {
 	data := strings.TrimSpace(event.Data)
 	if data == "" || data == "[DONE]" {
-		return "", false, nil
+		return nil, false, nil
 	}
 
 	var chunk chatStreamChunk
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-		return "", false, fmt.Errorf("parse openai chat stream event: %w", err)
+		return nil, false, fmt.Errorf("parse openai chat stream event: %w", err)
 	}
-	var text strings.Builder
-	for _, choice := range chunk.Choices {
+	texts := make([]StreamText, 0, len(chunk.Choices))
+	for position, choice := range chunk.Choices {
 		if len(choice.Delta.Content) == 0 || string(choice.Delta.Content) == "null" {
 			continue
 		}
 		var content string
 		if err := json.Unmarshal(choice.Delta.Content, &content); err != nil {
-			return "", false, fmt.Errorf("parse openai chat stream content: %w", err)
+			return nil, false, fmt.Errorf("parse openai chat stream content: %w", err)
 		}
-		_, _ = text.WriteString(content)
+		choiceIndex := position
+		if choice.Index != nil {
+			choiceIndex = *choice.Index
+		}
+		texts = append(texts, StreamText{Text: content, Kind: StreamTextDelta, Lane: fmt.Sprintf("chat:%d", choiceIndex), ChoiceIndex: choiceIndex})
 	}
-	if text.Len() == 0 {
-		return "", false, nil
+	if len(texts) == 0 {
+		return nil, false, nil
 	}
-	return text.String(), true, nil
+	return texts, true, nil
 }
 
-func RewriteChatCompletionStreamText(event sse.Event, text string) ([]byte, error) {
-	if text == "" {
+func RewriteChatCompletionStreamText(event sse.Event, texts []StreamText) ([]byte, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	textByChoice := make(map[int]string, len(texts))
+	shouldEmit := false
+	for _, text := range texts {
+		textByChoice[text.ChoiceIndex] = text.Text
+		if text.Text != "" {
+			shouldEmit = true
+		}
+	}
+	if !shouldEmit {
 		return nil, nil
 	}
 
@@ -99,40 +118,36 @@ func RewriteChatCompletionStreamText(event sse.Event, text string) ([]byte, erro
 	if !ok || len(choices) == 0 {
 		return event.Raw, nil
 	}
-	choice, ok := choices[0].(map[string]any)
-	if !ok {
-		return event.Raw, nil
+	for position, rawChoice := range choices {
+		choice, ok := rawChoice.(map[string]any)
+		if !ok {
+			continue
+		}
+		index := position
+		if value, ok := choice["index"]; ok {
+			switch value := value.(type) {
+			case float64:
+				index = int(value)
+			case int:
+				index = value
+			}
+		}
+		text, ok := textByChoice[index]
+		if !ok {
+			continue
+		}
+		delta, ok := choice["delta"].(map[string]any)
+		if !ok {
+			continue
+		}
+		delta["content"] = text
 	}
-	delta, ok := choice["delta"].(map[string]any)
-	if !ok {
-		return event.Raw, nil
-	}
-	delta["content"] = text
 
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 	return sse.FormatData(event.Event, encoded), nil
-}
-
-func NewChatCompletionStreamTextEvent(text string) []byte {
-	if text == "" {
-		return nil
-	}
-	payload := map[string]any{
-		"choices": []any{
-			map[string]any{
-				"delta": map[string]any{"content": text},
-				"index": 0,
-			},
-		},
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil
-	}
-	return sse.FormatData("", encoded)
 }
 
 func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
@@ -154,22 +169,16 @@ func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
 		if streamEvent.Delta == "" {
 			return StreamText{}, false, nil
 		}
-		return StreamText{Text: streamEvent.Delta, Kind: StreamTextDelta}, true, nil
+		metadata := ResponsesStreamDeltaMetadata{ItemID: streamEvent.ItemID, OutputIndex: streamEvent.OutputIndex, ContentIndex: streamEvent.ContentIndex}
+		return StreamText{Text: streamEvent.Delta, Kind: StreamTextDelta, Lane: fmt.Sprintf("responses:%s:%d:%d", metadata.ItemID, metadata.OutputIndex, metadata.ContentIndex), ResponsesMetadata: metadata}, true, nil
 	case "response.output_text.done":
-		if strings.TrimSpace(streamEvent.Text) == "" {
-			return StreamText{}, false, nil
-		}
-		return StreamText{Text: streamEvent.Text, Kind: StreamTextSnapshot}, true, nil
+		metadata := ResponsesStreamDeltaMetadata{ItemID: streamEvent.ItemID, OutputIndex: streamEvent.OutputIndex, ContentIndex: streamEvent.ContentIndex}
+		return StreamText{Text: streamEvent.Text, Kind: StreamTextSnapshot, Lane: fmt.Sprintf("responses:%s:%d:%d", metadata.ItemID, metadata.OutputIndex, metadata.ContentIndex), ResponsesMetadata: metadata}, true, nil
 	case "response.content_part.done":
-		if strings.TrimSpace(streamEvent.Part.Text) == "" {
-			return StreamText{}, false, nil
-		}
-		return StreamText{Text: streamEvent.Part.Text, Kind: StreamTextSnapshot}, true, nil
+		metadata := ResponsesStreamDeltaMetadata{ItemID: streamEvent.ItemID, OutputIndex: streamEvent.OutputIndex, ContentIndex: streamEvent.ContentIndex}
+		return StreamText{Text: streamEvent.Part.Text, Kind: StreamTextSnapshot, Lane: fmt.Sprintf("responses:%s:%d:%d", metadata.ItemID, metadata.OutputIndex, metadata.ContentIndex), ResponsesMetadata: metadata}, true, nil
 	case "response.output_item.done":
 		text := joinContentPartTexts(streamEvent.Item.Content)
-		if strings.TrimSpace(text) == "" {
-			return StreamText{}, false, nil
-		}
 		return StreamText{Text: text, Kind: StreamTextSnapshot}, true, nil
 	case "response.completed":
 		texts := []string{streamEvent.Response.OutputText}
@@ -177,9 +186,6 @@ func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
 			texts = append(texts, joinContentPartTexts(output.Content))
 		}
 		text := strings.Join(nonEmptyStrings(texts), "\n")
-		if strings.TrimSpace(text) == "" {
-			return StreamText{}, false, nil
-		}
 		return StreamText{Text: text, Kind: StreamTextSnapshot}, true, nil
 	default:
 		return StreamText{}, false, nil
@@ -201,47 +207,6 @@ func RewriteResponsesStreamDelta(event sse.Event, text string) ([]byte, error) {
 		return nil, err
 	}
 	return sse.FormatData(event.Event, encoded), nil
-}
-
-func ExtractResponsesStreamDeltaMetadata(event sse.Event) (ResponsesStreamDeltaMetadata, bool, error) {
-	data := strings.TrimSpace(event.Data)
-	if data == "" || data == "[DONE]" {
-		return ResponsesStreamDeltaMetadata{}, false, nil
-	}
-	var streamEvent responsesStreamEvent
-	if err := json.Unmarshal([]byte(data), &streamEvent); err != nil {
-		return ResponsesStreamDeltaMetadata{}, false, fmt.Errorf("parse openai responses stream metadata: %w", err)
-	}
-	eventType := streamEvent.Type
-	if eventType == "" {
-		eventType = event.Event
-	}
-	if eventType != "response.output_text.delta" {
-		return ResponsesStreamDeltaMetadata{}, false, nil
-	}
-	return ResponsesStreamDeltaMetadata{
-		ItemID:       streamEvent.ItemID,
-		OutputIndex:  streamEvent.OutputIndex,
-		ContentIndex: streamEvent.ContentIndex,
-	}, true, nil
-}
-
-func NewResponsesStreamDeltaEvent(text string, metadata ResponsesStreamDeltaMetadata) []byte {
-	if text == "" {
-		return nil
-	}
-	payload := map[string]any{
-		"type":          "response.output_text.delta",
-		"item_id":       metadata.ItemID,
-		"output_index":  metadata.OutputIndex,
-		"content_index": metadata.ContentIndex,
-		"delta":         text,
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil
-	}
-	return sse.FormatData("response.output_text.delta", encoded)
 }
 
 func joinContentPartTexts(parts []openAIContentPart) string {

@@ -9,28 +9,34 @@ import (
 )
 
 func TestExtractChatCompletionStreamText(t *testing.T) {
-	event := sse.Event{Data: `{"choices":[{"delta":{"content":"hello"}}]}`}
-	text, ok, err := ExtractChatCompletionStreamText(event)
+	event := sse.Event{Data: `{"choices":[{"index":0,"delta":{"content":"hello"}},{"index":1,"delta":{"content":"there"}}]}`}
+	texts, ok, err := ExtractChatCompletionStreamText(event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || text != "hello" {
-		t.Fatalf("text = %q, ok = %v; want hello true", text, ok)
+	if !ok || len(texts) != 2 {
+		t.Fatalf("texts = %+v, ok = %v; want two texts", texts, ok)
+	}
+	if texts[0].Text != "hello" || texts[0].ChoiceIndex != 0 || texts[1].Text != "there" || texts[1].ChoiceIndex != 1 {
+		t.Fatalf("texts = %+v, want separate choices", texts)
 	}
 
 	noText := sse.Event{Data: `{"choices":[{"delta":{"role":"assistant"}}]}`}
-	text, ok, err = ExtractChatCompletionStreamText(noText)
+	texts, ok, err = ExtractChatCompletionStreamText(noText)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok || text != "" {
-		t.Fatalf("text = %q, ok = %v; want empty false", text, ok)
+	if ok || len(texts) != 0 {
+		t.Fatalf("texts = %+v, ok = %v; want empty false", texts, ok)
 	}
 }
 
 func TestRewriteChatCompletionStreamText(t *testing.T) {
-	event := sse.Event{Data: `{"id":"chatcmpl","choices":[{"index":0,"delta":{"content":"unsafe"}}]}`}
-	rewritten, err := RewriteChatCompletionStreamText(event, "safe")
+	event := sse.Event{Data: `{"id":"chatcmpl","choices":[{"index":0,"delta":{"content":"unsafe"}},{"index":1,"delta":{"content":"leaked"}}]}`}
+	rewritten, err := RewriteChatCompletionStreamText(event, []StreamText{
+		{Text: "safe", ChoiceIndex: 0},
+		{Text: "clean", ChoiceIndex: 1},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,12 +55,15 @@ func TestRewriteChatCompletionStreamText(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := payload.Choices[0].Delta.Content; got != "safe" {
-		t.Fatalf("content = %q, want safe", got)
+		t.Fatalf("choice 0 content = %q, want safe", got)
+	}
+	if got := payload.Choices[1].Delta.Content; got != "clean" {
+		t.Fatalf("choice 1 content = %q, want clean", got)
 	}
 }
 
 func TestRewriteChatCompletionStreamTextSkipsEmptySafeText(t *testing.T) {
-	rewritten, err := RewriteChatCompletionStreamText(sse.Event{Data: `{"choices":[{"delta":{"content":"held"}}]}`}, "")
+	rewritten, err := RewriteChatCompletionStreamText(sse.Event{Data: `{"choices":[{"index":0,"delta":{"content":"held"}}]}`}, []StreamText{{Text: "", ChoiceIndex: 0}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,16 +131,5 @@ func TestRewriteResponsesStreamDelta(t *testing.T) {
 	}
 	if payload.Delta != "safe" {
 		t.Fatalf("delta = %q, want safe", payload.Delta)
-	}
-}
-
-func TestNewResponsesStreamDeltaEventUsesMetadata(t *testing.T) {
-	metadata := ResponsesStreamDeltaMetadata{ItemID: "msg_1", OutputIndex: 2, ContentIndex: 3}
-	event := NewResponsesStreamDeltaEvent("tail", metadata)
-	if !strings.Contains(string(event), "event: response.output_text.delta") {
-		t.Fatalf("event = %q", event)
-	}
-	if !strings.Contains(string(event), `"item_id":"msg_1"`) || !strings.Contains(string(event), `"output_index":2`) || !strings.Contains(string(event), `"content_index":3`) {
-		t.Fatalf("event = %q, want metadata", event)
 	}
 }
