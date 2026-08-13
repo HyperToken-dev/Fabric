@@ -859,6 +859,53 @@ func TestResponsesSnapshotRejectsBeforeTailFlush(t *testing.T) {
 	}
 }
 
+func TestResponsesSnapshotChecksFullText(t *testing.T) {
+	previousTail := openAIStreamSafetyTailRunes
+	openAIStreamSafetyTailRunes = 3
+	t.Cleanup(func() { openAIStreamSafetyTailRunes = previousTail })
+
+	detector, err := sensitive.NewDetector(sensitive.Dictionary{
+		Name:         "scoped",
+		Words:        []string{"bloblocked"},
+		EffectModels: []string{"gpt-5.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := NewOpenAIProxy(OpenAIProxyOptions{
+		ModelStore: fakeModelStore{model: &ModelInfo{ID: 1, Status: ModelStatusActive}},
+		TextPolicy: detectorPolicy{detector: detector},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write(respDeltaEvent("msg_1", 0, 0, "blo"))
+		flusher.Flush()
+		_, _ = w.Write(openAIResponsesDoneEvent("blocked"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	body := `{"model":"gpt-5.5","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, 1, 1, upstream.URL, "provider-key")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if strings.Contains(got, `"code":"sensitive_output"`) {
+		t.Fatalf("body = %q, want no rejection from retained tail plus full snapshot", got)
+	}
+	if !strings.Contains(got, `"delta":"blo"`) || !strings.Contains(got, "blocked") {
+		t.Fatalf("body = %q, want retained tail and snapshot", got)
+	}
+}
+
 func TestOpenAIProxyRejectsSensitiveResponsesOutputSplitAcrossDeltas(t *testing.T) {
 	previousTail := openAIStreamSafetyTailRunes
 	openAIStreamSafetyTailRunes = 6

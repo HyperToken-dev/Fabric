@@ -190,34 +190,7 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 	}
 	if snapshotEvent {
 		for _, streamText := range streamTexts {
-			if streamText.LanePrefix != "" {
-				matched := false
-				for lane, tail := range p.tails {
-					if !strings.HasPrefix(lane, streamText.LanePrefix) {
-						continue
-					}
-					matched = true
-					if p.detectRejected(tail.Text + streamText.Text) {
-						return nil, true, nil
-					}
-				}
-				if !matched && strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
-					return nil, true, nil
-				}
-				continue
-			}
-			if streamText.Lane == "" {
-				for _, tail := range p.tails {
-					if p.detectRejected(tail.Text + streamText.Text) {
-						return nil, true, nil
-					}
-				}
-				if strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
-					return nil, true, nil
-				}
-				continue
-			}
-			if p.detectRejected(p.tails[streamText.Lane].Text + streamText.Text) {
+			if strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
 				return nil, true, nil
 			}
 		}
