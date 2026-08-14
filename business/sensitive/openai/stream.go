@@ -21,13 +21,22 @@ type chatStreamDelta struct {
 	Content json.RawMessage `json:"content,omitempty"`
 }
 
+// StreamTextKind describes how extracted stream text should be interpreted by
+// the output safety processor.
 type StreamTextKind int
 
 const (
+	// StreamTextDelta is append-only text from a streaming delta event.
 	StreamTextDelta StreamTextKind = iota
+	// StreamTextSnapshot is a complete text snapshot emitted by lifecycle events.
 	StreamTextSnapshot
 )
 
+// StreamText is the normalized text unit extracted from OpenAI-compatible SSE events.
+//
+// Lane identifies one independent text stream so callers can keep safety tails
+// separate across choices, output items, and content parts. LanePrefix is used by
+// snapshot events that close a group of lanes rather than one exact lane.
 type StreamText struct {
 	Text              string
 	Kind              StreamTextKind
@@ -60,12 +69,20 @@ type responsesStreamEvent struct {
 	} `json:"response"`
 }
 
+// ResponsesStreamDeltaMetadata carries the fields needed to reconstruct a
+// Responses API text delta after safety processing rewrites the text.
 type ResponsesStreamDeltaMetadata struct {
 	ItemID       string
 	OutputIndex  int
 	ContentIndex int
 }
 
+// ExtractChatCompletionStreamText extracts text deltas from one complete chat
+// completions SSE event.
+//
+// It returns ok=false for empty, [DONE], or non-text delta events so callers can
+// pass those events through unchanged. Malformed JSON is returned as an error
+// because forwarding unparsed model text would bypass output safety detection.
 func ExtractChatCompletionStreamText(event sse.Event) ([]StreamText, bool, error) {
 	data := strings.TrimSpace(event.Data)
 	if data == "" || data == "[DONE]" {
@@ -97,6 +114,11 @@ func ExtractChatCompletionStreamText(event sse.Event) ([]StreamText, bool, error
 	return texts, true, nil
 }
 
+// RewriteChatCompletionStreamText rebuilds a chat completions SSE event with
+// approved replacement text for each extracted choice.
+//
+// Empty replacement text suppresses the event instead of emitting an empty
+// content delta, preserving the caller's withheld-tail semantics.
 func RewriteChatCompletionStreamText(event sse.Event, texts []StreamText) ([]byte, error) {
 	if len(texts) == 0 {
 		return nil, nil
@@ -153,6 +175,11 @@ func RewriteChatCompletionStreamText(event sse.Event, texts []StreamText) ([]byt
 	return sse.FormatData(event.Event, encoded), nil
 }
 
+// ExtractResponsesStreamText extracts text-bearing Responses API stream events.
+//
+// Delta events are returned as StreamTextDelta. Done/completed lifecycle events
+// are returned as StreamTextSnapshot because they contain full output state and
+// can be used by callers to flush matching withheld tails.
 func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
 	data := strings.TrimSpace(event.Data)
 	if data == "" || data == "[DONE]" {
@@ -204,6 +231,11 @@ func ExtractResponsesStreamText(event sse.Event) (StreamText, bool, error) {
 	}
 }
 
+// RewriteResponsesStreamDelta rebuilds a Responses API text delta event with
+// approved replacement text.
+//
+// Only delta events should be passed here; snapshot and lifecycle events are
+// emitted unchanged by the caller after safety checks.
 func RewriteResponsesStreamDelta(event sse.Event, text string) ([]byte, error) {
 	if text == "" {
 		return nil, nil
@@ -221,6 +253,7 @@ func RewriteResponsesStreamDelta(event sse.Event, text string) ([]byte, error) {
 	return sse.FormatData(event.Event, encoded), nil
 }
 
+// partTexts returns all textual content from Responses API content parts.
 func partTexts(parts []openAIContentPart) []string {
 	var texts []string
 	for _, part := range parts {
@@ -230,6 +263,10 @@ func partTexts(parts []openAIContentPart) []string {
 	return nonEmptyStrings(texts)
 }
 
+// rawTexts recursively extracts textual values from OpenAI content fields.
+//
+// OpenAI-compatible payloads can encode content as a string, an array of content
+// parts, or nested objects with content fields; unsupported shapes are ignored.
 func rawTexts(raw json.RawMessage) []string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -258,6 +295,7 @@ func rawTexts(raw json.RawMessage) []string {
 	return nonEmptyStrings(texts)
 }
 
+// nonEmptyStrings drops empty and whitespace-only values while preserving order.
 func nonEmptyStrings(values []string) []string {
 	result := make([]string, 0, len(values))
 	for _, value := range values {

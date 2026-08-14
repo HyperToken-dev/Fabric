@@ -5,23 +5,39 @@ import (
 	"strings"
 )
 
+// Event is one parsed Server-Sent Events message.
+//
+// Event stores the optional SSE event name, Data stores joined data lines using
+// the SSE-required newline separator, and Raw stores the exact bytes consumed for
+// this event. Raw is preserved so proxy code can pass through unmodified events
+// without changing provider-specific formatting.
 type Event struct {
 	Event string
 	Data  string
 	Raw   []byte
 }
 
+// Parser incrementally parses SSE events from arbitrary network chunks.
+//
+// Concurrency: Parser owns mutable buffers and is not safe for concurrent use.
+// A Parser instance should be used for exactly one ordered stream.
 type Parser struct {
 	line  bytes.Buffer
 	event eventBuilder
 }
 
+// eventBuilder accumulates one in-progress SSE event until a blank line closes it.
 type eventBuilder struct {
 	event string
 	data  bytes.Buffer
 	raw   bytes.Buffer
 }
 
+// Write consumes a chunk of SSE bytes and returns every complete event produced
+// by that chunk.
+//
+// The chunk may start or end in the middle of a line. Incomplete lines are held
+// internally until a later Write or Finish call supplies the line ending.
 func (p *Parser) Write(chunk []byte) ([]Event, error) {
 	var events []Event
 	for len(chunk) > 0 {
@@ -49,6 +65,11 @@ func (p *Parser) Write(chunk []byte) ([]Event, error) {
 	return events, nil
 }
 
+// Finish flushes any buffered line and returns the final event if the stream
+// ended without a trailing blank line.
+//
+// Callers should invoke Finish once when the upstream stream reaches EOF. Finish
+// does not validate provider payload JSON; it only completes SSE framing.
 func (p *Parser) Finish() ([]Event, error) {
 	if p.line.Len() > 0 {
 		lineBytes := append([]byte(nil), p.line.Bytes()...)
@@ -68,6 +89,10 @@ func (p *Parser) Finish() ([]Event, error) {
 	return []Event{event}, nil
 }
 
+// consumeLine updates parser state with one complete SSE line.
+//
+// Comment lines are retained in Raw for transparent pass-through but do not
+// affect Event or Data. Unknown fields are also preserved only in Raw.
 func (p *Parser) consumeLine(lineBytes []byte) (Event, bool, error) {
 	line := strings.TrimSuffix(string(lineBytes), "\n")
 	line = strings.TrimSuffix(line, "\r")
@@ -109,6 +134,7 @@ func (p *Parser) consumeLine(lineBytes []byte) (Event, bool, error) {
 	return Event{}, false, nil
 }
 
+// finish snapshots the accumulated event and detaches Raw from the builder buffer.
 func (b *eventBuilder) finish() Event {
 	return Event{
 		Event: b.event,
@@ -117,10 +143,19 @@ func (b *eventBuilder) finish() Event {
 	}
 }
 
+// DataEquals compares event data after trimming surrounding whitespace.
+//
+// This is mainly used for protocol sentinels such as [DONE], where providers may
+// include incidental whitespace around the data value.
 func (e Event) DataEquals(value string) bool {
 	return strings.TrimSpace(e.Data) == value
 }
 
+// FormatData serializes one SSE data event.
+//
+// event is omitted when empty. data is written as a single data line and should
+// already contain a JSON payload or protocol sentinel suitable for the caller's
+// stream format.
 func FormatData(event string, data []byte) []byte {
 	var out bytes.Buffer
 	if event != "" {

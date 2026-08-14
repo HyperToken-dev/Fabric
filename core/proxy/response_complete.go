@@ -15,6 +15,13 @@ import (
 
 const eventStreamContentType = "text/event-stream"
 
+// DefaultModifyResponse builds the default reverse-proxy response hook.
+//
+// Non-stream responses are buffered only when they are safe to capture, decoded
+// for onComplete, then restored so the client still receives the original body.
+// Streaming responses are wrapped so completion callbacks and optional stream
+// transforms can observe the response without forcing the whole stream into
+// memory.
 func DefaultModifyResponse(onComplete OnCompleteFunc, transforms ...StreamTransformFunc) ModifyResponseFunc {
 	var streamTransform StreamTransformFunc
 	if len(transforms) > 0 {
@@ -88,6 +95,13 @@ func DefaultModifyResponse(onComplete OnCompleteFunc, transforms ...StreamTransf
 	}
 }
 
+// transformingReadCloser decodes an upstream streaming body, passes decoded
+// chunks through a StreamProcessor, and re-encodes the processor output for the
+// downstream client.
+//
+// Concurrency: net/http reads and closes one response body serially. The mutable
+// buffers, encoder, and processor are not safe for concurrent use. onComplete is
+// guarded because EOF and Close can both finish the stream lifecycle.
 type transformingReadCloser struct {
 	resp       *http.Response
 	body       io.ReadCloser
@@ -103,6 +117,8 @@ type transformingReadCloser struct {
 	closeOnce  sync.Once
 }
 
+// newTransformingReadCloser prepares a streaming response wrapper that preserves
+// the original Content-Encoding on the client-facing response.
 func newTransformingReadCloser(resp *http.Response, body io.ReadCloser, contentEncoding string, processor StreamProcessor, onComplete OnCompleteFunc) (*transformingReadCloser, error) {
 	readCloser := &transformingReadCloser{resp: resp, body: body, processor: processor, onComplete: onComplete}
 	encoder, err := newStreamOutputEncoder(contentEncoding, &readCloser.out)
@@ -113,6 +129,11 @@ func newTransformingReadCloser(resp *http.Response, body io.ReadCloser, contentE
 	return readCloser, nil
 }
 
+// Read pulls decoded upstream chunks until transformed output is available or
+// the stream reaches a terminal state.
+//
+// StreamProcessor.Stop closes upstream early after its final payload has been
+// encoded, which is used by safety filters that refuse a stream mid-flight.
 func (r *transformingReadCloser) Read(p []byte) (int, error) {
 	if r.out.Len() == 0 && r.pendingErr != nil {
 		err := r.pendingErr
@@ -194,6 +215,8 @@ func (r *transformingReadCloser) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
+// Close releases the upstream body, closes the processor, finalizes the encoder,
+// and emits completion data unless the processor already stopped the stream.
 func (r *transformingReadCloser) Close() error {
 	err := r.body.Close()
 	r.closeProcessor()
@@ -206,6 +229,8 @@ func (r *transformingReadCloser) Close() error {
 	return err
 }
 
+// writeEncoded writes processor output using the downstream content encoding and
+// flushes so SSE clients receive events promptly.
 func (r *transformingReadCloser) writeEncoded(data []byte) error {
 	if err := r.encoder.Write(data); err != nil {
 		return err
@@ -213,6 +238,10 @@ func (r *transformingReadCloser) writeEncoded(data []byte) error {
 	return r.encoder.Flush()
 }
 
+// complete invokes onComplete once with the raw decoded upstream stream bytes.
+//
+// The callback receives upstream bytes before transformation so usage parsers can
+// inspect provider-native events even when downstream output was rewritten.
 func (r *transformingReadCloser) complete() {
 	if r.onComplete == nil {
 		return
@@ -222,17 +251,25 @@ func (r *transformingReadCloser) complete() {
 	})
 }
 
+// closeBodyAndProcessor closes both upstream body and stream processor after a
+// processor-triggered stop.
 func (r *transformingReadCloser) closeBodyAndProcessor() {
 	_ = r.body.Close()
 	r.closeProcessor()
 }
 
+// closeProcessor closes the processor at most once.
 func (r *transformingReadCloser) closeProcessor() {
 	r.closeOnce.Do(func() {
 		_ = r.processor.Close()
 	})
 }
 
+// DecodeResponseBody returns the decoded representation of a complete response
+// body according to Content-Encoding.
+//
+// Supported encodings are identity, gzip, and br. Unsupported encodings return
+// an error so callers can avoid auditing or parsing bytes they cannot decode.
 func DecodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) {
 	encoding := strings.ToLower(strings.TrimSpace(contentEncoding))
 	switch encoding {
@@ -259,6 +296,11 @@ func DecodeResponseBody(rawBody []byte, contentEncoding string) ([]byte, error) 
 	}
 }
 
+// newStreamingDecodeReadCloser wraps a streaming response body with an on-read
+// decoder for the supported Content-Encoding values.
+//
+// Ownership transfers to the returned ReadCloser. On construction failure this
+// function closes the original body before returning the error.
 func newStreamingDecodeReadCloser(body io.ReadCloser, contentEncoding string) (io.ReadCloser, error) {
 	encoding := strings.ToLower(strings.TrimSpace(contentEncoding))
 	switch encoding {
@@ -285,15 +327,19 @@ func newStreamingDecodeReadCloser(body io.ReadCloser, contentEncoding string) (i
 	}
 }
 
+// joinedReadCloser couples a decoder reader with every resource that must close
+// when the decoded stream is closed.
 type joinedReadCloser struct {
 	reader  io.Reader
 	closers []io.Closer
 }
 
+// Read delegates to the decoded reader.
 func (r joinedReadCloser) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
+// Close closes all owned resources and joins close errors for the caller.
 func (r joinedReadCloser) Close() error {
 	var err error
 	for _, closer := range r.closers {
@@ -302,12 +348,16 @@ func (r joinedReadCloser) Close() error {
 	return err
 }
 
+// streamOutputEncoder writes transformed stream bytes using the original
+// response encoding.
 type streamOutputEncoder interface {
 	Write([]byte) error
 	Flush() error
 	Finish() error
 }
 
+// newStreamOutputEncoder selects the downstream encoder that matches the
+// upstream response Content-Encoding.
 func newStreamOutputEncoder(contentEncoding string, out *bytes.Buffer) (streamOutputEncoder, error) {
 	encoding := strings.ToLower(strings.TrimSpace(contentEncoding))
 	switch encoding {
@@ -322,36 +372,45 @@ func newStreamOutputEncoder(contentEncoding string, out *bytes.Buffer) (streamOu
 	}
 }
 
+// identityStreamEncoder writes unencoded stream bytes directly to the output buffer.
 type identityStreamEncoder struct {
 	out *bytes.Buffer
 }
 
+// Write appends identity-encoded data to the output buffer.
 func (e *identityStreamEncoder) Write(data []byte) error {
 	_, err := e.out.Write(data)
 	return err
 }
 
+// Flush is a no-op for identity encoding.
 func (e *identityStreamEncoder) Flush() error { return nil }
 
+// Finish is a no-op for identity encoding.
 func (e *identityStreamEncoder) Finish() error { return nil }
 
+// gzipStreamEncoder incrementally gzip-encodes transformed SSE output.
 type gzipStreamEncoder struct {
 	out    *bytes.Buffer
 	writer *gzip.Writer
 	done   bool
 }
 
+// newGzipStreamEncoder creates a gzip encoder that writes into out.
 func newGzipStreamEncoder(out *bytes.Buffer) *gzipStreamEncoder {
 	encoder := &gzipStreamEncoder{out: out}
 	encoder.writer = gzip.NewWriter(out)
 	return encoder
 }
 
+// Write adds uncompressed data to the gzip stream.
 func (e *gzipStreamEncoder) Write(data []byte) error {
 	_, err := e.writer.Write(data)
 	return err
 }
 
+// Flush forces currently encoded gzip bytes into the output buffer unless the
+// stream has already finished.
 func (e *gzipStreamEncoder) Flush() error {
 	if e.done {
 		return nil
@@ -359,6 +418,8 @@ func (e *gzipStreamEncoder) Flush() error {
 	return e.writer.Flush()
 }
 
+// Finish closes the gzip stream once so downstream clients receive a complete
+// compressed payload.
 func (e *gzipStreamEncoder) Finish() error {
 	if e.done {
 		return nil
@@ -367,23 +428,28 @@ func (e *gzipStreamEncoder) Finish() error {
 	return e.writer.Close()
 }
 
+// brotliStreamEncoder incrementally brotli-encodes transformed SSE output.
 type brotliStreamEncoder struct {
 	out    *bytes.Buffer
 	writer *brotli.Writer
 	done   bool
 }
 
+// newBrotliStreamEncoder creates a brotli encoder that writes into out.
 func newBrotliStreamEncoder(out *bytes.Buffer) *brotliStreamEncoder {
 	encoder := &brotliStreamEncoder{out: out}
 	encoder.writer = brotli.NewWriter(out)
 	return encoder
 }
 
+// Write adds uncompressed data to the brotli stream.
 func (e *brotliStreamEncoder) Write(data []byte) error {
 	_, err := e.writer.Write(data)
 	return err
 }
 
+// Flush forces currently encoded brotli bytes into the output buffer unless the
+// stream has already finished.
 func (e *brotliStreamEncoder) Flush() error {
 	if e.done {
 		return nil
@@ -391,6 +457,8 @@ func (e *brotliStreamEncoder) Flush() error {
 	return e.writer.Flush()
 }
 
+// Finish closes the brotli stream once so downstream clients receive a complete
+// compressed payload.
 func (e *brotliStreamEncoder) Finish() error {
 	if e.done {
 		return nil
@@ -399,10 +467,16 @@ func (e *brotliStreamEncoder) Finish() error {
 	return e.writer.Close()
 }
 
+// isStreamingResponse reports whether the response uses SSE framing.
 func isStreamingResponse(resp *http.Response) bool {
 	return strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), eventStreamContentType)
 }
 
+// shouldCaptureResponseBody decides whether a non-stream response body is safe
+// to buffer for completion callbacks.
+//
+// Binary media and attachments are skipped to avoid excessive memory use and to
+// avoid sending undecodable bytes to usage or audit handlers.
 func shouldCaptureResponseBody(resp *http.Response) bool {
 	if resp == nil {
 		return false
@@ -435,11 +509,18 @@ func shouldCaptureResponseBody(resp *http.Response) bool {
 	return true
 }
 
+// restoreResponseBody replaces the consumed response body so httputil can still
+// copy the original bytes to the client.
 func restoreResponseBody(resp *http.Response, body []byte) {
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
 }
 
+// completionReadCloser records a non-transformed stream while it is copied to
+// the client and invokes onComplete with the decoded body at stream end.
+//
+// Concurrency: not safe for concurrent reads. Completion is guarded because EOF
+// and Close can both be observed by net/http.
 type completionReadCloser struct {
 	resp       *http.Response
 	body       io.ReadCloser
@@ -448,10 +529,14 @@ type completionReadCloser struct {
 	once       sync.Once
 }
 
+// newCompletionReadCloser wraps a streaming body for completion observation
+// without changing client-visible bytes.
 func newCompletionReadCloser(resp *http.Response, body io.ReadCloser, onComplete OnCompleteFunc) *completionReadCloser {
 	return &completionReadCloser{resp: resp, body: body, onComplete: onComplete}
 }
 
+// Read forwards upstream bytes unchanged while keeping a raw copy for the
+// completion callback.
 func (r *completionReadCloser) Read(p []byte) (int, error) {
 	n, err := r.body.Read(p)
 	if n > 0 {
@@ -463,12 +548,14 @@ func (r *completionReadCloser) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Close closes the wrapped body and runs completion if EOF was not reached first.
 func (r *completionReadCloser) Close() error {
 	err := r.body.Close()
 	r.complete()
 	return err
 }
 
+// complete decodes the captured stream body once and calls onComplete.
 func (r *completionReadCloser) complete() {
 	r.once.Do(func() {
 		decodedBody, err := DecodeResponseBody(r.raw.Bytes(), r.resp.Header.Get("Content-Encoding"))

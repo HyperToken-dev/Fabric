@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+// PromptRequest contains the normalized prompt text extracted from an
+// OpenAI-compatible request for input safety detection.
+//
+// Prompts contains only textual user-controllable fields. Non-text content such
+// as image, audio, or file references is intentionally ignored here.
 type PromptRequest struct {
 	Model   string
 	Stream  bool
@@ -27,6 +32,12 @@ type openAIContentPart struct {
 	Content json.RawMessage `json:"content"`
 }
 
+// ExtractPromptRequest reads and restores an OpenAI-compatible request body,
+// then extracts model and prompt text for input safety detection.
+//
+// The request body remains readable by later proxy code through both Body and
+// GetBody. A nil Body is treated as an error because the detector cannot safely
+// inspect missing request content.
 func ExtractPromptRequest(req *http.Request) (*PromptRequest, error) {
 	body, err := readAndRestoreRequestBody(req)
 	if err != nil {
@@ -43,6 +54,8 @@ func ExtractPromptRequest(req *http.Request) (*PromptRequest, error) {
 	}
 }
 
+// readAndRestoreRequestBody consumes req.Body and replaces it with reusable
+// readers backed by the same bytes.
 func readAndRestoreRequestBody(req *http.Request) ([]byte, error) {
 	if req.Body == nil {
 		return nil, errors.New("missing request body")
@@ -67,6 +80,7 @@ func readAndRestoreRequestBody(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
+// parseOpenAIChatPromptRequest extracts text from chat completion messages.
 func parseOpenAIChatPromptRequest(body []byte) (*PromptRequest, error) {
 	var req struct {
 		Model    string          `json:"model"`
@@ -85,6 +99,8 @@ func parseOpenAIChatPromptRequest(body []byte) (*PromptRequest, error) {
 	return &PromptRequest{Model: req.Model, Stream: req.Stream, Prompts: prompts}, nil
 }
 
+// parseOpenAIResponsesPromptRequest extracts instructions and input text from
+// Responses API requests.
 func parseOpenAIResponsesPromptRequest(body []byte) (*PromptRequest, error) {
 	var req struct {
 		Model        string          `json:"model"`
@@ -104,6 +120,8 @@ func parseOpenAIResponsesPromptRequest(body []byte) (*PromptRequest, error) {
 	return &PromptRequest{Model: req.Model, Prompts: prompts}, nil
 }
 
+// parseOpenAIGenericPromptRequest extracts only the model for unsupported
+// OpenAI-compatible endpoints.
 func parseOpenAIGenericPromptRequest(body []byte) (*PromptRequest, error) {
 	var req struct {
 		Model string `json:"model"`
@@ -114,6 +132,12 @@ func parseOpenAIGenericPromptRequest(body []byte) (*PromptRequest, error) {
 	return &PromptRequest{Model: req.Model}, nil
 }
 
+// appendPromptTextsFromRawContent appends textual content from flexible OpenAI
+// content shapes.
+//
+// Supported shapes are plain strings, arrays of content objects, and single
+// content objects. Unsupported or malformed shapes are ignored so optional
+// multimodal fields do not block request proxying.
 func appendPromptTextsFromRawContent(prompts []string, raw json.RawMessage) []string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return prompts
@@ -138,6 +162,8 @@ func appendPromptTextsFromRawContent(prompts []string, raw json.RawMessage) []st
 	return appendPromptTextsFromRawObject(prompts, raw)
 }
 
+// appendPromptTextsFromRawObject appends text fields from one content object and
+// recursively inspects its nested content field.
 func appendPromptTextsFromRawObject(prompts []string, raw json.RawMessage) []string {
 	var item struct {
 		Content json.RawMessage `json:"content"`
@@ -155,6 +181,10 @@ func appendPromptTextsFromRawObject(prompts []string, raw json.RawMessage) []str
 	return prompts
 }
 
+// ExtractOutputTexts extracts text from non-stream OpenAI-compatible response bodies.
+//
+// Unknown endpoints return nil text and nil error because only supported OpenAI
+// output schemas should participate in sensitive output detection.
 func ExtractOutputTexts(req *http.Request, body []byte) ([]string, error) {
 	switch {
 	case strings.Contains(req.URL.Path, "/v1/chat/completions"):
@@ -166,6 +196,8 @@ func ExtractOutputTexts(req *http.Request, body []byte) ([]string, error) {
 	}
 }
 
+// extractOpenAIChatOutputTexts extracts assistant message content from chat
+// completion responses.
 func extractOpenAIChatOutputTexts(body []byte) ([]string, error) {
 	var resp struct {
 		Choices []struct {
@@ -183,6 +215,8 @@ func extractOpenAIChatOutputTexts(body []byte) ([]string, error) {
 	return texts, nil
 }
 
+// extractOpenAIResponsesOutputTexts extracts final text from Responses API
+// response bodies.
 func extractOpenAIResponsesOutputTexts(body []byte) ([]string, error) {
 	var resp struct {
 		OutputText string `json:"output_text"`

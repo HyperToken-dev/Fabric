@@ -15,8 +15,18 @@ import (
 	"go.uber.org/zap"
 )
 
+// openAIStreamSafetyTailRunes is the maximum suffix kept private per stream lane.
+//
+// Holding a suffix lets the detector see sensitive words that may be split across
+// adjacent SSE deltas before those bytes are released to the client.
 var openAIStreamSafetyTailRunes = 256
 
+// openAIStreamSafetyProcessor inspects OpenAI-compatible SSE output before it is
+// forwarded to the client.
+//
+// Concurrency: core proxy code calls Write, Finish, and Close for one response
+// stream. The processor owns mutable parser, buffer, and tail state and is not
+// safe for concurrent use.
 type openAIStreamSafetyProcessor struct {
 	proxy      *OpenAIProxy
 	resp       *http.Response
@@ -27,18 +37,31 @@ type openAIStreamSafetyProcessor struct {
 	channelID  int32
 	modelID    int32
 	parser     sse.Parser
-	tails      map[string]sensitiveopenai.StreamText // lane => sensitiveopenai.StreamText
+	tails      map[string]sensitiveopenai.StreamText // lane => unreleased suffix waiting for cross-chunk detection
 	rawBody    bytes.Buffer                          // upstream SSE bytes received before refusal, used for fallback usage
-	clientBody bytes.Buffer                          // log all data that sent to client.use to log instantly when stream refused
-	rejected   bool                                  // when stream was refused change this to true
-	logged     bool                                  // make sure just log once
+	clientBody bytes.Buffer                          // downstream SSE bytes sent before refusal, used for rejection audit logs
+	rejected   bool                                  // set after refusal so later upstream chunks are dropped
+	logged     bool                                  // guards async usage and integral logging from duplicate execution
 }
 
+// openAIStreamSafetyCodec isolates endpoint-specific SSE payload handling.
+//
+// Implementations must preserve provider protocol shape while exposing only
+// text-bearing events to the safety processor.
 type openAIStreamSafetyCodec interface {
+	// Extract returns stream text entries from a complete SSE event.
+	//
+	// The bool is false when the event is not a supported text event and should
+	// pass through unchanged unless FlushBefore says pending tails must be emitted
+	// first.
 	Extract(event sse.Event) ([]sensitiveopenai.StreamText, bool, error)
+	// RewriteDelta rebuilds an existing delta event with the already-approved text.
 	RewriteDelta(event sse.Event, texts []sensitiveopenai.StreamText) ([]byte, error)
+	// NewDelta creates a protocol-compatible event for a previously withheld tail.
 	NewDelta(text sensitiveopenai.StreamText) []byte
+	// IsDone reports whether the event terminates the stream.
 	IsDone(event sse.Event) bool
+	// FlushBefore reports whether pending tails must be emitted before this event.
 	FlushBefore(event sse.Event) bool
 }
 
@@ -50,7 +73,7 @@ func (p *OpenAIProxy) openAIStreamTransform(resp *http.Response) (coreproxy.Stre
 	if resp == nil || resp.Request == nil {
 		return nil, false, nil
 	}
-	// when error or redirect,no detect
+	// Error and redirect responses are passed through because they are not model output streams.
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, false, nil
 	}
@@ -76,6 +99,8 @@ func (p *OpenAIProxy) openAIStreamTransform(resp *http.Response) (coreproxy.Stre
 	}, true, nil
 }
 
+// newOpenAIStreamSafetyCodec selects the protocol adapter for supported OpenAI
+// streaming endpoints.
 func newOpenAIStreamSafetyCodec(path string) (openAIStreamSafetyCodec, bool) {
 	switch {
 	case strings.Contains(path, "/v1/chat/completions"):
@@ -87,14 +112,16 @@ func newOpenAIStreamSafetyCodec(path string) (openAIStreamSafetyCodec, bool) {
 	}
 }
 
+// Write buffers upstream SSE bytes, parses complete events, and releases only
+// text that has passed output safety detection.
 func (p *openAIStreamSafetyProcessor) Write(chunk []byte) (coreproxy.StreamResult, error) {
-	// when stream was refused,just droping data and interrupt the data stream
+	// After refusal the downstream stream is already closed by the core layer.
 	if p.rejected {
 		return coreproxy.StreamResult{Stop: true}, nil
 	}
 	_, _ = p.rawBody.Write(chunk)
 
-	// put the net fragmentation to state machine,extract logically meaningful event
+	// Network fragments are parsed into complete SSE events before inspection.
 	events, err := p.parser.Write(chunk)
 	if err != nil {
 		return p.reject(fmt.Errorf("parse openai stream: %w", err)), nil
@@ -102,13 +129,13 @@ func (p *openAIStreamSafetyProcessor) Write(chunk []byte) (coreproxy.StreamResul
 	return p.processEvents(events), nil
 }
 
-// process finally,get the last data
+// Finish flushes parser and safety tail state when upstream closes normally.
 func (p *openAIStreamSafetyProcessor) Finish() (coreproxy.StreamResult, error) {
 	if p.rejected {
 		return coreproxy.StreamResult{}, nil
 	}
 
-	// force the parser to output the remaining unread content
+	// Force the parser to output any remaining complete event buffered from TCP fragments.
 	events, err := p.parser.Finish()
 	if err != nil {
 		return p.reject(fmt.Errorf("finish openai stream parser: %w", err)), nil
@@ -118,8 +145,8 @@ func (p *openAIStreamSafetyProcessor) Finish() (coreproxy.StreamResult, error) {
 		return result, nil
 	}
 
-	// no sensitive words were triggered throughout the process and the connection is about to close
-	// the tail data must now be sent to the frontend
+	// No sensitive output was found. The held suffixes are now safe to release
+	// because no later delta can join with them.
 	if len(p.tails) > 0 {
 		tailEvents := p.flushAllTails()
 		result.Data = append(result.Data, tailEvents...)
@@ -128,11 +155,13 @@ func (p *openAIStreamSafetyProcessor) Finish() (coreproxy.StreamResult, error) {
 	return result, nil
 }
 
+// Close satisfies coreproxy.StreamProcessor. The processor does not own external
+// resources; stream accounting is handled by Finish or reject.
 func (p *openAIStreamSafetyProcessor) Close() error {
 	return nil
 }
 
-// processEvents iterates through all parsed event packets to process them centrally.
+// processEvents applies output safety processing to parsed SSE events in order.
 func (p *openAIStreamSafetyProcessor) processEvents(events []sse.Event) coreproxy.StreamResult {
 	var out []byte
 	for _, event := range events {
@@ -140,7 +169,8 @@ func (p *openAIStreamSafetyProcessor) processEvents(events []sse.Event) coreprox
 		if len(data) > 0 {
 			out = append(out, data...)
 		}
-		// if any of these events triggers sensitive detector,stop immediately and return
+		// Once any event is rejected, stop forwarding upstream data and send the
+		// protocol-level refusal event as the final client-visible payload.
 		if rejected || err != nil {
 			if len(out) > 0 {
 				_, _ = p.clientBody.Write(out)
@@ -156,12 +186,12 @@ func (p *openAIStreamSafetyProcessor) processEvents(events []sse.Event) coreprox
 	return coreproxy.StreamResult{Data: out}
 }
 
-// for just one complete event use sliding window to splice and detect
+// processEvent checks one complete SSE event and rewrites text deltas using a
+// per-lane sliding tail window.
 func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, bool, error) {
-	// if encounter a stream complete sign
 	if p.codec.IsDone(event) {
 		out := p.flushAllTails()
-		// append [DONE] stream event
+		// The protocol terminator must remain last after releasing withheld tails.
 		out = append(out, event.Raw...)
 		return out, false, nil
 	}
@@ -173,7 +203,8 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 		return event.Raw, false, nil
 	}
 	if !ok {
-		// unrecognizable content,may be tool call,just allow
+		// Non-text events are allowed, but response lifecycle events may need to
+		// follow text that is currently held in the safety tail buffer.
 		if p.codec.FlushBefore(event) && len(p.tails) > 0 {
 			out := p.flushAllTails()
 			out = append(out, event.Raw...)
@@ -189,6 +220,8 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 		}
 	}
 	if snapshotEvent {
+		// Snapshot events contain full current text instead of append-only deltas, so
+		// they can be checked directly and then used to release matching old tails.
 		for _, streamText := range streamTexts {
 			if strings.TrimSpace(streamText.Text) != "" && p.detectRejected(streamText.Text) {
 				return nil, true, nil
@@ -240,7 +273,8 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 			return nil, true, nil
 		}
 
-		// safeText is sent now; tail stays private until the next chunk can be reviewed with it.
+		// safeText is sent now; tail stays private until the next chunk can be
+		// reviewed with it for sensitive words split across deltas.
 		safeText, tail := splitSafeStreamText(candidate, openAIStreamSafetyTailRunes)
 		if tail == "" {
 			delete(p.tails, lane)
@@ -252,7 +286,7 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 		rewrittenTexts = append(rewrittenTexts, streamText)
 	}
 
-	// encapsulate the safe text back into the SSE packet
+	// Re-encapsulate the safe text back into the original SSE event shape.
 	rewritten, err := p.codec.RewriteDelta(event, rewrittenTexts)
 	if err != nil {
 		return nil, false, err
@@ -260,6 +294,7 @@ func (p *openAIStreamSafetyProcessor) processEvent(event sse.Event) ([]byte, boo
 	return rewritten, false, nil
 }
 
+// detectRejected evaluates candidate output text against the configured text policy.
 func (p *openAIStreamSafetyProcessor) detectRejected(text string) bool {
 	policy := p.proxy.textPolicy
 	if policy == nil {
@@ -278,14 +313,19 @@ func (p *openAIStreamSafetyProcessor) detectRejected(text string) bool {
 	return true
 }
 
+// Extract exposes chat completion delta text for shared stream safety processing.
 func (chatCompletionStreamSafetyCodec) Extract(event sse.Event) ([]sensitiveopenai.StreamText, bool, error) {
 	return sensitiveopenai.ExtractChatCompletionStreamText(event)
 }
 
+// RewriteDelta rebuilds a chat completion delta event after unsafe suffixes have
+// been withheld.
 func (chatCompletionStreamSafetyCodec) RewriteDelta(event sse.Event, texts []sensitiveopenai.StreamText) ([]byte, error) {
 	return sensitiveopenai.RewriteChatCompletionStreamText(event, texts)
 }
 
+// NewDelta creates a chat completion delta event for a withheld tail that later
+// became safe to release.
 func (chatCompletionStreamSafetyCodec) NewDelta(text sensitiveopenai.StreamText) []byte {
 	if text.Text == "" {
 		return nil
@@ -305,14 +345,18 @@ func (chatCompletionStreamSafetyCodec) NewDelta(text sensitiveopenai.StreamText)
 	return sse.FormatData("", encoded)
 }
 
+// IsDone reports whether a chat completion event is the OpenAI stream terminator.
 func (chatCompletionStreamSafetyCodec) IsDone(event sse.Event) bool {
 	return event.DataEquals("[DONE]")
 }
 
+// FlushBefore is false for chat completions because non-text events do not close
+// nested response content scopes.
 func (chatCompletionStreamSafetyCodec) FlushBefore(event sse.Event) bool {
 	return false
 }
 
+// Extract exposes Responses API output text events for shared stream safety processing.
 func (c *responsesStreamSafetyCodec) Extract(event sse.Event) ([]sensitiveopenai.StreamText, bool, error) {
 	streamText, ok, err := sensitiveopenai.ExtractResponsesStreamText(event)
 	if err != nil || !ok {
@@ -321,6 +365,8 @@ func (c *responsesStreamSafetyCodec) Extract(event sse.Event) ([]sensitiveopenai
 	return []sensitiveopenai.StreamText{streamText}, true, nil
 }
 
+// RewriteDelta rebuilds a Responses API text delta event after unsafe suffixes
+// have been withheld.
 func (c *responsesStreamSafetyCodec) RewriteDelta(event sse.Event, texts []sensitiveopenai.StreamText) ([]byte, error) {
 	if len(texts) == 0 {
 		return nil, nil
@@ -328,6 +374,8 @@ func (c *responsesStreamSafetyCodec) RewriteDelta(event sse.Event, texts []sensi
 	return sensitiveopenai.RewriteResponsesStreamDelta(event, texts[0].Text)
 }
 
+// NewDelta creates a Responses API delta event for a withheld tail that later
+// became safe to release.
 func (c *responsesStreamSafetyCodec) NewDelta(text sensitiveopenai.StreamText) []byte {
 	if text.Text == "" {
 		return nil
@@ -346,15 +394,21 @@ func (c *responsesStreamSafetyCodec) NewDelta(text sensitiveopenai.StreamText) [
 	return sse.FormatData("response.output_text.delta", encoded)
 }
 
+// IsDone reports whether a Responses API event is the OpenAI stream terminator.
 func (c *responsesStreamSafetyCodec) IsDone(event sse.Event) bool {
 	return event.DataEquals("[DONE]")
 }
 
+// FlushBefore reports lifecycle events that must not overtake withheld text
+// deltas in the Responses API stream.
 func (c *responsesStreamSafetyCodec) FlushBefore(event sse.Event) bool {
 	return event.Event == "response.output_text.done" || event.Event == "response.content_part.done" || event.Event == "response.output_item.done" || event.Event == "response.completed"
 }
 
-// breaking operation,execute blocking logic and send audit log
+// reject emits an OpenAI-compatible refusal event and schedules audit side effects.
+//
+// The method is idempotent for logging because parser errors and content
+// rejection can both route through the same terminal path.
 func (p *openAIStreamSafetyProcessor) reject(err error) coreproxy.StreamResult {
 	if err != nil {
 		zap.L().Error("openai stream output safety rejected stream", zap.Error(err), zap.Int32("key_id", p.keyID), zap.Int32("channel_id", p.channelID), zap.Int32("model_id", p.modelID), zap.String("model", p.model))
@@ -366,7 +420,7 @@ func (p *openAIStreamSafetyProcessor) reject(err error) coreproxy.StreamResult {
 		p.logged = true
 		rawBody := append([]byte(nil), p.rawBody.Bytes()...)
 		go p.proxy.processStreamingUsageAsync(p.req, rawBody, p.keyID, p.channelID, p.modelID, p.model)
-		// concatenate the part already sent to the user (which may contain the first half of the sensitive word) with the final packet that triggered the error
+		// Audit the exact client-visible body, including the final refusal event.
 		responseBody := append([]byte(nil), p.clientBody.Bytes()...)
 		responseBody = append(responseBody, rejection...)
 		go processIntegralLogAsync(p.proxy.integralLogs, p.req, integralLogInfo{
@@ -384,10 +438,11 @@ func (p *openAIStreamSafetyProcessor) reject(err error) coreproxy.StreamResult {
 			DecodeOK:            true,
 		}, responseBody)
 	}
-	// return the struct that contains error data,notice core layer to stop proxy
+	// Stop tells the core layer to close the downstream stream after this payload.
 	return coreproxy.StreamResult{Data: rejection, Stop: true}
 }
 
+// flushTail releases and clears the withheld suffix for one logical stream lane.
 func (p *openAIStreamSafetyProcessor) flushTail(lane string) []byte {
 	tail, ok := p.tails[lane]
 	if !ok || tail.Text == "" {
@@ -397,6 +452,7 @@ func (p *openAIStreamSafetyProcessor) flushTail(lane string) []byte {
 	return p.codec.NewDelta(tail)
 }
 
+// flushAllTails releases withheld suffixes in deterministic lane order.
 func (p *openAIStreamSafetyProcessor) flushAllTails() []byte {
 	if len(p.tails) == 0 {
 		return nil
@@ -413,7 +469,8 @@ func (p *openAIStreamSafetyProcessor) flushAllTails() []byte {
 	return out
 }
 
-// split text after confirming text is safe
+// splitSafeStreamText returns the immediately releasable prefix and the suffix
+// that must remain withheld for cross-delta detection.
 func splitSafeStreamText(text string, tailRunes int) (string, string) {
 	if tailRunes <= 0 {
 		return text, ""
@@ -426,7 +483,8 @@ func splitSafeStreamText(text string, tailRunes int) (string, string) {
 	return string(runes[:split]), string(runes[split:])
 }
 
-// generate sse error event with openai protocol style
+// openAIStreamRejectionSSE returns the client-visible refusal sequence in an
+// OpenAI-compatible SSE shape.
 func openAIStreamRejectionSSE() []byte {
 	return []byte("event: error\ndata: {\"error\":{\"message\":\"model output rejected, please change your prompt\",\"type\":\"policy_violation\",\"code\":\"sensitive_output\"}}\n\ndata: [DONE]\n\n")
 }
