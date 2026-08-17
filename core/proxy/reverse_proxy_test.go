@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"io"
 	"net/http"
@@ -494,4 +495,222 @@ func TestProxyStreamingOnCompleteTriggeredByCloseBeforeEOF(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for onComplete")
 	}
+}
+
+func TestDefaultModifyResponseTransformsStreamingBody(t *testing.T) {
+	body := &chunkReadCloser{chunks: [][]byte{[]byte("hold"), []byte("go")}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       body,
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	resp.Header.Set("Content-Length", "6")
+	resp.ContentLength = 6
+
+	completeCh := make(chan string, 1)
+	processor := &testStreamProcessor{
+		write: func(chunk []byte) (StreamResult, error) {
+			switch string(chunk) {
+			case "hold":
+				return StreamResult{}, nil
+			case "go":
+				return StreamResult{Data: []byte("GO")}, nil
+			default:
+				return StreamResult{Data: chunk}, nil
+			}
+		},
+		finish: func() (StreamResult, error) {
+			return StreamResult{Data: []byte("TAIL")}, nil
+		},
+	}
+	modify := DefaultModifyResponse(func(resp *http.Response, decodedBody []byte) {
+		completeCh <- string(decodedBody)
+	}, func(resp *http.Response) (StreamProcessor, bool, error) {
+		return processor, true, nil
+	})
+
+	if err := modify(resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "" {
+		t.Fatalf("Content-Length = %q, want empty", got)
+	}
+	if resp.ContentLength != -1 {
+		t.Fatalf("ContentLength = %d, want -1", resp.ContentLength)
+	}
+
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "GOTAIL" {
+		t.Fatalf("transformed body = %q, want GOTAIL", out)
+	}
+	select {
+	case got := <-completeCh:
+		if got != "holdgo" {
+			t.Fatalf("complete body = %q, want holdgo", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for onComplete")
+	}
+	if processor.closeCalls != 1 {
+		t.Fatalf("processor close calls = %d, want 1", processor.closeCalls)
+	}
+}
+
+func TestDefaultModifyResponseStopsTransformedStreamingBody(t *testing.T) {
+	body := &chunkReadCloser{chunks: [][]byte{[]byte("stop"), []byte("unsafe")}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       body,
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+
+	completeCalled := false
+	processor := &testStreamProcessor{
+		write: func(chunk []byte) (StreamResult, error) {
+			return StreamResult{Data: []byte("blocked"), Stop: true}, nil
+		},
+	}
+	modify := DefaultModifyResponse(func(resp *http.Response, decodedBody []byte) {
+		completeCalled = true
+	}, func(resp *http.Response) (StreamProcessor, bool, error) {
+		return processor, true, nil
+	})
+
+	if err := modify(resp); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "blocked" {
+		t.Fatalf("transformed body = %q, want blocked", out)
+	}
+	if !body.closed {
+		t.Fatal("upstream body was not closed after stop")
+	}
+	if completeCalled {
+		t.Fatal("onComplete should not be called for stopped stream")
+	}
+	if processor.closeCalls != 1 {
+		t.Fatalf("processor close calls = %d, want 1", processor.closeCalls)
+	}
+}
+
+func TestDefaultModifyResponseTransformsGzipStreamingBody(t *testing.T) {
+	var encoded bytes.Buffer
+	gzipWriter := gzip.NewWriter(&encoded)
+	if _, err := gzipWriter.Write([]byte("data: hello\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(encoded.Bytes())),
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	resp.Header.Set("Content-Encoding", "gzip")
+	resp.Header.Set("Content-Length", "999")
+	resp.ContentLength = 999
+
+	completeCh := make(chan string, 1)
+	processor := &testStreamProcessor{
+		write: func(chunk []byte) (StreamResult, error) {
+			return StreamResult{Data: bytes.ReplaceAll(chunk, []byte("hello"), []byte("safe"))}, nil
+		},
+	}
+	modify := DefaultModifyResponse(func(resp *http.Response, decodedBody []byte) {
+		completeCh <- string(decodedBody)
+	}, func(resp *http.Response) (StreamProcessor, bool, error) {
+		return processor, true, nil
+	})
+
+	if err := modify(resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "" {
+		t.Fatalf("Content-Length = %q, want empty", got)
+	}
+	compressedOut, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedOut))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedOut, readErr := io.ReadAll(gzipReader)
+	closeErr := gzipReader.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if string(decodedOut) != "data: safe\n\n" {
+		t.Fatalf("decoded transformed body = %q, want safe SSE", decodedOut)
+	}
+	select {
+	case got := <-completeCh:
+		if got != "data: hello\n\n" {
+			t.Fatalf("complete body = %q, want decoded upstream", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for onComplete")
+	}
+}
+
+type chunkReadCloser struct {
+	chunks [][]byte
+	closed bool
+}
+
+func (r *chunkReadCloser) Read(p []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	chunk := r.chunks[0]
+	r.chunks = r.chunks[1:]
+	return copy(p, chunk), nil
+}
+
+func (r *chunkReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+type testStreamProcessor struct {
+	write      func([]byte) (StreamResult, error)
+	finish     func() (StreamResult, error)
+	closeCalls int
+}
+
+func (p *testStreamProcessor) Write(chunk []byte) (StreamResult, error) {
+	if p.write == nil {
+		return StreamResult{Data: chunk}, nil
+	}
+	return p.write(chunk)
+}
+
+func (p *testStreamProcessor) Finish() (StreamResult, error) {
+	if p.finish == nil {
+		return StreamResult{}, nil
+	}
+	return p.finish()
+}
+
+func (p *testStreamProcessor) Close() error {
+	p.closeCalls++
+	return nil
 }
