@@ -1,0 +1,39 @@
+syntax = "proto3";
+package proto;
+option go_package = "github.com/HyperToken-dev/fabric/gen;proto";
+import "google/protobuf/timestamp.proto";
+
+service ApiKeyClientService {
+    rpc CreateApiKey(CreateClientApiKeyRequest) returns(CreateClientApiKeyResponse);
+    rpc RevokeApiKey(RevokeClientApiKeyRequest) returns(RevokeClientApiKeyResponse);
+    rpc ListApiKeys(ListClientApiKeysRequest) returns(ListClientApiKeysResponse);
+}
+
+message ClientApiKey {
+    string key_name = 1;
+    string key_hash = 2;
+    string raw_key = 3;
+    string channel_name = 4;
+    google.protobuf.Timestamp created_at = 5;
+}
+
+message CreateClientApiKeyRequest {
+    string key_name = 1;
+    string channel_name = 2;
+}
+
+message CreateClientApiKeyResponse {
+    ClientApiKey api_key = 1;
+}
+
+message RevokeClientApiKeyRequest {
+    string key_hash = 1;
+}
+
+message RevokeClientApiKeyResponse {}
+
+message ListClientApiKeysRequest {}
+
+message ListClientApiKeysResponse {
+    repeated ClientApiKey api_keys = 1;
+}

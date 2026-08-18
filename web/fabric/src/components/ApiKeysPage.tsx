@@ -7,7 +7,7 @@ import {
     type ApiKey,
     type CreatedApiKey,
 } from '../api/apiKeys';
-import { listChannels, type Channel } from '../api/channels';
+import { listClientChannels, type ClientChannel } from '../api/channels';
 import {
     buttonClass,
     EmptyState,
@@ -21,8 +21,8 @@ import { useI18n } from '../i18n';
 
 export default function ApiKeysPage() {
     const { t, formatDate } = useI18n();
-    const [channels, setChannels] = useState<Channel[] | null>(null);
-    const [channelId, setChannelId] = useState<number | null>(null);
+    const [channels, setChannels] = useState<ClientChannel[] | null>(null);
+    const [channelName, setChannelName] = useState('');
     const [keys, setKeys] = useState<ApiKey[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [version, setVersion] = useState(0);
@@ -34,13 +34,13 @@ export default function ApiKeysPage() {
     useEffect(() => {
         const controller = new AbortController();
         setError(null);
-        listChannels(controller.signal)
+        listClientChannels(controller.signal)
             .then((result) => {
                 setChannels(result);
-                setChannelId((current) =>
-                    current && result.some((channel) => channel.channelId === current)
+                setChannelName((current) =>
+                    current && result.some((channel) => channel.channelName === current)
                         ? current
-                        : (result[0]?.channelId ?? null),
+                        : (result[0]?.channelName ?? ''),
                 );
             })
             .catch((requestError: unknown) => {
@@ -54,14 +54,10 @@ export default function ApiKeysPage() {
         return () => controller.abort();
     }, [version]);
     useEffect(() => {
-        if (!channelId) {
-            setKeys([]);
-            return;
-        }
         const controller = new AbortController();
         setKeys(null);
         setError(null);
-        listApiKeys(channelId, controller.signal)
+        listApiKeys(controller.signal)
             .then(setKeys)
             .catch((requestError: unknown) => {
                 if (!controller.signal.aborted)
@@ -72,20 +68,25 @@ export default function ApiKeysPage() {
                     );
             });
         return () => controller.abort();
-    }, [channelId, version]);
+    }, [version]);
     async function submit(event: FormEvent) {
         event.preventDefault();
-        if (!channelId || !keyName.trim() || saving) return;
+        if (!channelName || !keyName.trim() || saving) return;
         setSaving(true);
         setError(null);
         try {
-            const key = await createApiKey(keyName.trim(), channelId);
+            const key = await createApiKey(keyName.trim(), channelName);
             setCreated(key);
             setCopied(false);
             setKeyName('');
             setKeys((current) => [
                 ...(current ?? []),
-                { keyName: key.keyName, keyHash: key.keyHash, createdAt: key.createdAt },
+                {
+                    keyName: key.keyName,
+                    keyHash: key.keyHash,
+                    channelName: key.channelName,
+                    createdAt: key.createdAt,
+                },
             ]);
         } catch (requestError) {
             setError(
@@ -153,11 +154,14 @@ export default function ApiKeysPage() {
                                 {t('apiKeys.channel')}
                                 <select
                                     className={inputClass}
-                                    value={channelId ?? ''}
-                                    onChange={(event) => setChannelId(Number(event.target.value))}
+                                    value={channelName}
+                                    onChange={(event) => setChannelName(event.target.value)}
                                 >
                                     {channels.map((channel) => (
-                                        <option key={channel.channelId} value={channel.channelId}>
+                                        <option
+                                            key={channel.channelName}
+                                            value={channel.channelName}
+                                        >
                                             {channel.channelName}
                                         </option>
                                     ))}
@@ -204,6 +208,9 @@ export default function ApiKeysPage() {
                                             title={key.keyHash}
                                         >
                                             {key.keyHash}
+                                        </p>
+                                        <p className="mt-1 text-xs font-semibold text-emerald-600">
+                                            {key.channelName}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-400">
                                             {t('common.created', {

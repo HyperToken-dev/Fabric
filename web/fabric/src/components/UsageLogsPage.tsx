@@ -97,7 +97,7 @@ export default function UsageLogsPage() {
         const request =
             mode === 'model'
                 ? listModels(channelId, controller.signal)
-                : listApiKeys(channelId, controller.signal);
+                : listApiKeys(controller.signal);
         request
             .then((result) => {
                 if (mode === 'model') {

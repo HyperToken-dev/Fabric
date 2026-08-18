@@ -1,4 +1,4 @@
-import type { ApiKey as ProtoApiKey } from '../gen/apiKey_pb';
+import type { ClientApiKey as ProtoApiKey } from '../gen/api_key_client_pb';
 import { apiKeyClient } from '../rpc/clients';
 import { callAdminRpc } from '../rpc/errors';
 import { requireString, timestampToIso } from '../rpc/values';
@@ -6,6 +6,7 @@ import { requireString, timestampToIso } from '../rpc/values';
 export type ApiKey = {
     keyName: string;
     keyHash: string;
+    channelName: string;
     createdAt: string;
 };
 
@@ -15,6 +16,7 @@ function toApiKey(key: ProtoApiKey, field: string): ApiKey {
     return {
         keyName: requireString(key.keyName, `${field}.keyName`),
         keyHash: requireString(key.keyHash, `${field}.keyHash`),
+        channelName: requireString(key.channelName, `${field}.channelName`, true),
         createdAt: timestampToIso(key.createdAt, `${field}.createdAt`),
     };
 }
@@ -27,15 +29,13 @@ function toCreatedApiKey(key: ProtoApiKey | undefined): CreatedApiKey {
     return { ...parsed, rawKey: requireString(key.rawKey, 'apiKey.rawKey') };
 }
 
-export async function listApiKeys(channelId: number, signal?: AbortSignal): Promise<ApiKey[]> {
-    const response = await callAdminRpc(() =>
-        apiKeyClient.listApiKeysByChannelID({ channelId }, { signal }),
-    );
+export async function listApiKeys(signal?: AbortSignal): Promise<ApiKey[]> {
+    const response = await callAdminRpc(() => apiKeyClient.listApiKeys({}, { signal }));
     return response.apiKeys.map((key, index) => toApiKey(key, `apiKeys[${index}]`));
 }
 
-export async function createApiKey(keyName: string, channelId: number): Promise<CreatedApiKey> {
-    const response = await callAdminRpc(() => apiKeyClient.createApiKey({ keyName, channelId }));
+export async function createApiKey(keyName: string, channelName: string): Promise<CreatedApiKey> {
+    const response = await callAdminRpc(() => apiKeyClient.createApiKey({ keyName, channelName }));
     return toCreatedApiKey(response.apiKey);
 }
 

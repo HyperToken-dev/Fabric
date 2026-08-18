@@ -88,3 +88,27 @@ func TestLoadNormalizesAddressesAndRuntimePaths(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuthConfigValidate(t *testing.T) {
+	valid := OAuthConfig{
+		Enabled:       true,
+		IssuerURL:     "https://sso.example.com/.well-known/openid-configuration",
+		ClientID:      "client",
+		ClientSecret:  "secret",
+		RedirectURL:   "https://fabric.example.com/auth/callback",
+		SessionSecret: strings.Repeat("s", 32),
+		DefaultRole:   "user",
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	valid.DefaultRole = "owner"
+	if err := valid.Validate(); err == nil || !strings.Contains(err.Error(), "defaultRole") {
+		t.Fatalf("Validate() error = %v, want defaultRole error", err)
+	}
+	valid.DefaultRole = "user"
+	valid.SessionSecret = "short"
+	if err := valid.Validate(); err == nil || !strings.Contains(err.Error(), "sessionSecret") {
+		t.Fatalf("Validate() error = %v, want sessionSecret error", err)
+	}
+}

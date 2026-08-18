@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"regexp"
 	"testing"
 
@@ -20,7 +19,7 @@ func TestModelServiceGetCreateAndList(t *testing.T) {
 	mock.ExpectQuery("SELECT id, channel_id, model_name, model_type, status FROM models WHERE id").
 		WithArgs(int32(9)).
 		WillReturnRows(sqlmock.NewRows(modelRows).AddRow(int32(9), int32(7), "gpt-5.5", int32(1), int16(1)))
-	got, err := svc.GetModelInfo(context.Background(), &proto.GetModelInfoRequest{ModelId: 9})
+	got, err := svc.GetModelInfo(adminTestContext(), &proto.GetAdminModelInfoRequest{ModelId: 9})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +30,7 @@ func TestModelServiceGetCreateAndList(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO models (channel_id, model_name, status, model_type) VALUES ($1, $2, $3, $4) RETURNING id, channel_id, model_name, model_type, status")).
 		WithArgs(int32(7), "gpt-5.5-mini", int16(modelStatusActive), int32(modelTypeText)).
 		WillReturnRows(sqlmock.NewRows(modelRows).AddRow(int32(10), int32(7), "gpt-5.5-mini", int32(modelTypeText), int16(modelStatusActive)))
-	created, err := svc.CreateModel(context.Background(), &proto.CreateModelRequest{ChannelId: 7, ModelName: "gpt-5.5-mini"})
+	created, err := svc.CreateModel(adminTestContext(), &proto.CreateAdminModelRequest{ChannelId: 7, ModelName: "gpt-5.5-mini"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +41,7 @@ func TestModelServiceGetCreateAndList(t *testing.T) {
 	mock.ExpectQuery("SELECT id, channel_id, model_name, model_type, status FROM models WHERE channel_id").
 		WithArgs(int32(7)).
 		WillReturnRows(sqlmock.NewRows(modelRows).AddRow(int32(11), int32(7), "gpt-5.5", int32(1), int16(1)))
-	list, err := svc.ListModels(context.Background(), &proto.ListModelsRequest{ChannelId: 7})
+	list, err := svc.ListModels(adminTestContext(), &proto.ListAdminModelsRequest{ChannelId: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +49,7 @@ func TestModelServiceGetCreateAndList(t *testing.T) {
 		t.Fatalf("models = %+v", list.Models)
 	}
 
-	catalog, err := svc.ListCatalogModels(context.Background(), &proto.ListCatalogModelsRequest{ApiFormat: models.APIFormatOpenAI})
+	catalog, err := svc.ListCatalogModels(adminTestContext(), &proto.ListCatalogModelsRequest{ApiFormat: models.APIFormatOpenAI})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +57,7 @@ func TestModelServiceGetCreateAndList(t *testing.T) {
 		t.Fatalf("catalog models = %+v", catalog.Models)
 	}
 
-	emptyCatalog, err := svc.ListCatalogModels(context.Background(), &proto.ListCatalogModelsRequest{ApiFormat: 999})
+	emptyCatalog, err := svc.ListCatalogModels(adminTestContext(), &proto.ListCatalogModelsRequest{ApiFormat: 999})
 	if err != nil {
 		t.Fatal(err)
 	}

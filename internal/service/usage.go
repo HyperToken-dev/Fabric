@@ -8,6 +8,7 @@ import (
 	"time"
 
 	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/adminauth"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"go.uber.org/zap"
@@ -28,6 +29,9 @@ func NewUsageService(db *sql.DB, location *time.Location) *UsageService {
 }
 
 func (s *UsageService) GetUsageByKeyID(ctx context.Context, req *proto.GetUsageByKeyIDRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	logs, err := s.queries.GetUsageLogsByKeyID(ctx, repository.GetUsageLogsByKeyIDParams{
 		KeyID:  req.KeyId,
 		Limit:  100,
@@ -42,6 +46,9 @@ func (s *UsageService) GetUsageByKeyID(ctx context.Context, req *proto.GetUsageB
 }
 
 func (s *UsageService) GetUsageByKeyHash(ctx context.Context, req *proto.GetUsageByKeyHashRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	logs, err := s.queries.GetUsageLogsByKeyHash(ctx, repository.GetUsageLogsByKeyHashParams{
 		KeyHash: sql.NullString{String: req.KeyHash, Valid: true},
 		Limit:   100,
@@ -56,6 +63,9 @@ func (s *UsageService) GetUsageByKeyHash(ctx context.Context, req *proto.GetUsag
 }
 
 func (s *UsageService) GetUsageByChannelID(ctx context.Context, req *proto.GetUsageByChannelIDRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	logs, err := s.queries.GetUsageLogsByChannel(ctx, repository.GetUsageLogsByChannelParams{
 		ChannelID: req.ChannelId,
 		Limit:     100,
@@ -70,6 +80,9 @@ func (s *UsageService) GetUsageByChannelID(ctx context.Context, req *proto.GetUs
 }
 
 func (s *UsageService) GetUsageByModelID(ctx context.Context, req *proto.GetUsageByModelIDRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	logs, err := s.queries.GetUsageLogsByModelID(ctx, repository.GetUsageLogsByModelIDParams{
 		ModelID: req.ModelId,
 		Limit:   100,
@@ -84,6 +97,9 @@ func (s *UsageService) GetUsageByModelID(ctx context.Context, req *proto.GetUsag
 }
 
 func (s *UsageService) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *proto.GetUsageByDeadlineAndKeyHashRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	var deadline time.Time
 	if req.Deadline != nil {
 		deadline = req.Deadline.AsTime()
@@ -112,6 +128,9 @@ func (s *UsageService) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *pr
 }
 
 func (s *UsageService) GetUsageSummary(ctx context.Context, req *proto.GetUsageSummaryRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	stats, err := s.queries.GetUsageStatsGlobal(ctx, repository.GetUsageStatsGlobalParams{})
 	if err != nil {
 		zap.L().Error("get usage summary failed", zap.Error(err))
@@ -134,31 +153,22 @@ func (s *UsageService) GetUsageSummary(ctx context.Context, req *proto.GetUsageS
 }
 
 func (s *UsageService) GetUsageDashboard(ctx context.Context, req *proto.GetUsageDashboardRequest) (*proto.GetUsageDashboardResponse, error) {
+	user, err := adminauth.RequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now().In(s.location)
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, s.location)
 	tomorrowStart := todayStart.AddDate(0, 0, 1)
 	timelineStart := todayStart.AddDate(0, 0, -6)
 
-	totals, err := s.queries.GetUsageDashboardTotals(ctx, repository.GetUsageDashboardTotalsParams{
-		StartAt: todayStart.UTC(),
-		EndAt:   tomorrowStart.UTC(),
-	})
+	totals, rows, err := s.dashboardData(ctx, user, todayStart.UTC(), tomorrowStart.UTC(), timelineStart.UTC())
 	if err != nil {
-		zap.L().Error("get usage dashboard totals failed", zap.Error(err))
+		zap.L().Error("get usage dashboard data failed", zap.Error(err), zap.Int32("user_id", user.ID), zap.String("role", user.Role))
 		return nil, err
 	}
 
-	rows, err := s.queries.GetUsageDashboardTimeline(ctx, repository.GetUsageDashboardTimelineParams{
-		TimeZone: s.location.String(),
-		StartAt:  timelineStart.UTC(),
-		EndAt:    tomorrowStart.UTC(),
-	})
-	if err != nil {
-		zap.L().Error("get usage dashboard timeline failed", zap.Error(err))
-		return nil, err
-	}
-
-	byDate := make(map[string]repository.GetUsageDashboardTimelineRow, len(rows))
+	byDate := make(map[string]dashboardTimelineRow, len(rows))
 	for _, row := range rows {
 		byDate[row.Date.Format("2006-01-02")] = row
 	}
@@ -186,6 +196,58 @@ func (s *UsageService) GetUsageDashboard(ctx context.Context, req *proto.GetUsag
 		},
 		RecentDays: recentDays,
 	}, nil
+}
+
+type dashboardTotalsRow struct {
+	TotalPromptTokens     int64
+	TotalCompletionTokens int64
+	RequestCount          int64
+}
+
+type dashboardTimelineRow struct {
+	Date                  time.Time
+	TotalPromptTokens     int64
+	TotalCompletionTokens int64
+	RequestCount          int64
+}
+
+func (s *UsageService) dashboardData(ctx context.Context, user repository.User, todayStart, tomorrowStart, timelineStart time.Time) (dashboardTotalsRow, []dashboardTimelineRow, error) {
+	if user.Role == adminauth.RoleAdmin {
+		totals, err := s.queries.GetUsageDashboardTotals(ctx, repository.GetUsageDashboardTotalsParams{StartAt: todayStart, EndAt: tomorrowStart})
+		if err != nil {
+			return dashboardTotalsRow{}, nil, err
+		}
+		rows, err := s.queries.GetUsageDashboardTimeline(ctx, repository.GetUsageDashboardTimelineParams{TimeZone: s.location.String(), StartAt: timelineStart, EndAt: tomorrowStart})
+		if err != nil {
+			return dashboardTotalsRow{}, nil, err
+		}
+		return dashboardTotalsRow(totals), convertGlobalTimeline(rows), nil
+	}
+	totals, err := s.queries.GetUsageDashboardTotalsByUser(ctx, repository.GetUsageDashboardTotalsByUserParams{UserID: user.ID, StartAt: todayStart, EndAt: tomorrowStart})
+	if err != nil {
+		return dashboardTotalsRow{}, nil, err
+	}
+	rows, err := s.queries.GetUsageDashboardTimelineByUser(ctx, repository.GetUsageDashboardTimelineByUserParams{TimeZone: s.location.String(), UserID: user.ID, StartAt: timelineStart, EndAt: tomorrowStart})
+	if err != nil {
+		return dashboardTotalsRow{}, nil, err
+	}
+	return dashboardTotalsRow(totals), convertUserTimeline(rows), nil
+}
+
+func convertGlobalTimeline(rows []repository.GetUsageDashboardTimelineRow) []dashboardTimelineRow {
+	result := make([]dashboardTimelineRow, len(rows))
+	for i, row := range rows {
+		result[i] = dashboardTimelineRow(row)
+	}
+	return result
+}
+
+func convertUserTimeline(rows []repository.GetUsageDashboardTimelineByUserRow) []dashboardTimelineRow {
+	result := make([]dashboardTimelineRow, len(rows))
+	for i, row := range rows {
+		result[i] = dashboardTimelineRow(row)
+	}
+	return result
 }
 
 func repoLogsToProto(logs []repository.UsageLog) []*proto.UsageLog {

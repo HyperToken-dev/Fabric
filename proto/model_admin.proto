@@ -2,14 +2,14 @@ syntax = "proto3";
 package proto;
 option go_package = "github.com/HyperToken-dev/fabric/gen;proto";
 
-service ModelService {
-    rpc GetModelInfo(GetModelInfoRequest) returns(GetModelInfoResponse);
-    rpc CreateModel(CreateModelRequest) returns(CreateModelResponse);
-    rpc ListModels(ListModelsRequest) returns(ListModelsResponse);
+service ModelAdminService {
+    rpc GetModelInfo(GetAdminModelInfoRequest) returns(GetAdminModelInfoResponse);
+    rpc CreateModel(CreateAdminModelRequest) returns(CreateAdminModelResponse);
+    rpc ListModels(ListAdminModelsRequest) returns(ListAdminModelsResponse);
     rpc ListCatalogModels(ListCatalogModelsRequest) returns(ListCatalogModelsResponse);
 }
 
-message Model {
+message AdminModel {
     int32 model_id = 1;
     string model_name = 2;
     int32 channel_id = 3;
@@ -22,20 +22,20 @@ message CatalogModel {
     int32 model_type = 2;
 }
 
-message GetModelInfoRequest {
+message GetAdminModelInfoRequest {
     int32 model_id = 1;
 }
 
-message GetModelInfoResponse {
-    Model model = 1;
+message GetAdminModelInfoResponse {
+    AdminModel model = 1;
 }
 
-message ListModelsRequest {
+message ListAdminModelsRequest {
     int32 channel_id = 1;
 }
 
-message ListModelsResponse {
-    repeated Model models = 1;
+message ListAdminModelsResponse {
+    repeated AdminModel models = 1;
 }
 
 message ListCatalogModelsRequest {
@@ -46,13 +46,13 @@ message ListCatalogModelsResponse {
     repeated CatalogModel models = 1;
 }
 
-message CreateModelRequest {
+message CreateAdminModelRequest {
     string model_name = 1;
     int32 channel_id = 2;
     int32 status = 3;
     int32 model_type = 4;
 }
 
-message CreateModelResponse {
-    Model model = 1;
+message CreateAdminModelResponse {
+    AdminModel model = 1;
 }

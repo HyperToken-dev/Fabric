@@ -19,3 +19,19 @@ log:
   maxBackups: 10
   maxAge: 30
   compress: true
+
+oauth:
+  enabled: false
+  issuerURL: ""
+  clientID: ""
+  clientSecret: ""
+  redirectURL: "http://localhost:9090/auth/callback"
+  scopes:
+    - openid
+    - email
+    - profile
+  sessionSecret: ""
+  allowedDomains: []
+  adminEmails: []
+  autoProvision: true
+  defaultRole: user

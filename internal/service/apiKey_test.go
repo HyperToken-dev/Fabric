@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"io"
@@ -25,12 +24,12 @@ func TestApiKeyServiceCreateApiKey(t *testing.T) {
 	svc := NewApiKeyService(db)
 	now := time.Now()
 
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO api_keys (key_hash, key_name, channel_id) VALUES ($1, $2, $3) RETURNING id, key_hash, key_name, channel_id, created_at")).
-		WithArgs(sqlmock.AnyArg(), "primary", int32(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at"}).
-			AddRow(int32(1), sql.NullString{String: strings.Repeat("a", 64), Valid: true}, "primary", int32(7), now))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO api_keys (key_hash, key_name, channel_id, user_id) VALUES ($1, $2, $3, $4) RETURNING id, key_hash, key_name, channel_id, created_at, user_id")).
+		WithArgs(sqlmock.AnyArg(), "primary", int32(7), int32(99)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "user_id"}).
+			AddRow(int32(1), sql.NullString{String: strings.Repeat("a", 64), Valid: true}, "primary", int32(7), now, int32(99)))
 
-	res, err := svc.CreateApiKey(context.Background(), &proto.CreateApiKeyRequest{KeyName: "primary", ChannelId: 7})
+	res, err := svc.CreateApiKey(adminTestContext(), &proto.CreateAdminApiKeyRequest{KeyName: "primary", ChannelId: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +54,7 @@ func TestApiKeyServiceCreateApiKeyRandomFailure(t *testing.T) {
 	defer cleanup()
 	svc := NewApiKeyService(db)
 
-	_, err := svc.CreateApiKey(context.Background(), &proto.CreateApiKeyRequest{KeyName: "primary", ChannelId: 7})
+	_, err := svc.CreateApiKey(adminTestContext(), &proto.CreateAdminApiKeyRequest{KeyName: "primary", ChannelId: 7})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("CreateApiKey() error = %v, want %v", err, wantErr)
 	}
@@ -73,15 +72,15 @@ func TestApiKeyServiceRevokeAndList(t *testing.T) {
 	mock.ExpectExec("DELETE FROM api_keys WHERE key_hash").
 		WithArgs(sql.NullString{String: "hash", Valid: true}).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	if _, err := svc.RevokeApiKey(context.Background(), &proto.RevokeApiKeyRequest{KeyHash: "hash"}); err != nil {
+	if _, err := svc.RevokeApiKey(adminTestContext(), &proto.RevokeAdminApiKeyRequest{KeyHash: "hash"}); err != nil {
 		t.Fatal(err)
 	}
 
-	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, created_at FROM api_keys").
+	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, created_at, user_id FROM api_keys").
 		WithArgs(int32(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at"}).
-			AddRow(int32(1), sql.NullString{String: "hash", Valid: true}, "primary", int32(7), now))
-	list, err := svc.ListApiKeysByChannelID(context.Background(), &proto.ListApiKeysByChannelIDRequest{ChannelId: 7})
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "user_id"}).
+			AddRow(int32(1), sql.NullString{String: "hash", Valid: true}, "primary", int32(7), now, int32(99)))
+	list, err := svc.ListApiKeysByChannelID(adminTestContext(), &proto.ListAdminApiKeysByChannelIDRequest{ChannelId: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,9 +90,9 @@ func TestApiKeyServiceRevokeAndList(t *testing.T) {
 
 	mock.ExpectQuery("JOIN channels ON api_keys.channel_id = channels.id").
 		WithArgs("openai").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at"}).
-			AddRow(int32(2), sql.NullString{String: "hash2", Valid: true}, "secondary", int32(7), now))
-	byName, err := svc.ListApiKeysByChannelName(context.Background(), &proto.ListApiKeysByChannelNameRequest{ChannelName: "openai"})
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "user_id"}).
+			AddRow(int32(2), sql.NullString{String: "hash2", Valid: true}, "secondary", int32(7), now, int32(99)))
+	byName, err := svc.ListApiKeysByChannelName(adminTestContext(), &proto.ListAdminApiKeysByChannelNameRequest{ChannelName: "openai"})
 	if err != nil {
 		t.Fatal(err)
 	}
