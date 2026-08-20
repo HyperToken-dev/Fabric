@@ -22,6 +22,54 @@ volumes:
   postgres-data:
 
 services:
+  casdoor:
+    image: casbin/casdoor:3.154.4
+    container_name: casdoor
+    restart: unless-stopped
+    ports:
+      - 8000:8000
+    environment:
+      - driverName=postgres
+      - dataSourceName=user=root password=123456 host=postgres port=5432 sslmode=disable dbname=casdoor
+      - origin=http://casdoor.localhost:8000
+    logging: *default-logging
+    networks:
+      - fabric-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  casdoor-init:
+    image: curlimages/curl:8.16.0
+    container_name: casdoor-init
+    restart: "no"
+    volumes:
+      - ./scripts/init-casdoor.sh:/scripts/init-casdoor.sh:ro
+    environment: # Change settings below if needed
+      CASDOOR_ENDPOINT: http://casdoor:8000
+      CASDOOR_ADMIN_USERNAME: built-in/admin
+      CASDOOR_ADMIN_PASSWORD: "123"
+      CASDOOR_APP_ORGANIZATION: "built-in"
+      CASDOOR_APP_OWNER: admin
+      CASDOOR_APP_NAME: app-fabric
+      CASDOOR_APP_DISPLAY_NAME: Fabric
+      CASDOOR_APP_CERT: cert-built-in
+      CASDOOR_APP_CLIENT_ID: e289d5f6a25fee57ef2e
+      CASDOOR_APP_CLIENT_SECRET: 6beb0ea6fe3cbbf6ec2d3853860ad8e68c013fd7
+      CASDOOR_APP_REDIRECT_URIS: http://localhost:9090/auth/callback
+      CASDOOR_APP_ENABLE_SIGNUP: "true"
+      CASDOOR_APP_ENABLE_PASSWORD: "true"
+      CASDOOR_APP_ENABLE_SIGNIN_SESSION: "true"
+      CASDOOR_APP_DISABLE_SIGNIN: "false"
+    command: ["sh", "/scripts/init-casdoor.sh"]
+    logging: *default-logging
+    networks:
+      - fabric-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      casdoor:
+        condition: service_started
   fabric:
     image: funeralsawa/fabric:latest
     # build: #local build
@@ -39,9 +87,13 @@ services:
       - fabric-internal
     restart: unless-stopped
     logging: *default-logging
+    extra_hosts:
+      - "casdoor.localhost:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
+      casdoor-init:
+        condition: service_completed_successfully
 
   postgres: # required when you don't have a postgres instance
     image: postgres:18.3
@@ -50,9 +102,9 @@ services:
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: 123456 # important!change this password when needed.
-      POSTGRES_DB: fabric
     volumes:
       - postgres-data:/var/lib/postgresql
+      - ./scripts/init-sql.sh:/docker-entrypoint-initdb.d/init-sql.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U root -d fabric"]
       interval: 5s
