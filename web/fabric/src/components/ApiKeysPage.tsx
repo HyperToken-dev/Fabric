@@ -1,13 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Copy, KeyRound, Plus, Trash2, X } from 'lucide-react';
 import {
-    createApiKey,
-    listApiKeys,
-    revokeApiKey,
+    createAdminApiKey,
+    createClientApiKey,
+    listAdminApiKeys,
+    listClientApiKeys,
+    revokeAdminApiKey,
+    revokeClientApiKey,
     type ApiKey,
+    type ApiKeyChannel,
     type CreatedApiKey,
 } from '../api/apiKeys';
-import { listClientChannels, type ClientChannel } from '../api/channels';
+import type { CurrentUser } from '../api/auth';
+import { listChannels, listClientChannels } from '../api/channels';
 import {
     buttonClass,
     EmptyState,
@@ -19,9 +24,14 @@ import {
 } from './PageState';
 import { useI18n } from '../i18n';
 
-export default function ApiKeysPage() {
+type ApiKeysPageProps = {
+    user: CurrentUser;
+};
+
+export default function ApiKeysPage({ user }: ApiKeysPageProps) {
     const { t, formatDate } = useI18n();
-    const [channels, setChannels] = useState<ClientChannel[] | null>(null);
+    const isAdmin = user.role === 'admin';
+    const [channels, setChannels] = useState<ApiKeyChannel[] | null>(null);
     const [channelName, setChannelName] = useState('');
     const [keys, setKeys] = useState<ApiKey[] | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -34,7 +44,15 @@ export default function ApiKeysPage() {
     useEffect(() => {
         const controller = new AbortController();
         setError(null);
-        listClientChannels(controller.signal)
+        const request = isAdmin
+            ? listChannels(controller.signal).then((result) =>
+                  result.map((channel) => ({
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                  })),
+              )
+            : listClientChannels(controller.signal);
+        request
             .then((result) => {
                 setChannels(result);
                 setChannelName((current) =>
@@ -52,12 +70,16 @@ export default function ApiKeysPage() {
                     );
             });
         return () => controller.abort();
-    }, [version]);
+    }, [isAdmin, version]);
     useEffect(() => {
+        if (isAdmin && !channels) return;
         const controller = new AbortController();
         setKeys(null);
         setError(null);
-        listApiKeys(controller.signal)
+        (isAdmin
+            ? listAdminApiKeys(channels ?? [], controller.signal)
+            : listClientApiKeys(controller.signal)
+        )
             .then(setKeys)
             .catch((requestError: unknown) => {
                 if (!controller.signal.aborted)
@@ -68,14 +90,18 @@ export default function ApiKeysPage() {
                     );
             });
         return () => controller.abort();
-    }, [version]);
+    }, [channels, isAdmin, version]);
     async function submit(event: FormEvent) {
         event.preventDefault();
         if (!channelName || !keyName.trim() || saving) return;
         setSaving(true);
         setError(null);
         try {
-            const key = await createApiKey(keyName.trim(), channelName);
+            const channel = channels?.find((item) => item.channelName === channelName);
+            if (!channel) throw new Error('Invalid channel selection');
+            const key = isAdmin
+                ? await createAdminApiKey(keyName.trim(), channel)
+                : await createClientApiKey(keyName.trim(), channel.channelName);
             setCreated(key);
             setCopied(false);
             setKeyName('');
@@ -101,7 +127,7 @@ export default function ApiKeysPage() {
         setRevoking(key.keyHash);
         setError(null);
         try {
-            await revokeApiKey(key.keyHash);
+            await (isAdmin ? revokeAdminApiKey(key.keyHash) : revokeClientApiKey(key.keyHash));
             setKeys((current) => current?.filter((item) => item.keyHash !== key.keyHash) ?? null);
         } catch (requestError) {
             setError(

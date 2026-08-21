@@ -13,6 +13,7 @@ message CurrentUser {
     string display_name = 3;
     string avatar_url = 4;
     string role = 5;
+    bool oauth_enabled = 6;
 }
 
 message GetCurrentUserRequest {}

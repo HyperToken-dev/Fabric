@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Activity, Cpu, KeyRound, Search, Zap } from 'lucide-react';
-import { listApiKeys, type ApiKey } from '../api/apiKeys';
+import { listAdminApiKeys, type ApiKey } from '../api/apiKeys';
 import { listChannels, type Channel } from '../api/channels';
 import { listModels, type Model } from '../api/models';
 import {
@@ -94,10 +94,11 @@ export default function UsageLogsPage() {
         }
         const controller = new AbortController();
         setOptionsLoading(true);
+        const channel = channels?.find((item) => item.channelId === channelId);
         const request =
             mode === 'model'
                 ? listModels(channelId, controller.signal)
-                : listApiKeys(controller.signal);
+                : listAdminApiKeys(channel ? [channel] : [], controller.signal);
         request
             .then((result) => {
                 if (mode === 'model') {

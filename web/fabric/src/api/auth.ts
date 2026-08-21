@@ -9,6 +9,7 @@ export type CurrentUser = {
     displayName: string;
     avatarUrl: string;
     role: string;
+    oauthEnabled: boolean;
 };
 
 function toCurrentUser(user: ProtoCurrentUser | undefined): CurrentUser {
@@ -19,6 +20,7 @@ function toCurrentUser(user: ProtoCurrentUser | undefined): CurrentUser {
         displayName: requireString(user.displayName, 'user.displayName', true),
         avatarUrl: requireString(user.avatarUrl, 'user.avatarUrl', true),
         role: requireString(user.role, 'user.role'),
+        oauthEnabled: user.oauthEnabled,
     };
 }
 
@@ -27,7 +29,7 @@ export async function getCurrentUser(signal?: AbortSignal): Promise<CurrentUser>
     return toCurrentUser(response.user);
 }
 
-export async function logout(): Promise<void> {
+export async function logout(oauthEnabled: boolean): Promise<void> {
     await callAdminRpc(() => authClient.logout({}));
-    window.location.href = '/auth/login';
+    window.location.href = oauthEnabled ? '/auth/login' : '/';
 }

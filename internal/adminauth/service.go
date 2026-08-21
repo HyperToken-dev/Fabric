@@ -13,13 +13,14 @@ import (
 // modes.
 type Service struct {
 	protoconnect.UnimplementedAuthServiceHandler
-	cookies *CookieManager
+	cookies      *CookieManager
+	oauthEnabled bool
 }
 
 // NewService creates an AuthService handler. A nil cookie manager is valid for
 // OAuth-disabled local mode, where logout becomes a no-op.
-func NewService(cookies *CookieManager) *Service {
-	return &Service{cookies: cookies}
+func NewService(cookies *CookieManager, oauthEnabled bool) *Service {
+	return &Service{cookies: cookies, oauthEnabled: oauthEnabled}
 }
 
 // GetCurrentUser returns the authenticated user from request context.
@@ -28,7 +29,14 @@ func (s *Service) GetCurrentUser(ctx context.Context, req *connect.Request[proto
 	if err != nil {
 		return nil, connect.NewError(connect.CodeUnauthenticated, err)
 	}
-	return connect.NewResponse(&proto.GetCurrentUserResponse{User: UserToProto(user)}), nil
+	return connect.NewResponse(&proto.GetCurrentUserResponse{User: &proto.CurrentUser{
+		UserId:       user.ID,
+		Email:        user.Email,
+		DisplayName:  user.DisplayName,
+		AvatarUrl:    user.AvatarUrl,
+		Role:         user.Role,
+		OauthEnabled: s.oauthEnabled,
+	}}), nil
 }
 
 // Logout clears the browser session when OAuth cookies are active.

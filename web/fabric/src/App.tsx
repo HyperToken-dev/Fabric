@@ -14,8 +14,6 @@ const pages = {
     dashboard: Dashboard,
     channels: ChannelsPage,
     models: ModelsPage,
-    'api-keys': ApiKeysPage,
-    usage: UsageLogsPage,
     'integral-logs': IntegralLogsPage,
     'sensitive-words': SensitiveWordsPage,
 };
@@ -25,10 +23,6 @@ export default function App() {
     const [user, setUser] = useState<CurrentUser | null>(null);
     const [error, setError] = useState<string | null>(null);
     const isAdmin = user?.role === 'admin';
-    const ActivePage =
-        activeTab === 'models' && !isAdmin
-            ? ClientModelsPage
-            : (pages[activeTab as keyof typeof pages] ?? Dashboard);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -81,17 +75,29 @@ export default function App() {
         );
     }
 
+    const ActivePage = pages[activeTab as keyof typeof pages] ?? Dashboard;
+    const page =
+        activeTab === 'api-keys' ? (
+            <ApiKeysPage user={user} />
+        ) : activeTab === 'usage' ? (
+            <UsageLogsPage />
+        ) : activeTab === 'models' && user.role !== 'admin' ? (
+            <ClientModelsPage />
+        ) : (
+            <ActivePage />
+        );
+
     return (
         <div className="min-h-screen bg-slate-50 font-sans md:flex">
             <Sidebar
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
                 user={user}
-                onLogout={() => void logout()}
+                onLogout={() => void logout(user.oauthEnabled)}
             />
 
             <main className="min-w-0 flex-1 bg-slate-50 md:ml-64 md:h-screen md:overflow-y-auto">
-                <ActivePage />
+                {page}
             </main>
         </div>
     );

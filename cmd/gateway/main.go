@@ -234,7 +234,7 @@ func main() {
 		adminHandler = systemUserMiddleware(adminMux, systemUser)
 		zap.L().Warn("oidc auth disabled; admin server uses built-in system user")
 	}
-	authPath, authServiceHandler := pbconnect.NewAuthServiceHandler(adminauth.NewService(cookieManager))
+	authPath, authServiceHandler := pbconnect.NewAuthServiceHandler(adminauth.NewService(cookieManager, cfg.OAuth.Enabled))
 	adminMux.Handle(authPath, authServiceHandler)
 	adminMux.Handle(apiKeyPath, apiKeyHandler)
 	adminMux.Handle(apiKeyClientPath, apiKeyClientHandler)
