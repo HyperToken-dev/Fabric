@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
+	"github.com/HyperToken-dev/fabric/internal/adminauth"
 	"github.com/HyperToken-dev/fabric/internal/config"
 	"github.com/HyperToken-dev/fabric/internal/models"
 	"github.com/HyperToken-dev/fabric/internal/repository"
@@ -138,6 +139,7 @@ func main() {
 	integralLogSvc := service.NewIntegralLogService(db)
 	sensitiveWordSvc := service.NewSensitiveWordService(sensitiveRuntimeStore, textPolicy, sensitiveSource.State)
 	srv := server.NewServer(apiKeySvc, channelSvc, modelSvc, usageSvc, integralLogSvc, sensitiveWordSvc)
+	clientSrv := server.NewClientServer(apiKeySvc, channelSvc, modelSvc)
 
 	// register proxy
 	proxyStore := postgres.NewProxyStore(db)
@@ -202,31 +204,70 @@ func main() {
 	}()
 
 	adminMux := http.NewServeMux()
-	apiKeyPath, apiKeyHandler := pbconnect.NewManageApiKeyServiceHandler(srv)
+	apiKeyPath, apiKeyHandler := pbconnect.NewApiKeyAdminServiceHandler(srv)
+	apiKeyClientPath, apiKeyClientHandler := pbconnect.NewApiKeyClientServiceHandler(clientSrv)
 	usagePath, usageHandler := pbconnect.NewUsageServiceHandler(srv)
-	channelPath, channelHandler := pbconnect.NewChannelServiceHandler(srv)
-	modelPath, modelHandler := pbconnect.NewModelServiceHandler(srv)
+	channelPath, channelHandler := pbconnect.NewChannelAdminServiceHandler(srv)
+	channelClientPath, channelClientHandler := pbconnect.NewChannelClientServiceHandler(clientSrv)
+	modelPath, modelHandler := pbconnect.NewModelAdminServiceHandler(srv)
+	modelClientPath, modelClientHandler := pbconnect.NewModelClientServiceHandler(clientSrv)
 	integralLogPath, integralLogHandler := pbconnect.NewIntegralLogServiceHandler(srv)
 	sensitivePath, sensitiveHandler := pbconnect.NewSensitiveWordServiceHandler(srv)
+	var adminHandler http.Handler = adminMux
+	var cookieManager *adminauth.CookieManager
+	if cfg.OAuth.Enabled {
+		oauthManager, err := adminauth.NewManager(db, cfg.OAuth)
+		if err != nil {
+			zap.S().Fatalf("create oidc auth manager error: %v", err)
+		}
+		cookieManager = adminauth.NewCookieManager(cfg.OAuth.SessionSecret, adminauth.SecureCookie(cfg.OAuth.RedirectURL))
+		authHandler := adminauth.NewHandler(db, oauthManager, cookieManager)
+		adminMux.HandleFunc("/auth/login", authHandler.Login)
+		adminMux.HandleFunc("/auth/callback", authHandler.Callback)
+		adminHandler = authHandler.Middleware(adminMux)
+		zap.L().Info("oidc auth enabled", zap.String("issuer_url", cfg.OAuth.IssuerURL))
+	} else {
+		systemUser, err := adminauth.SystemUser(context.Background(), db)
+		if err != nil {
+			zap.S().Fatalf("load system auth user error: %v", err)
+		}
+		adminHandler = systemUserMiddleware(adminMux, systemUser)
+		zap.L().Warn("oidc auth disabled; admin server uses built-in system user")
+	}
+	authPath, authServiceHandler := pbconnect.NewAuthServiceHandler(adminauth.NewService(cookieManager, cfg.OAuth.Enabled))
+	adminMux.Handle(authPath, authServiceHandler)
 	adminMux.Handle(apiKeyPath, apiKeyHandler)
+	adminMux.Handle(apiKeyClientPath, apiKeyClientHandler)
 	adminMux.Handle(usagePath, usageHandler)
 	adminMux.Handle(channelPath, channelHandler)
+	adminMux.Handle(channelClientPath, channelClientHandler)
 	adminMux.Handle(modelPath, modelHandler)
+	adminMux.Handle(modelClientPath, modelClientHandler)
 	adminMux.Handle(integralLogPath, integralLogHandler)
 	adminMux.Handle(sensitivePath, sensitiveHandler)
 	zap.L().Info("admin handlers registered",
+		zap.String("auth_path", authPath),
 		zap.String("api_key_path", apiKeyPath),
+		zap.String("api_key_client_path", apiKeyClientPath),
 		zap.String("usage_path", usagePath),
 		zap.String("channel_path", channelPath),
+		zap.String("channel_client_path", channelClientPath),
 		zap.String("model_path", modelPath),
+		zap.String("model_client_path", modelClientPath),
 		zap.String("integral_log_path", integralLogPath),
 		zap.String("sensitive_path", sensitivePath),
 	)
 
 	zap.S().Infof("Admin server listening on %s", cfg.AdminAddr)
-	if err := http.ListenAndServe(cfg.AdminAddr, webui.Handler(adminMux)); err != nil {
+	if err := http.ListenAndServe(cfg.AdminAddr, webui.Handler(adminHandler)); err != nil {
 		zap.S().Fatalf("admin server: %v", err)
 	}
+}
+
+func systemUserMiddleware(next http.Handler, user repository.User) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(adminauth.WithUser(r.Context(), user)))
+	})
 }
 
 func runMigrations(databaseURL string) error {

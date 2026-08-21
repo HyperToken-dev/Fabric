@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,7 +24,7 @@ func TestChannelServiceCreateAndList(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO channels (channel_name, base_url, provider_key, api_format) VALUES ($1, $2, $3, $4) RETURNING id, channel_name, base_url, provider_key, api_format, status, created_at")).
 		WithArgs("openai", "https://api.openai.com", "provider", int32(1)).
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(1), "openai", "https://api.openai.com", "provider", int32(1), int16(1), now))
-	created, err := svc.CreateChannel(context.Background(), &proto.CreateChannelRequest{ChannelName: "openai", BaseUrl: "https://api.openai.com", ProviderKey: "provider", ApiFormat: 1})
+	created, err := svc.CreateChannel(adminTestContext(), &proto.CreateAdminChannelRequest{ChannelName: "openai", BaseUrl: "https://api.openai.com", ProviderKey: "provider", ApiFormat: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +34,7 @@ func TestChannelServiceCreateAndList(t *testing.T) {
 
 	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels ORDER BY").
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(2), "other", "http://base", "key", int32(1), int16(1), now))
-	listed, err := svc.ListChannels(context.Background(), &proto.ListChannelsRequest{})
+	listed, err := svc.ListChannels(adminTestContext(), &proto.ListAdminChannelsRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +44,7 @@ func TestChannelServiceCreateAndList(t *testing.T) {
 
 	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE status = 1").
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(3), "active", "http://base", "key", int32(1), int16(1), now))
-	active, err := svc.ListActiveChannels(context.Background(), &proto.ListActiveChannelsRequest{})
+	active, err := svc.ListActiveChannels(adminTestContext(), &proto.ListAdminActiveChannelsRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,31 +56,31 @@ func TestChannelServiceCreateAndList(t *testing.T) {
 func TestChannelServiceCreateValidation(t *testing.T) {
 	tests := []struct {
 		name string
-		req  *proto.CreateChannelRequest
+		req  *proto.CreateAdminChannelRequest
 	}{
 		{
 			name: "empty channel name",
-			req:  &proto.CreateChannelRequest{ChannelName: "", BaseUrl: "https://api.openai.com", ApiFormat: 1},
+			req:  &proto.CreateAdminChannelRequest{ChannelName: "", BaseUrl: "https://api.openai.com", ApiFormat: 1},
 		},
 		{
 			name: "space channel name",
-			req:  &proto.CreateChannelRequest{ChannelName: "   ", BaseUrl: "https://api.openai.com", ApiFormat: 1},
+			req:  &proto.CreateAdminChannelRequest{ChannelName: "   ", BaseUrl: "https://api.openai.com", ApiFormat: 1},
 		},
 		{
 			name: "long channel name",
-			req:  &proto.CreateChannelRequest{ChannelName: strings.Repeat("a", channelNameMaxLength+1), BaseUrl: "https://api.openai.com", ApiFormat: 1},
+			req:  &proto.CreateAdminChannelRequest{ChannelName: strings.Repeat("a", channelNameMaxLength+1), BaseUrl: "https://api.openai.com", ApiFormat: 1},
 		},
 		{
 			name: "base url with path",
-			req:  &proto.CreateChannelRequest{ChannelName: "openai", BaseUrl: "https://api.openai.com/v1", ApiFormat: 1},
+			req:  &proto.CreateAdminChannelRequest{ChannelName: "openai", BaseUrl: "https://api.openai.com/v1", ApiFormat: 1},
 		},
 		{
 			name: "long base url",
-			req:  &proto.CreateChannelRequest{ChannelName: "openai", BaseUrl: "https://" + strings.Repeat("a", channelBaseURLMaxLength), ApiFormat: 1},
+			req:  &proto.CreateAdminChannelRequest{ChannelName: "openai", BaseUrl: "https://" + strings.Repeat("a", channelBaseURLMaxLength), ApiFormat: 1},
 		},
 		{
 			name: "missing scheme",
-			req:  &proto.CreateChannelRequest{ChannelName: "openai", BaseUrl: "api.openai.com", ApiFormat: 1},
+			req:  &proto.CreateAdminChannelRequest{ChannelName: "openai", BaseUrl: "api.openai.com", ApiFormat: 1},
 		},
 	}
 
@@ -91,7 +90,7 @@ func TestChannelServiceCreateValidation(t *testing.T) {
 			defer cleanup()
 			svc := NewChannelService(db)
 
-			if _, err := svc.CreateChannel(context.Background(), tt.req); err == nil {
+			if _, err := svc.CreateChannel(adminTestContext(), tt.req); err == nil {
 				t.Fatal("expected validation error")
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
@@ -111,7 +110,7 @@ func TestChannelServiceCreateAllowsEmptyProviderKeyAndAnyAPIFormat(t *testing.T)
 		WithArgs("custom", "https://api.example.com", "", int32(99)).
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(4), "custom", "https://api.example.com", "", int32(99), int16(1), now))
 
-	created, err := svc.CreateChannel(context.Background(), &proto.CreateChannelRequest{ChannelName: "custom", BaseUrl: "https://api.example.com", ProviderKey: "", ApiFormat: 99})
+	created, err := svc.CreateChannel(adminTestContext(), &proto.CreateAdminChannelRequest{ChannelName: "custom", BaseUrl: "https://api.example.com", ProviderKey: "", ApiFormat: 99})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +129,7 @@ func TestChannelServiceUpdateChannelName(t *testing.T) {
 		WithArgs(int32(1), "renamed").
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(1), "renamed", "https://api.openai.com", "provider", int32(1), int16(1), now))
 
-	updated, err := svc.UpdateChannelName(context.Background(), &proto.UpdateChannelNameRequest{ChannelId: 1, ChannelName: "renamed"})
+	updated, err := svc.UpdateChannelName(adminTestContext(), &proto.UpdateAdminChannelNameRequest{ChannelId: 1, ChannelName: "renamed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +146,7 @@ func TestChannelServiceUpdateChannelNameValidation(t *testing.T) {
 			defer cleanup()
 			svc := NewChannelService(db)
 
-			_, err := svc.UpdateChannelName(context.Background(), &proto.UpdateChannelNameRequest{ChannelId: 1, ChannelName: channelName})
+			_, err := svc.UpdateChannelName(adminTestContext(), &proto.UpdateAdminChannelNameRequest{ChannelId: 1, ChannelName: channelName})
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -170,7 +169,7 @@ func TestChannelServiceUpdateChannelStatus(t *testing.T) {
 				WithArgs(int32(1), int16(status)).
 				WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(1), "openai", "https://api.openai.com", "provider", int32(1), int16(status), now))
 
-			updated, err := svc.UpdateChannelStatus(context.Background(), &proto.UpdateChannelStatusRequest{ChannelId: 1, Status: status})
+			updated, err := svc.UpdateChannelStatus(adminTestContext(), &proto.UpdateAdminChannelStatusRequest{ChannelId: 1, Status: status})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,7 +187,7 @@ func TestChannelServiceUpdateChannelStatusValidation(t *testing.T) {
 			defer cleanup()
 			svc := NewChannelService(db)
 
-			_, err := svc.UpdateChannelStatus(context.Background(), &proto.UpdateChannelStatusRequest{ChannelId: 1, Status: status})
+			_, err := svc.UpdateChannelStatus(adminTestContext(), &proto.UpdateAdminChannelStatusRequest{ChannelId: 1, Status: status})
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -209,7 +208,7 @@ func TestChannelServiceUpdateChannelBaseURL(t *testing.T) {
 		WithArgs(int32(1), "https://api.example.com/").
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(1), "openai", "https://api.example.com/", "provider", int32(1), int16(1), now))
 
-	updated, err := svc.UpdateChannelBaseURL(context.Background(), &proto.UpdateChannelBaseURLRequest{ChannelId: 1, BaseUrl: "https://api.example.com/"})
+	updated, err := svc.UpdateChannelBaseURL(adminTestContext(), &proto.UpdateAdminChannelBaseURLRequest{ChannelId: 1, BaseUrl: "https://api.example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +225,7 @@ func TestChannelServiceUpdateChannelBaseURLValidation(t *testing.T) {
 			defer cleanup()
 			svc := NewChannelService(db)
 
-			_, err := svc.UpdateChannelBaseURL(context.Background(), &proto.UpdateChannelBaseURLRequest{ChannelId: 1, BaseUrl: baseURL})
+			_, err := svc.UpdateChannelBaseURL(adminTestContext(), &proto.UpdateAdminChannelBaseURLRequest{ChannelId: 1, BaseUrl: baseURL})
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -247,7 +246,7 @@ func TestChannelServiceUpdateChannelAPIFormatAllowsAnyValue(t *testing.T) {
 		WithArgs(int32(1), int32(99)).
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(1), "openai", "https://api.openai.com", "provider", int32(99), int16(1), now))
 
-	updated, err := svc.UpdateChannelAPIFormat(context.Background(), &proto.UpdateChannelAPIFormatRequest{ChannelId: 1, ApiFormat: 99})
+	updated, err := svc.UpdateChannelAPIFormat(adminTestContext(), &proto.UpdateAdminChannelAPIFormatRequest{ChannelId: 1, ApiFormat: 99})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +265,7 @@ func TestChannelServiceUpdateChannelProviderKeyAllowsEmptyAndDoesNotExposeValue(
 		WithArgs(int32(1), "").
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(1), "openai", "https://api.openai.com", "", int32(1), int16(1), now))
 
-	updated, err := svc.UpdateChannelProviderKey(context.Background(), &proto.UpdateChannelProviderKeyRequest{ChannelId: 1, ProviderKey: ""})
+	updated, err := svc.UpdateChannelProviderKey(adminTestContext(), &proto.UpdateAdminChannelProviderKeyRequest{ChannelId: 1, ProviderKey: ""})
 	if err != nil {
 		t.Fatal(err)
 	}

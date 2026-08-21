@@ -15,6 +15,12 @@ SELECT * FROM channels ORDER BY created_at DESC;
 -- name: ListActiveChannels :many
 SELECT * FROM channels WHERE status = 1 ORDER BY created_at DESC;
 
+-- name: ListActiveChannelNames :many
+SELECT channel_name FROM channels WHERE status = 1 ORDER BY channel_name;
+
+-- name: GetActiveChannelByName :one
+SELECT * FROM channels WHERE channel_name = $1 AND status = 1;
+
 -- name: UpdateChannelName :one
 UPDATE channels
 SET channel_name = $2

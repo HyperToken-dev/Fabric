@@ -1,5 +1,6 @@
-import type { Channel as ProtoChannel } from '../gen/channel_pb';
-import { channelClient } from '../rpc/clients';
+import type { AdminChannel as ProtoChannel } from '../gen/channel_admin_pb';
+import type { ClientChannel as ProtoClientChannel } from '../gen/channel_client_pb';
+import { channelAdminClient, channelClient } from '../rpc/clients';
 import { callAdminRpc } from '../rpc/errors';
 import { requireString, safeInteger, timestampToIso } from '../rpc/values';
 
@@ -29,6 +30,10 @@ export type Channel = {
     apiFormat: number;
 };
 
+export type ClientChannel = {
+    channelName: string;
+};
+
 function toChannel(channel: ProtoChannel, field: string): Channel {
     return {
         channelId: safeInteger(channel.channelId, `${field}.channelId`, false),
@@ -45,9 +50,22 @@ function requireChannel(channel: ProtoChannel | undefined): Channel {
     return toChannel(channel, 'channel');
 }
 
+function toClientChannel(channel: ProtoClientChannel, field: string): ClientChannel {
+    return {
+        channelName: requireString(channel.channelName, `${field}.channelName`),
+    };
+}
+
 export async function listChannels(signal?: AbortSignal): Promise<Channel[]> {
-    const response = await callAdminRpc(() => channelClient.listChannels({}, { signal }));
+    const response = await callAdminRpc(() => channelAdminClient.listChannels({}, { signal }));
     return response.channels.map((channel, index) => toChannel(channel, `channels[${index}]`));
+}
+
+export async function listClientChannels(signal?: AbortSignal): Promise<ClientChannel[]> {
+    const response = await callAdminRpc(() => channelClient.listChannels({}, { signal }));
+    return response.channels.map((channel, index) =>
+        toClientChannel(channel, `channels[${index}]`),
+    );
 }
 
 export async function createChannel(input: {
@@ -56,27 +74,27 @@ export async function createChannel(input: {
     apiFormat: number;
     providerKey: string;
 }): Promise<Channel> {
-    const response = await callAdminRpc(() => channelClient.createChannel(input));
+    const response = await callAdminRpc(() => channelAdminClient.createChannel(input));
     return requireChannel(response.channel);
 }
 
 export async function updateChannelName(channelId: number, channelName: string): Promise<Channel> {
     const response = await callAdminRpc(() =>
-        channelClient.updateChannelName({ channelId, channelName }),
+        channelAdminClient.updateChannelName({ channelId, channelName }),
     );
     return requireChannel(response.channel);
 }
 
 export async function updateChannelStatus(channelId: number, status: number): Promise<Channel> {
     const response = await callAdminRpc(() =>
-        channelClient.updateChannelStatus({ channelId, status }),
+        channelAdminClient.updateChannelStatus({ channelId, status }),
     );
     return requireChannel(response.channel);
 }
 
 export async function updateChannelBaseUrl(channelId: number, baseUrl: string): Promise<Channel> {
     const response = await callAdminRpc(() =>
-        channelClient.updateChannelBaseURL({ channelId, baseUrl }),
+        channelAdminClient.updateChannelBaseURL({ channelId, baseUrl }),
     );
     return requireChannel(response.channel);
 }
@@ -86,7 +104,7 @@ export async function updateChannelApiFormat(
     apiFormat: number,
 ): Promise<Channel> {
     const response = await callAdminRpc(() =>
-        channelClient.updateChannelAPIFormat({ channelId, apiFormat }),
+        channelAdminClient.updateChannelAPIFormat({ channelId, apiFormat }),
     );
     return requireChannel(response.channel);
 }
@@ -95,5 +113,7 @@ export async function updateChannelProviderKey(
     channelId: number,
     providerKey: string,
 ): Promise<void> {
-    await callAdminRpc(() => channelClient.updateChannelProviderKey({ channelId, providerKey }));
+    await callAdminRpc(() =>
+        channelAdminClient.updateChannelProviderKey({ channelId, providerKey }),
+    );
 }

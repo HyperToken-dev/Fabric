@@ -10,23 +10,26 @@ import {
 } from 'lucide-react';
 import type { NavigationItem } from '../types';
 import { useI18n } from '../i18n';
+import type { CurrentUser } from '../api/auth';
 
 interface SidebarProps {
     activeTab: string;
     setActiveTab: (tab: string) => void;
+    user: CurrentUser;
+    onLogout: () => void;
 }
 
-const navItems: NavigationItem[] = [
+const navItems: (NavigationItem & { adminOnly?: boolean })[] = [
     { id: 'dashboard', label: 'nav.dashboard', icon: LayoutDashboard },
-    { id: 'channels', label: 'nav.channels', icon: Radio },
+    { id: 'channels', label: 'nav.channels', icon: Radio, adminOnly: true },
     { id: 'models', label: 'nav.models', icon: Boxes },
     { id: 'api-keys', label: 'nav.apiKeys', icon: KeyRound },
-    { id: 'usage', label: 'nav.usage', icon: Activity },
-    { id: 'integral-logs', label: 'nav.integralLogs', icon: FileJson },
-    { id: 'sensitive-words', label: 'nav.sensitiveWords', icon: ShieldAlert },
+    { id: 'usage', label: 'nav.usage', icon: Activity, adminOnly: true },
+    { id: 'integral-logs', label: 'nav.integralLogs', icon: FileJson, adminOnly: true },
+    { id: 'sensitive-words', label: 'nav.sensitiveWords', icon: ShieldAlert, adminOnly: true },
 ];
 
-export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab, user, onLogout }: SidebarProps) {
     const { language, setLanguage, t } = useI18n();
     const nextLanguage = language === 'en-US' ? 'zh-CN' : 'en-US';
     const currentLanguageLabel =
@@ -60,24 +63,26 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
             </div>
 
             <nav className="flex gap-2 overflow-x-auto px-4 py-3 md:flex-1 md:flex-col md:overflow-visible md:py-6 md:space-y-2">
-                {navItems.map((item) => {
-                    const Icon = item.icon;
-                    const isActive = activeTab === item.id;
-                    return (
-                        <button
-                            key={item.id}
-                            onClick={() => setActiveTab(item.id)}
-                            className={`shrink-0 flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 md:w-full ${
-                                isActive
-                                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200/80'
-                                    : 'hover:bg-emerald-100 hover:text-emerald-900'
-                            }`}
-                        >
-                            <Icon size={20} />
-                            <span className="font-medium">{t(item.label)}</span>
-                        </button>
-                    );
-                })}
+                {navItems
+                    .filter((item) => user.role === 'admin' || !item.adminOnly)
+                    .map((item) => {
+                        const Icon = item.icon;
+                        const isActive = activeTab === item.id;
+                        return (
+                            <button
+                                key={item.id}
+                                onClick={() => setActiveTab(item.id)}
+                                className={`shrink-0 flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 md:w-full ${
+                                    isActive
+                                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200/80'
+                                        : 'hover:bg-emerald-100 hover:text-emerald-900'
+                                }`}
+                            >
+                                <Icon size={20} />
+                                <span className="font-medium">{t(item.label)}</span>
+                            </button>
+                        );
+                    })}
                 <button
                     type="button"
                     onClick={toggleLanguage}
@@ -110,11 +115,18 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                     </div>
                     <div className="flex flex-col text-sm text-left">
                         <span className="text-emerald-950 font-medium">
-                            {t('sidebar.adminUser')}
+                            {user.displayName || user.email}
                         </span>
-                        <span className="text-emerald-700/70 text-xs">admin@example.com</span>
+                        <span className="text-emerald-700/70 text-xs">{user.email}</span>
                     </div>
                 </div>
+                <button
+                    type="button"
+                    onClick={onLogout}
+                    className="mt-2 w-full rounded-xl border border-emerald-100 bg-white/70 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 hover:text-emerald-900"
+                >
+                    Logout
+                </button>
             </div>
         </aside>
     );

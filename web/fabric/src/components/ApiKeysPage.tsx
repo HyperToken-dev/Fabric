@@ -1,13 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Copy, KeyRound, Plus, Trash2, X } from 'lucide-react';
 import {
-    createApiKey,
-    listApiKeys,
-    revokeApiKey,
+    createAdminApiKey,
+    createClientApiKey,
+    listAdminApiKeys,
+    listClientApiKeys,
+    revokeAdminApiKey,
+    revokeClientApiKey,
     type ApiKey,
+    type ApiKeyChannel,
     type CreatedApiKey,
 } from '../api/apiKeys';
-import { listChannels, type Channel } from '../api/channels';
+import type { CurrentUser } from '../api/auth';
+import { listChannels, listClientChannels } from '../api/channels';
 import {
     buttonClass,
     EmptyState,
@@ -19,10 +24,15 @@ import {
 } from './PageState';
 import { useI18n } from '../i18n';
 
-export default function ApiKeysPage() {
+type ApiKeysPageProps = {
+    user: CurrentUser;
+};
+
+export default function ApiKeysPage({ user }: ApiKeysPageProps) {
     const { t, formatDate } = useI18n();
-    const [channels, setChannels] = useState<Channel[] | null>(null);
-    const [channelId, setChannelId] = useState<number | null>(null);
+    const isAdmin = user.role === 'admin';
+    const [channels, setChannels] = useState<ApiKeyChannel[] | null>(null);
+    const [channelName, setChannelName] = useState('');
     const [keys, setKeys] = useState<ApiKey[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [version, setVersion] = useState(0);
@@ -34,13 +44,21 @@ export default function ApiKeysPage() {
     useEffect(() => {
         const controller = new AbortController();
         setError(null);
-        listChannels(controller.signal)
+        const request = isAdmin
+            ? listChannels(controller.signal).then((result) =>
+                  result.map((channel) => ({
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                  })),
+              )
+            : listClientChannels(controller.signal);
+        request
             .then((result) => {
                 setChannels(result);
-                setChannelId((current) =>
-                    current && result.some((channel) => channel.channelId === current)
+                setChannelName((current) =>
+                    current && result.some((channel) => channel.channelName === current)
                         ? current
-                        : (result[0]?.channelId ?? null),
+                        : (result[0]?.channelName ?? ''),
                 );
             })
             .catch((requestError: unknown) => {
@@ -52,16 +70,16 @@ export default function ApiKeysPage() {
                     );
             });
         return () => controller.abort();
-    }, [version]);
+    }, [isAdmin, version]);
     useEffect(() => {
-        if (!channelId) {
-            setKeys([]);
-            return;
-        }
+        if (isAdmin && !channels) return;
         const controller = new AbortController();
         setKeys(null);
         setError(null);
-        listApiKeys(channelId, controller.signal)
+        (isAdmin
+            ? listAdminApiKeys(channels ?? [], controller.signal)
+            : listClientApiKeys(controller.signal)
+        )
             .then(setKeys)
             .catch((requestError: unknown) => {
                 if (!controller.signal.aborted)
@@ -72,20 +90,29 @@ export default function ApiKeysPage() {
                     );
             });
         return () => controller.abort();
-    }, [channelId, version]);
+    }, [channels, isAdmin, version]);
     async function submit(event: FormEvent) {
         event.preventDefault();
-        if (!channelId || !keyName.trim() || saving) return;
+        if (!channelName || !keyName.trim() || saving) return;
         setSaving(true);
         setError(null);
         try {
-            const key = await createApiKey(keyName.trim(), channelId);
+            const channel = channels?.find((item) => item.channelName === channelName);
+            if (!channel) throw new Error('Invalid channel selection');
+            const key = isAdmin
+                ? await createAdminApiKey(keyName.trim(), channel)
+                : await createClientApiKey(keyName.trim(), channel.channelName);
             setCreated(key);
             setCopied(false);
             setKeyName('');
             setKeys((current) => [
                 ...(current ?? []),
-                { keyName: key.keyName, keyHash: key.keyHash, createdAt: key.createdAt },
+                {
+                    keyName: key.keyName,
+                    keyHash: key.keyHash,
+                    channelName: key.channelName,
+                    createdAt: key.createdAt,
+                },
             ]);
         } catch (requestError) {
             setError(
@@ -100,7 +127,7 @@ export default function ApiKeysPage() {
         setRevoking(key.keyHash);
         setError(null);
         try {
-            await revokeApiKey(key.keyHash);
+            await (isAdmin ? revokeAdminApiKey(key.keyHash) : revokeClientApiKey(key.keyHash));
             setKeys((current) => current?.filter((item) => item.keyHash !== key.keyHash) ?? null);
         } catch (requestError) {
             setError(
@@ -153,11 +180,14 @@ export default function ApiKeysPage() {
                                 {t('apiKeys.channel')}
                                 <select
                                     className={inputClass}
-                                    value={channelId ?? ''}
-                                    onChange={(event) => setChannelId(Number(event.target.value))}
+                                    value={channelName}
+                                    onChange={(event) => setChannelName(event.target.value)}
                                 >
                                     {channels.map((channel) => (
-                                        <option key={channel.channelId} value={channel.channelId}>
+                                        <option
+                                            key={channel.channelName}
+                                            value={channel.channelName}
+                                        >
                                             {channel.channelName}
                                         </option>
                                     ))}
@@ -204,6 +234,9 @@ export default function ApiKeysPage() {
                                             title={key.keyHash}
                                         >
                                             {key.keyHash}
+                                        </p>
+                                        <p className="mt-1 text-xs font-semibold text-emerald-600">
+                                            {key.channelName}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-400">
                                             {t('common.created', {

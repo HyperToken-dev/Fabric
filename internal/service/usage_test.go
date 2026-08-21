@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -24,7 +23,7 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 	mock.ExpectQuery("SELECT id, key_id, channel_id, model_id, prompt_tokens, completion_tokens, created_at FROM usage_logs").
 		WithArgs(int32(1), int32(100), int32(0)).
 		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(4), int64(5), now))
-	byKey, err := svc.GetUsageByKeyID(context.Background(), &proto.GetUsageByKeyIDRequest{KeyId: 1})
+	byKey, err := svc.GetUsageByKeyID(adminTestContext(), &proto.GetUsageByKeyIDRequest{KeyId: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +34,7 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 	mock.ExpectQuery("JOIN api_keys ON usage_logs.key_id = api_keys.id").
 		WithArgs(sql.NullString{String: "hash", Valid: true}, int32(100), int32(0)).
 		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(6), int64(7), now))
-	byHash, err := svc.GetUsageByKeyHash(context.Background(), &proto.GetUsageByKeyHashRequest{KeyHash: "hash"})
+	byHash, err := svc.GetUsageByKeyHash(adminTestContext(), &proto.GetUsageByKeyHashRequest{KeyHash: "hash"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +45,7 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 	mock.ExpectQuery("WHERE channel_id = \\$1").
 		WithArgs(int32(2), int32(100), int32(0)).
 		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(8), int64(9), now))
-	byChannel, err := svc.GetUsageByChannelID(context.Background(), &proto.GetUsageByChannelIDRequest{ChannelId: 2})
+	byChannel, err := svc.GetUsageByChannelID(adminTestContext(), &proto.GetUsageByChannelIDRequest{ChannelId: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +56,7 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 	mock.ExpectQuery("WHERE model_id = \\$1").
 		WithArgs(int32(3), int32(100), int32(0)).
 		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(10), int64(11), now))
-	byModel, err := svc.GetUsageByModelID(context.Background(), &proto.GetUsageByModelIDRequest{ModelId: 3})
+	byModel, err := svc.GetUsageByModelID(adminTestContext(), &proto.GetUsageByModelIDRequest{ModelId: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +75,7 @@ func TestUsageServiceSummaries(t *testing.T) {
 		WithArgs(sql.NullString{String: "hash", Valid: true}, deadline, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"model_id", "total_prompt_tokens", "total_completion_tokens", "request_count"}).
 			AddRow(int32(3), int64(10), int64(20), int64(2)))
-	deadlineResp, err := svc.GetUsageByDeadlineAndKeyHash(context.Background(), &proto.GetUsageByDeadlineAndKeyHashRequest{KeyHash: "hash", Deadline: timestamppb.New(deadline)})
+	deadlineResp, err := svc.GetUsageByDeadlineAndKeyHash(adminTestContext(), &proto.GetUsageByDeadlineAndKeyHashRequest{KeyHash: "hash", Deadline: timestamppb.New(deadline)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +87,7 @@ func TestUsageServiceSummaries(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"channel_id", "model_id", "total_prompt_tokens", "total_completion_tokens", "request_count"}).
 			AddRow(int32(1), int32(2), int64(5), int64(7), int64(1)).
 			AddRow(int32(1), int32(3), int64(11), int64(13), int64(1)))
-	summary, err := svc.GetUsageSummary(context.Background(), &proto.GetUsageSummaryRequest{})
+	summary, err := svc.GetUsageSummary(adminTestContext(), &proto.GetUsageSummaryRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +104,7 @@ func TestUsageServicePropagatesErrors(t *testing.T) {
 	mock.ExpectQuery("FROM usage_logs").
 		WithArgs(int32(1), int32(100), int32(0)).
 		WillReturnError(sql.ErrConnDone)
-	if _, err := svc.GetUsageByKeyID(context.Background(), &proto.GetUsageByKeyIDRequest{KeyId: 1}); err == nil {
+	if _, err := svc.GetUsageByKeyID(adminTestContext(), &proto.GetUsageByKeyIDRequest{KeyId: 1}); err == nil {
 		t.Fatal("GetUsageByKeyID() error = nil")
 	}
 }
@@ -135,7 +134,7 @@ func TestGetUsageDashboardUsesConfiguredCalendarDay(t *testing.T) {
 			AddRow(time.Date(2026, time.July, 15, 0, 0, 0, 0, time.UTC), int64(5), int64(2), int64(1)).
 			AddRow(time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), int64(30), int64(12), int64(4)))
 
-	resp, err := svc.GetUsageDashboard(context.Background(), &proto.GetUsageDashboardRequest{})
+	resp, err := svc.GetUsageDashboard(adminTestContext(), &proto.GetUsageDashboardRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +177,7 @@ func TestGetUsageDashboardDefaultsToUTCAndReturnsEmptyDays(t *testing.T) {
 		WithArgs("UTC", timelineStart, tomorrowStart).
 		WillReturnRows(sqlmock.NewRows([]string{"date", "total_prompt_tokens", "total_completion_tokens", "request_count"}))
 
-	resp, err := svc.GetUsageDashboard(context.Background(), &proto.GetUsageDashboardRequest{})
+	resp, err := svc.GetUsageDashboard(adminTestContext(), &proto.GetUsageDashboardRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +208,7 @@ func TestGetUsageDashboardHandlesDaylightSavingBoundary(t *testing.T) {
 		WithArgs("America/New_York", timelineStart, tomorrowStart).
 		WillReturnRows(sqlmock.NewRows([]string{"date", "total_prompt_tokens", "total_completion_tokens", "request_count"}))
 
-	if _, err := svc.GetUsageDashboard(context.Background(), &proto.GetUsageDashboardRequest{}); err != nil {
+	if _, err := svc.GetUsageDashboard(adminTestContext(), &proto.GetUsageDashboardRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	if tomorrowStart.Sub(todayStart) != 23*time.Hour {

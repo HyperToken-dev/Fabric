@@ -7,9 +7,11 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io"
 
 	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/adminauth"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"go.uber.org/zap"
@@ -30,7 +32,38 @@ func NewApiKeyService(db *sql.DB) *ApiKeyService {
 	}
 }
 
-func (s *ApiKeyService) CreateApiKey(ctx context.Context, req *proto.CreateApiKeyRequest) (res *proto.CreateApiKeyResponse, err error) {
+func (s *ApiKeyService) CreateApiKey(ctx context.Context, req *proto.CreateAdminApiKeyRequest) (res *proto.CreateAdminApiKeyResponse, err error) {
+	user, err := adminauth.RequireAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.createApiKeyForChannel(ctx, user.ID, req.KeyName, req.ChannelId, "")
+}
+
+func (s *ApiKeyService) CreateClientApiKey(ctx context.Context, req *proto.CreateClientApiKeyRequest) (*proto.CreateClientApiKeyResponse, error) {
+	user, err := adminauth.RequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	channel, err := s.queries.GetActiveChannelByName(ctx, req.ChannelName)
+	if err != nil {
+		zap.L().Warn("create client api key channel lookup failed", zap.Error(err), zap.String("channel_name", req.ChannelName), zap.Int32("user_id", user.ID))
+		return nil, fmt.Errorf("active channel is required")
+	}
+	res, err := s.createApiKeyForChannel(ctx, user.ID, req.KeyName, channel.ID, channel.ChannelName)
+	if err != nil {
+		return nil, err
+	}
+	return &proto.CreateClientApiKeyResponse{ApiKey: &proto.ClientApiKey{
+		KeyHash:     res.ApiKey.KeyHash,
+		RawKey:      res.ApiKey.RawKey,
+		KeyName:     res.ApiKey.KeyName,
+		ChannelName: channel.ChannelName,
+		CreatedAt:   res.ApiKey.CreatedAt,
+	}}, nil
+}
+
+func (s *ApiKeyService) createApiKeyForChannel(ctx context.Context, userID int32, keyName string, channelID int32, channelName string) (res *proto.CreateAdminApiKeyResponse, err error) {
 	rawKey, hash, err := generateApiKey()
 	if err != nil {
 		return nil, err
@@ -38,21 +71,24 @@ func (s *ApiKeyService) CreateApiKey(ctx context.Context, req *proto.CreateApiKe
 
 	row, err := s.queries.CreateApiKey(ctx, repository.CreateApiKeyParams{
 		KeyHash:   sql.NullString{String: hash, Valid: true},
-		KeyName:   req.KeyName,
-		ChannelID: req.ChannelId,
+		KeyName:   keyName,
+		ChannelID: channelID,
+		UserID:    userID,
 	})
 	if err != nil {
-		zap.L().Error("create api key failed", zap.Error(err), zap.String("key_name", req.KeyName), zap.Int32("channel_id", req.ChannelId))
+		zap.L().Error("create api key failed", zap.Error(err), zap.String("key_name", keyName), zap.Int32("channel_id", channelID), zap.Int32("user_id", userID))
 		return nil, err
 	}
 	zap.L().Info("api key created",
 		zap.String("key_name", row.KeyName),
 		zap.Int32("channel_id", row.ChannelID),
+		zap.Int32("user_id", row.UserID),
+		zap.String("channel_name", channelName),
 		zap.String("key_hash_prefix", keyHashPrefix(row.KeyHash.String)),
 	)
 
-	return &proto.CreateApiKeyResponse{
-		ApiKey: &proto.ApiKey{
+	return &proto.CreateAdminApiKeyResponse{
+		ApiKey: &proto.AdminApiKey{
 			KeyHash:   row.KeyHash.String,
 			RawKey:    rawKey, // return once only when create
 			KeyName:   row.KeyName,
@@ -61,50 +97,97 @@ func (s *ApiKeyService) CreateApiKey(ctx context.Context, req *proto.CreateApiKe
 	}, nil
 }
 
-func (s *ApiKeyService) RevokeApiKey(ctx context.Context, req *proto.RevokeApiKeyRequest) (*proto.RevokeApiKeyResponse, error) {
+func (s *ApiKeyService) RevokeApiKey(ctx context.Context, req *proto.RevokeAdminApiKeyRequest) (*proto.RevokeAdminApiKeyResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	err := s.queries.DeleteApiKeyByHash(ctx, sql.NullString{String: req.KeyHash, Valid: true})
 	if err != nil {
 		zap.L().Error("revoke api key failed", zap.Error(err), zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)))
 		return nil, err
 	}
 	zap.L().Info("api key revoked", zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)))
-	return &proto.RevokeApiKeyResponse{}, nil
+	return &proto.RevokeAdminApiKeyResponse{}, nil
 }
 
-func (s *ApiKeyService) ListApiKeysByChannelID(ctx context.Context, req *proto.ListApiKeysByChannelIDRequest) (res *proto.ListApiKeysResponse, err error) {
+func (s *ApiKeyService) RevokeClientApiKey(ctx context.Context, req *proto.RevokeClientApiKeyRequest) (*proto.RevokeClientApiKeyResponse, error) {
+	user, err := adminauth.RequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	err = s.queries.DeleteApiKeyByHashAndUser(ctx, repository.DeleteApiKeyByHashAndUserParams{
+		KeyHash: sql.NullString{String: req.KeyHash, Valid: true},
+		UserID:  user.ID,
+	})
+	if err != nil {
+		zap.L().Error("revoke client api key failed", zap.Error(err), zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)), zap.Int32("user_id", user.ID))
+		return nil, err
+	}
+	return &proto.RevokeClientApiKeyResponse{}, nil
+}
+
+func (s *ApiKeyService) ListApiKeysByChannelID(ctx context.Context, req *proto.ListAdminApiKeysByChannelIDRequest) (res *proto.ListAdminApiKeysResponse, err error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	rows, err := s.queries.ListApiKeysByChannelID(ctx, req.ChannelId)
 	if err != nil {
 		zap.L().Error("list api keys by channel id failed", zap.Error(err), zap.Int32("channel_id", req.ChannelId))
 		return nil, err
 	}
-	keys := make([]*proto.ApiKey, len(rows))
+	keys := make([]*proto.AdminApiKey, len(rows))
 	for i, r := range rows {
-		keys[i] = &proto.ApiKey{
+		keys[i] = &proto.AdminApiKey{
 			KeyHash:   r.KeyHash.String,
 			KeyName:   r.KeyName,
 			CreatedAt: timestamppb.New(r.CreatedAt),
 		}
 	}
 	zap.L().Info("api keys listed by channel id", zap.Int32("channel_id", req.ChannelId), zap.Int("count", len(keys)))
-	return &proto.ListApiKeysResponse{ApiKeys: keys}, nil
+	return &proto.ListAdminApiKeysResponse{ApiKeys: keys}, nil
 }
 
-func (s *ApiKeyService) ListApiKeysByChannelName(ctx context.Context, req *proto.ListApiKeysByChannelNameRequest) (*proto.ListApiKeysResponse, error) {
+func (s *ApiKeyService) ListApiKeysByChannelName(ctx context.Context, req *proto.ListAdminApiKeysByChannelNameRequest) (*proto.ListAdminApiKeysResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	rows, err := s.queries.ListApiKeysByChannelName(ctx, req.ChannelName)
 	if err != nil {
 		zap.L().Error("list api keys by channel name failed", zap.Error(err), zap.String("channel_name", req.ChannelName))
 		return nil, err
 	}
-	keys := make([]*proto.ApiKey, len(rows))
+	keys := make([]*proto.AdminApiKey, len(rows))
 	for i, r := range rows {
-		keys[i] = &proto.ApiKey{
+		keys[i] = &proto.AdminApiKey{
 			KeyHash:   r.KeyHash.String,
 			KeyName:   r.KeyName,
 			CreatedAt: timestamppb.New(r.CreatedAt),
 		}
 	}
 	zap.L().Info("api keys listed by channel name", zap.String("channel_name", req.ChannelName), zap.Int("count", len(keys)))
-	return &proto.ListApiKeysResponse{ApiKeys: keys}, nil
+	return &proto.ListAdminApiKeysResponse{ApiKeys: keys}, nil
+}
+
+func (s *ApiKeyService) ListClientApiKeys(ctx context.Context, req *proto.ListClientApiKeysRequest) (*proto.ListClientApiKeysResponse, error) {
+	user, err := adminauth.RequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.queries.ListApiKeysWithChannelByUser(ctx, user.ID)
+	if err != nil {
+		zap.L().Error("list client api keys failed", zap.Error(err), zap.Int32("user_id", user.ID))
+		return nil, err
+	}
+	keys := make([]*proto.ClientApiKey, len(rows))
+	for i, r := range rows {
+		keys[i] = &proto.ClientApiKey{
+			KeyHash:     r.KeyHash.String,
+			KeyName:     r.KeyName,
+			ChannelName: r.ChannelName,
+			CreatedAt:   timestamppb.New(r.CreatedAt),
+		}
+	}
+	return &proto.ListClientApiKeysResponse{ApiKeys: keys}, nil
 }
 
 func generateApiKey() (rawKey string, hash string, err error) {

@@ -16,6 +16,13 @@ WHERE api_keys.key_hash = $1
 ORDER BY usage_logs.created_at DESC
 LIMIT $2 OFFSET $3;
 
+-- name: GetUsageLogsByUser :many
+SELECT usage_logs.* FROM usage_logs
+JOIN api_keys ON usage_logs.key_id = api_keys.id
+WHERE api_keys.user_id = $1
+ORDER BY usage_logs.created_at DESC
+LIMIT $2 OFFSET $3;
+
 -- name: CountUsageLogsByKeyID :one
 SELECT COUNT(*) FROM usage_logs WHERE key_id = $1;
 
@@ -144,4 +151,29 @@ FROM usage_logs
 WHERE created_at >= sqlc.arg(start_at)
   AND created_at < sqlc.arg(end_at)
 GROUP BY DATE(created_at AT TIME ZONE sqlc.arg(time_zone)::text)
+ORDER BY date;
+
+-- name: GetUsageDashboardTotalsByUser :one
+SELECT
+    COALESCE(SUM(usage_logs.prompt_tokens), 0)::bigint AS total_prompt_tokens,
+    COALESCE(SUM(usage_logs.completion_tokens), 0)::bigint AS total_completion_tokens,
+    COUNT(*)::bigint AS request_count
+FROM usage_logs
+JOIN api_keys ON usage_logs.key_id = api_keys.id
+WHERE api_keys.user_id = sqlc.arg(user_id)
+  AND usage_logs.created_at >= sqlc.arg(start_at)
+  AND usage_logs.created_at < sqlc.arg(end_at);
+
+-- name: GetUsageDashboardTimelineByUser :many
+SELECT
+    DATE(usage_logs.created_at AT TIME ZONE sqlc.arg(time_zone)::text)::date AS date,
+    SUM(usage_logs.prompt_tokens)::bigint AS total_prompt_tokens,
+    SUM(usage_logs.completion_tokens)::bigint AS total_completion_tokens,
+    COUNT(*)::bigint AS request_count
+FROM usage_logs
+JOIN api_keys ON usage_logs.key_id = api_keys.id
+WHERE api_keys.user_id = sqlc.arg(user_id)
+  AND usage_logs.created_at >= sqlc.arg(start_at)
+  AND usage_logs.created_at < sqlc.arg(end_at)
+GROUP BY DATE(usage_logs.created_at AT TIME ZONE sqlc.arg(time_zone)::text)
 ORDER BY date;
