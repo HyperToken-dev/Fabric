@@ -1,31 +1,24 @@
 package adminauth
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
 	"strings"
 
 	"github.com/HyperToken-dev/fabric/internal/config"
-	"github.com/HyperToken-dev/fabric/internal/repository"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/providers/openidConnect"
 )
 
 const providerName = "fabric"
 
-// Manager owns OIDC provider registration and user provisioning policy.
+// Manager owns OIDC provider registration and claim-to-principal conversion.
 //
 // Concurrency: Manager is safe for concurrent request use after construction;
-// its maps and config values are immutable and repository calls use sql.DB's
-// concurrency-safe connection pool.
+// its provider and config values are immutable.
 type Manager struct {
-	cfg            config.OAuthConfig
-	queries        *repository.Queries
-	provider       goth.Provider
-	allowedDomains map[string]struct{}
-	adminEmails    map[string]struct{}
+	provider goth.Provider
 }
 
 // NewManager validates OIDC discovery and registers the configured Goth
@@ -37,14 +30,7 @@ func NewManager(db *sql.DB, cfg config.OAuthConfig) (*Manager, error) {
 		return nil, fmt.Errorf("create oidc provider: %w", err)
 	}
 	goth.UseProviders(provider)
-	m := &Manager{
-		cfg:            cfg,
-		queries:        repository.New(db),
-		provider:       provider,
-		allowedDomains: normalizedSet(cfg.AllowedDomains),
-		adminEmails:    normalizedSet(cfg.AdminEmails),
-	}
-	return m, nil
+	return &Manager{provider: provider}, nil
 }
 
 // Provider returns the configured Goth provider. The value is immutable after
@@ -53,112 +39,64 @@ func (m *Manager) Provider() goth.Provider {
 	return m.provider
 }
 
-// ResolveUser maps a successful OIDC identity to a persisted Fabric user while
-// enforcing allowed-domain, auto-provisioning, and disabled-user policy.
-func (m *Manager) ResolveUser(ctx context.Context, oidcUser goth.User) (repository.User, error) {
-	issuer := claimString(oidcUser.RawData, "iss")
-	subject := oidcUser.UserID
-	if subject == "" {
-		subject = claimString(oidcUser.RawData, "sub")
-	}
+// ResolvePrincipal maps upstream OIDC claims into the session identity snapshot.
+// Casdoor emits its stable user OpenID as `id`; Fabric stores that value as
+// owner_openid and leaves login admission plus permission assignment upstream.
+func (m *Manager) ResolvePrincipal(oidcUser goth.User) (Principal, error) {
+	openid := strings.TrimSpace(claimString(oidcUser.RawData, "id"))
 	email := strings.ToLower(strings.TrimSpace(oidcUser.Email))
-	if issuer == "" || subject == "" || email == "" {
-		return repository.User{}, fmt.Errorf("oidc user must include issuer, subject, and email")
+	if openid == "" {
+		return Principal{}, fmt.Errorf("oidc user must include id")
 	}
-	if !m.emailAllowed(email) {
-		return repository.User{}, fmt.Errorf("email is not allowed")
-	}
-	role := m.roleForEmail(email)
-	arg := repository.GetUserByIssuerSubjectParams{Issuer: issuer, Subject: subject}
-	existing, err := m.queries.GetUserByIssuerSubject(ctx, arg)
-	if err == nil {
-		if existing.Status != "active" {
-			return repository.User{}, fmt.Errorf("user is disabled")
+	permissions := []string{}
+	if values, ok := oidcUser.RawData["permissions"].([]interface{}); ok {
+		for _, value := range values {
+			if permission, ok := value.(string); ok && strings.TrimSpace(permission) != "" {
+				permissions = append(permissions, strings.TrimSpace(permission))
+				continue
+			}
+			if permission, ok := value.(map[string]interface{}); ok {
+				name, _ := permission["name"].(string)
+				if name = strings.TrimSpace(name); name != "" {
+					permissions = append(permissions, name)
+				}
+			}
 		}
-		return m.queries.UpdateUserLoginProfile(ctx, repository.UpdateUserLoginProfileParams{
-			Issuer:      issuer,
-			Subject:     subject,
-			Email:       email,
-			DisplayName: oidcUser.Name,
-			AvatarUrl:   oidcUser.AvatarURL,
-			Role:        role,
-		})
 	}
-	if err != sql.ErrNoRows {
-		return repository.User{}, err
+	if values, ok := oidcUser.RawData["permissions"].([]string); ok {
+		for _, value := range values {
+			if permission := strings.TrimSpace(value); permission != "" {
+				permissions = append(permissions, permission)
+			}
+		}
 	}
-	if !m.cfg.AutoProvision {
-		return repository.User{}, fmt.Errorf("user auto-provisioning is disabled")
+	role := RoleUser
+	for _, permission := range permissions {
+		if permission == AdminPermission {
+			role = RoleAdmin
+			break
+		}
 	}
-	return m.queries.CreateUser(ctx, repository.CreateUserParams{
-		Issuer:      issuer,
-		Subject:     subject,
+	return Principal{
+		OpenID:      openid,
 		Email:       email,
 		DisplayName: oidcUser.Name,
-		AvatarUrl:   oidcUser.AvatarURL,
+		AvatarURL:   oidcUser.AvatarURL,
 		Role:        role,
-	})
+		Permissions: permissions,
+	}, nil
 }
 
-// SystemUser returns the built-in administrator used only when OAuth is
-// disabled. This preserves required API key ownership in unauthenticated local
-// development without making browser sessions optional in OAuth deployments.
-func SystemUser(ctx context.Context, db *sql.DB) (repository.User, error) {
-	user, err := repository.New(db).GetSystemUser(ctx)
-	if err != nil {
-		return repository.User{}, fmt.Errorf("get system user: %w", err)
+// SystemPrincipal returns the local administrator identity used when OAuth is
+// disabled. It keeps development mode explicit without recreating local users.
+func SystemPrincipal() Principal {
+	return Principal{
+		OpenID:      "system",
+		Email:       "system@fabric.local",
+		DisplayName: "Fabric System",
+		Role:        RoleAdmin,
+		Permissions: []string{AdminPermission},
 	}
-	return user, nil
-}
-
-func (m *Manager) emailAllowed(email string) bool {
-	return EmailAllowed(m.allowedDomains, email)
-}
-
-func (m *Manager) roleForEmail(email string) string {
-	return RoleForEmail(m.adminEmails, m.cfg.DefaultRole, email)
-}
-
-// EmailAllowed applies the configured domain allow-list to a normalized email.
-// Empty domains intentionally allow any email so private deployments can rely on
-// the upstream OIDC provider as the sole admission boundary.
-func EmailAllowed(allowedDomains map[string]struct{}, email string) bool {
-	email = strings.ToLower(strings.TrimSpace(email))
-	if len(allowedDomains) == 0 {
-		return true
-	}
-	at := strings.LastIndex(email, "@")
-	if at < 0 || at == len(email)-1 {
-		return false
-	}
-	_, ok := allowedDomains[email[at+1:]]
-	return ok
-}
-
-// RoleForEmail assigns the coarse Fabric role from configured admin emails.
-// OIDC groups are intentionally ignored so role behavior is deterministic
-// across providers that expose different claim sets.
-func RoleForEmail(adminEmails map[string]struct{}, defaultRole, email string) string {
-	email = strings.ToLower(strings.TrimSpace(email))
-	if _, ok := adminEmails[email]; ok {
-		return RoleAdmin
-	}
-	role := strings.TrimSpace(defaultRole)
-	if role == "" {
-		return RoleUser
-	}
-	return role
-}
-
-func normalizedSet(values []string) map[string]struct{} {
-	result := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value != "" {
-			result[value] = struct{}{}
-		}
-	}
-	return result
 }
 
 func claimString(claims map[string]interface{}, key string) string {

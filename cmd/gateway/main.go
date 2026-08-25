@@ -227,11 +227,7 @@ func main() {
 		adminHandler = authHandler.Middleware(adminMux)
 		zap.L().Info("oidc auth enabled", zap.String("issuer_url", cfg.OAuth.IssuerURL))
 	} else {
-		systemUser, err := adminauth.SystemUser(context.Background(), db)
-		if err != nil {
-			zap.S().Fatalf("load system auth user error: %v", err)
-		}
-		adminHandler = systemUserMiddleware(adminMux, systemUser)
+		adminHandler = systemUserMiddleware(adminMux, adminauth.SystemPrincipal())
 		zap.L().Warn("oidc auth disabled; admin server uses built-in system user")
 	}
 	authPath, authServiceHandler := pbconnect.NewAuthServiceHandler(adminauth.NewService(cookieManager, cfg.OAuth.Enabled))
@@ -264,9 +260,9 @@ func main() {
 	}
 }
 
-func systemUserMiddleware(next http.Handler, user repository.User) http.Handler {
+func systemUserMiddleware(next http.Handler, principal adminauth.Principal) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(adminauth.WithUser(r.Context(), user)))
+		next.ServeHTTP(w, r.WithContext(adminauth.WithPrincipal(r.Context(), principal)))
 	})
 }
 

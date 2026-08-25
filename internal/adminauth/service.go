@@ -23,19 +23,20 @@ func NewService(cookies *CookieManager, oauthEnabled bool) *Service {
 	return &Service{cookies: cookies, oauthEnabled: oauthEnabled}
 }
 
-// GetCurrentUser returns the authenticated user from request context.
+// GetCurrentUser returns the authenticated principal from request context.
 func (s *Service) GetCurrentUser(ctx context.Context, req *connect.Request[proto.GetCurrentUserRequest]) (*connect.Response[proto.GetCurrentUserResponse], error) {
-	user, err := RequireUser(ctx)
+	principal, err := RequireUser(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeUnauthenticated, err)
 	}
 	return connect.NewResponse(&proto.GetCurrentUserResponse{User: &proto.CurrentUser{
-		UserId:       user.ID,
-		Email:        user.Email,
-		DisplayName:  user.DisplayName,
-		AvatarUrl:    user.AvatarUrl,
-		Role:         user.Role,
+		Openid:       principal.OpenID,
+		Email:        principal.Email,
+		DisplayName:  principal.DisplayName,
+		AvatarUrl:    principal.AvatarURL,
+		Role:         principal.Role,
 		OauthEnabled: s.oauthEnabled,
+		Permissions:  principal.Permissions,
 	}}), nil
 }
 

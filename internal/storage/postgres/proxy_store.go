@@ -60,21 +60,31 @@ func (s *ProxyStore) ResolveModel(ctx context.Context, channelID int32, modelNam
 }
 
 func (s *ProxyStore) InsertUsage(ctx context.Context, keyID, channelID, modelID int32, promptTokens, completionTokens int64) error {
-	_, err := s.queries.InsertUsageLog(ctx, repository.InsertUsageLogParams{
+	key, err := s.queries.GetApiKeyById(ctx, keyID)
+	if err != nil {
+		return err
+	}
+	_, err = s.queries.InsertUsageLog(ctx, repository.InsertUsageLogParams{
 		KeyID:            keyID,
 		ChannelID:        channelID,
 		ModelID:          modelID,
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
+		OwnerOpenid:      key.OwnerOpenid,
 	})
 	return err
 }
 
 func (s *ProxyStore) InsertIntegratedLog(ctx context.Context, keyID int32, context, response string) error {
-	_, err := s.queries.CreateIntegralLog(ctx, repository.CreateIntegralLogParams{
-		Context:  json.RawMessage(context),
-		Response: sql.NullString{String: response, Valid: true},
-		KeyID:    keyID,
+	key, err := s.queries.GetApiKeyById(ctx, keyID)
+	if err != nil {
+		return err
+	}
+	_, err = s.queries.CreateIntegralLog(ctx, repository.CreateIntegralLogParams{
+		Context:     json.RawMessage(context),
+		Response:    sql.NullString{String: response, Valid: true},
+		KeyID:       keyID,
+		OwnerOpenid: key.OwnerOpenid,
 	})
 	return err
 }
@@ -176,12 +186,17 @@ func (s *ProxyStore) CompleteProviderTask(ctx context.Context, completion Provid
 
 	insertedUsage := false
 	if task.Status == int16(ProviderTaskStatusSuccess) && !task.UsageRecorded && completion.CompletionTokens > 0 {
+		key, err := qtx.GetApiKeyById(ctx, task.KeyID)
+		if err != nil {
+			return false, err
+		}
 		if _, err := qtx.InsertUsageLog(ctx, repository.InsertUsageLogParams{
 			KeyID:            task.KeyID,
 			ChannelID:        task.ChannelID,
 			ModelID:          task.ModelID,
 			PromptTokens:     0,
 			CompletionTokens: completion.CompletionTokens,
+			OwnerOpenid:      key.OwnerOpenid,
 		}); err != nil {
 			return false, err
 		}

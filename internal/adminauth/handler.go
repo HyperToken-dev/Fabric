@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"net/http"
+	"sort"
 	"strings"
 
 	"connectrpc.com/connect"
 	proto "github.com/HyperToken-dev/fabric/gen"
-	"github.com/HyperToken-dev/fabric/internal/repository"
 	"go.uber.org/zap"
 )
 
@@ -18,13 +18,12 @@ import (
 type Handler struct {
 	manager *Manager
 	cookies *CookieManager
-	queries *repository.Queries
 }
 
 // NewHandler creates admin-server authentication handlers. The manager and
 // cookie manager must be non-nil when OAuth is enabled.
 func NewHandler(db *sql.DB, manager *Manager, cookies *CookieManager) *Handler {
-	return &Handler{manager: manager, cookies: cookies, queries: repository.New(db)}
+	return &Handler{manager: manager, cookies: cookies}
 }
 
 // Login starts the OIDC authorization code flow and stores the short-lived Goth
@@ -50,8 +49,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-// Callback completes the OIDC flow, persists or updates the Fabric user, and
-// writes the long-lived browser session cookie.
+// Callback completes the OIDC flow and writes the principal session cookie.
 func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	stored, err := h.cookies.OAuthSession(r)
 	if err != nil {
@@ -82,14 +80,23 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fetch oauth user", http.StatusUnauthorized)
 		return
 	}
-	user, err := h.manager.ResolveUser(r.Context(), gothUser)
+	principal, err := h.manager.ResolvePrincipal(gothUser)
 	if err != nil {
-		zap.L().Warn("oidc login rejected", zap.Error(err), zap.String("email", gothUser.Email))
+		claimKeys := make([]string, 0, len(gothUser.RawData))
+		for key := range gothUser.RawData {
+			claimKeys = append(claimKeys, key)
+		}
+		sort.Strings(claimKeys)
+		zap.L().Warn("oidc login rejected", zap.Error(err), zap.String("email", gothUser.Email), zap.Strings("claim_keys", claimKeys))
 		http.Error(w, "login rejected", http.StatusForbidden)
 		return
 	}
 	h.cookies.ClearOAuthSession(w)
-	h.cookies.SetSession(w, user.ID)
+	if err := h.cookies.SetSession(w, principal); err != nil {
+		zap.L().Error("write principal session failed", zap.Error(err))
+		http.Error(w, "create session", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -102,13 +109,13 @@ func (h *Handler) Logout(ctx context.Context, req *connect.Request[proto.LogoutR
 	return resp, nil
 }
 
-// GetCurrentUser returns the authenticated user stored in request context.
+// GetCurrentUser returns the authenticated principal stored in request context.
 func (h *Handler) GetCurrentUser(ctx context.Context, req *connect.Request[proto.GetCurrentUserRequest]) (*connect.Response[proto.GetCurrentUserResponse], error) {
-	user, err := RequireUser(ctx)
+	principal, err := RequireUser(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeUnauthenticated, err)
 	}
-	return connect.NewResponse(&proto.GetCurrentUserResponse{User: UserToProto(user)}), nil
+	return connect.NewResponse(&proto.GetCurrentUserResponse{User: UserToProto(principal)}), nil
 }
 
 // Middleware protects the admin server and injects the authenticated user into
@@ -120,7 +127,7 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		userID, err := h.cookies.SessionUserID(r)
+		principal, err := h.cookies.SessionPrincipal(r)
 		if err != nil {
 			if strings.HasPrefix(r.URL.Path, "/admin-api") || strings.HasPrefix(r.URL.Path, "/proto.") {
 				http.Error(w, "unauthenticated", http.StatusUnauthorized)
@@ -129,26 +136,19 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/auth/login", http.StatusFound)
 			return
 		}
-		user, err := h.queries.GetUserByID(r.Context(), userID)
-		if err != nil || user.Status != "active" {
-			if err != nil {
-				zap.L().Warn("session user lookup failed", zap.Error(err), zap.Int32("user_id", userID))
-			}
-			h.cookies.ClearSession(w)
-			http.Error(w, "unauthenticated", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), user)))
+		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), principal)))
 	})
 }
 
-// UserToProto converts a repository user to the public current-user message.
-func UserToProto(user repository.User) *proto.CurrentUser {
+// UserToProto converts a trusted principal snapshot to the public current-user
+// message. The name remains stable for existing auth handlers.
+func UserToProto(user Principal) *proto.CurrentUser {
 	return &proto.CurrentUser{
-		UserId:      user.ID,
+		Openid:      user.OpenID,
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
-		AvatarUrl:   user.AvatarUrl,
+		AvatarUrl:   user.AvatarURL,
 		Role:        user.Role,
+		Permissions: user.Permissions,
 	}
 }

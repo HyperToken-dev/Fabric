@@ -42,10 +42,10 @@ func TestClientApiKeyServiceCreatesOwnedKeyByChannelName(t *testing.T) {
 	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE channel_name").
 		WithArgs("default").
 		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(7), "default", "https://api.example.com", "provider", int32(1), int16(1), now))
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO api_keys (key_hash, key_name, channel_id, user_id) VALUES ($1, $2, $3, $4) RETURNING id, key_hash, key_name, channel_id, created_at, user_id")).
-		WithArgs(sqlmock.AnyArg(), "client", int32(7), int32(77)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "user_id"}).
-			AddRow(int32(1), sql.NullString{String: strings.Repeat("b", 64), Valid: true}, "client", int32(7), now, int32(77)))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO api_keys (key_hash, key_name, channel_id, owner_openid)\nVALUES ($1, $2, $3, $4)\nRETURNING id, key_hash, key_name, channel_id, owner_openid, created_at")).
+		WithArgs(sqlmock.AnyArg(), "client", int32(7), "user-openid").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"}).
+			AddRow(int32(1), sql.NullString{String: strings.Repeat("b", 64), Valid: true}, "client", int32(7), "user-openid", now))
 
 	resp, err := svc.CreateClientApiKey(userTestContext(), &proto.CreateClientApiKeyRequest{KeyName: "client", ChannelName: "default"})
 	if err != nil {
@@ -62,11 +62,11 @@ func TestUsageDashboardScopesUserData(t *testing.T) {
 	svc := NewUsageService(db, time.UTC)
 	svc.now = func() time.Time { return time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC) }
 
-	mock.ExpectQuery("JOIN api_keys ON usage_logs.key_id = api_keys.id").
-		WithArgs(int32(77), sqlmock.AnyArg(), sqlmock.AnyArg()).
+	mock.ExpectQuery("WHERE owner_openid").
+		WithArgs("user-openid", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"total_prompt_tokens", "total_completion_tokens", "request_count"}).AddRow(int64(4), int64(6), int64(1)))
-	mock.ExpectQuery("JOIN api_keys ON usage_logs.key_id = api_keys.id").
-		WithArgs("UTC", int32(77), sqlmock.AnyArg(), sqlmock.AnyArg()).
+	mock.ExpectQuery("WHERE owner_openid").
+		WithArgs("UTC", "user-openid", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"date", "total_prompt_tokens", "total_completion_tokens", "request_count"}))
 
 	resp, err := svc.GetUsageDashboard(userTestContext(), &proto.GetUsageDashboardRequest{})

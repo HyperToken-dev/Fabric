@@ -8,12 +8,13 @@ service AuthService {
 }
 
 message CurrentUser {
-    int32 user_id = 1;
+    string openid = 1;
     string email = 2;
     string display_name = 3;
     string avatar_url = 4;
     string role = 5;
     bool oauth_enabled = 6;
+    repeated string permissions = 7;
 }
 
 message GetCurrentUserRequest {}

@@ -412,6 +412,7 @@ export default function UsageLogsPage() {
                                     <th className="px-5 py-3">{t('usage.channel')}</th>
                                     <th className="px-5 py-3">{t('usage.model')}</th>
                                     <th className="px-5 py-3">{t('usage.key')}</th>
+                                    <th className="px-5 py-3">{t('common.ownerOpenid')}</th>
                                     <th className="px-5 py-3">{t('dashboard.prompt')}</th>
                                     <th className="px-5 py-3">{t('dashboard.completion')}</th>
                                 </tr>
@@ -428,6 +429,12 @@ export default function UsageLogsPage() {
                                         <td className="px-5 py-4">{log.modelId || '-'}</td>
                                         <td className="px-5 py-4">
                                             <KeyRound size={14} className="text-slate-400" />
+                                        </td>
+                                        <td
+                                            className="max-w-[220px] truncate px-5 py-4 text-xs text-slate-500"
+                                            title={log.ownerOpenid}
+                                        >
+                                            {log.ownerOpenid || '-'}
                                         </td>
                                         <td className="px-5 py-4 font-medium">
                                             {formatNumber(log.promptTokens)}

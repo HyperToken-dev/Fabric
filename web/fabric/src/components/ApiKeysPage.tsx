@@ -11,7 +11,7 @@ import {
     type ApiKeyChannel,
     type CreatedApiKey,
 } from '../api/apiKeys';
-import type { CurrentUser } from '../api/auth';
+import { isAdminUser, type CurrentUser } from '../api/auth';
 import { listChannels, listClientChannels } from '../api/channels';
 import {
     buttonClass,
@@ -30,7 +30,7 @@ type ApiKeysPageProps = {
 
 export default function ApiKeysPage({ user }: ApiKeysPageProps) {
     const { t, formatDate } = useI18n();
-    const isAdmin = user.role === 'admin';
+    const isAdmin = isAdminUser(user);
     const [channels, setChannels] = useState<ApiKeyChannel[] | null>(null);
     const [channelName, setChannelName] = useState('');
     const [keys, setKeys] = useState<ApiKey[] | null>(null);
@@ -108,9 +108,12 @@ export default function ApiKeysPage({ user }: ApiKeysPageProps) {
             setKeys((current) => [
                 ...(current ?? []),
                 {
+                    keyId: key.keyId,
                     keyName: key.keyName,
                     keyHash: key.keyHash,
+                    channelId: key.channelId,
                     channelName: key.channelName,
+                    ownerOpenid: key.ownerOpenid,
                     createdAt: key.createdAt,
                 },
             ]);
@@ -238,6 +241,14 @@ export default function ApiKeysPage({ user }: ApiKeysPageProps) {
                                         <p className="mt-1 text-xs font-semibold text-emerald-600">
                                             {key.channelName}
                                         </p>
+                                        {isAdmin && (
+                                            <p
+                                                className="mt-1 truncate text-xs text-slate-500"
+                                                title={key.ownerOpenid}
+                                            >
+                                                {t('common.ownerOpenid')}: {key.ownerOpenid}
+                                            </p>
+                                        )}
                                         <p className="mt-1 text-xs text-slate-400">
                                             {t('common.created', {
                                                 date: formatDate(key.createdAt),

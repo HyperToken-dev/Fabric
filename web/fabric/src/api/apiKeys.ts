@@ -2,12 +2,15 @@ import type { AdminApiKey } from '../gen/api_key_admin_pb';
 import type { ClientApiKey } from '../gen/api_key_client_pb';
 import { apiKeyAdminClient, apiKeyClient } from '../rpc/clients';
 import { callAdminRpc } from '../rpc/errors';
-import { requireString, timestampToIso } from '../rpc/values';
+import { requireString, safeInteger, timestampToIso } from '../rpc/values';
 
 export type ApiKey = {
+    keyId: number;
     keyName: string;
     keyHash: string;
+    channelId?: number;
     channelName: string;
+    ownerOpenid: string;
     createdAt: string;
 };
 
@@ -20,12 +23,18 @@ export type ApiKeyChannel = {
 
 function toApiKey(key: AdminApiKey | ClientApiKey, field: string, channelName = ''): ApiKey {
     return {
+        keyId: safeInteger(key.keyId, `${field}.keyId`, false),
         keyName: requireString(key.keyName, `${field}.keyName`),
         keyHash: requireString(key.keyHash, `${field}.keyHash`),
+        channelId:
+            'channelId' in key
+                ? safeInteger(key.channelId, `${field}.channelId`, false)
+                : undefined,
         channelName:
             'channelName' in key
                 ? requireString(key.channelName, `${field}.channelName`, true)
                 : channelName,
+        ownerOpenid: requireString(key.ownerOpenid, `${field}.ownerOpenid`),
         createdAt: timestampToIso(key.createdAt, `${field}.createdAt`),
     };
 }

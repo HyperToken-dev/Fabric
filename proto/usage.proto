@@ -22,6 +22,7 @@ message UsageLog {
     string prompt_tokens = 5;
     string completion_tokens = 6;
     google.protobuf.Timestamp created_at = 7;
+    string owner_openid = 8;
 }
 
 message GetUsageByKeyIDRequest {
@@ -66,7 +67,9 @@ message UsageTimelinePoint {
     int64 request_count = 5;
 }
 
-message GetUsageDashboardRequest {}
+message GetUsageDashboardRequest {
+    string owner_openid = 1;
+}
 
 message GetUsageDashboardResponse {
     string time_zone = 1;

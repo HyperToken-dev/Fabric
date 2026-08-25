@@ -5,6 +5,7 @@ openspec/
 repository/
 .codegraph/
 .opencode
+.codex
 
 codegraph.json
 

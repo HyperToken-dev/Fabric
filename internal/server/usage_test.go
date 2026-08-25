@@ -9,7 +9,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	gen "github.com/HyperToken-dev/fabric/gen"
 	"github.com/HyperToken-dev/fabric/internal/adminauth"
-	"github.com/HyperToken-dev/fabric/internal/repository"
 	"github.com/HyperToken-dev/fabric/internal/service"
 )
 
@@ -23,7 +22,7 @@ func TestUsageHandlersDelegateToService(t *testing.T) {
 
 	mock.ExpectQuery("FROM usage_logs").
 		WithArgs(int32(7), int32(100), int32(0)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "created_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "owner_openid", "created_at"}))
 	resp, err := srv.GetUsageByKeyID(adminServerTestContext(), connect.NewRequest(&gen.GetUsageByKeyIDRequest{KeyId: 7}))
 	if err != nil {
 		t.Fatal(err)
@@ -70,5 +69,9 @@ func TestUsageHandlerMapsServiceErrors(t *testing.T) {
 }
 
 func adminServerTestContext() context.Context {
-	return adminauth.WithUser(context.Background(), repository.User{ID: 1, Role: adminauth.RoleAdmin, Status: "active"})
+	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
+		OpenID:      "admin-openid",
+		Role:        adminauth.RoleAdmin,
+		Permissions: []string{adminauth.AdminPermission},
+	})
 }

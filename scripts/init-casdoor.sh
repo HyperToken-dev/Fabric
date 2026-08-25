@@ -97,6 +97,8 @@ application_payload() {
   "tokenFormat": "JWT",
   "tokenSigningMethod": "RS256",
   "tokenFields": [
+    "id",
+    "permissions",
     "name",
     "email",
     "avatar",
@@ -151,9 +153,10 @@ payload=$(application_payload)
 get_response=$(request GET "${casdoor_endpoint}/api/get-application?id=${app_id}&${auth_query}" || true)
 
 if printf '%s' "$get_response" | grep -q '"name"[[:space:]]*:[[:space:]]*"'"$(json_escape "$app_name")"'"'; then
-    update_response=$(request POST "${casdoor_endpoint}/api/update-application?id=${app_id}&${auth_query}" "$payload")
-    ensure_ok "$update_response" "update application"
-    echo "Updated Casdoor application ${app_id}"
+    # update_response=$(request POST "${casdoor_endpoint}/api/update-application?id=${app_id}&${auth_query}" "$payload")
+    # ensure_ok "$update_response" "update application"
+    # echo "Updated Casdoor application ${app_id}"
+    echo "application ${app_name}(${app_id}) exist,no create operation needed."
 else
     add_response=$(request POST "${casdoor_endpoint}/api/add-application?${auth_query}" "$payload")
     ensure_ok "$add_response" "add application"

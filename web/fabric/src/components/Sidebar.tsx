@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import type { NavigationItem } from '../types';
 import { useI18n } from '../i18n';
-import type { CurrentUser } from '../api/auth';
+import { isAdminUser, type CurrentUser } from '../api/auth';
 
 interface SidebarProps {
     activeTab: string;
@@ -31,6 +31,7 @@ const navItems: (NavigationItem & { adminOnly?: boolean })[] = [
 
 export default function Sidebar({ activeTab, setActiveTab, user, onLogout }: SidebarProps) {
     const { language, setLanguage, t } = useI18n();
+    const isAdmin = isAdminUser(user);
     const nextLanguage = language === 'en-US' ? 'zh-CN' : 'en-US';
     const currentLanguageLabel =
         language === 'en-US' ? t('language.english') : t('language.chinese');
@@ -64,7 +65,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout }: Sid
 
             <nav className="flex gap-2 overflow-x-auto px-4 py-3 md:flex-1 md:flex-col md:overflow-visible md:py-6 md:space-y-2">
                 {navItems
-                    .filter((item) => user.role === 'admin' || !item.adminOnly)
+                    .filter((item) => isAdmin || !item.adminOnly)
                     .map((item) => {
                         const Icon = item.icon;
                         const isActive = activeTab === item.id;
@@ -115,9 +116,11 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout }: Sid
                     </div>
                     <div className="flex flex-col text-sm text-left">
                         <span className="text-emerald-950 font-medium">
-                            {user.displayName || user.email}
+                            {user.displayName || user.email || user.openid}
                         </span>
-                        <span className="text-emerald-700/70 text-xs">{user.email}</span>
+                        <span className="text-emerald-700/70 text-xs">
+                            {user.email || user.openid}
+                        </span>
                     </div>
                 </div>
                 <button

@@ -18,11 +18,11 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 	svc := NewUsageService(db, time.UTC)
 	now := time.Now()
 	id := uuid.New()
-	usageRows := []string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "created_at"}
+	usageRows := []string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "owner_openid", "created_at"}
 
-	mock.ExpectQuery("SELECT id, key_id, channel_id, model_id, prompt_tokens, completion_tokens, created_at FROM usage_logs").
+	mock.ExpectQuery("SELECT id, key_id, channel_id, model_id, prompt_tokens, completion_tokens, owner_openid, created_at FROM usage_logs").
 		WithArgs(int32(1), int32(100), int32(0)).
-		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(4), int64(5), now))
+		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(4), int64(5), "admin-openid", now))
 	byKey, err := svc.GetUsageByKeyID(adminTestContext(), &proto.GetUsageByKeyIDRequest{KeyId: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 
 	mock.ExpectQuery("JOIN api_keys ON usage_logs.key_id = api_keys.id").
 		WithArgs(sql.NullString{String: "hash", Valid: true}, int32(100), int32(0)).
-		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(6), int64(7), now))
+		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(6), int64(7), "admin-openid", now))
 	byHash, err := svc.GetUsageByKeyHash(adminTestContext(), &proto.GetUsageByKeyHashRequest{KeyHash: "hash"})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 
 	mock.ExpectQuery("WHERE channel_id = \\$1").
 		WithArgs(int32(2), int32(100), int32(0)).
-		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(8), int64(9), now))
+		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(8), int64(9), "admin-openid", now))
 	byChannel, err := svc.GetUsageByChannelID(adminTestContext(), &proto.GetUsageByChannelIDRequest{ChannelId: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestUsageServiceLookupMethods(t *testing.T) {
 
 	mock.ExpectQuery("WHERE model_id = \\$1").
 		WithArgs(int32(3), int32(100), int32(0)).
-		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(10), int64(11), now))
+		WillReturnRows(sqlmock.NewRows(usageRows).AddRow(id, int32(1), int32(2), int32(3), int64(10), int64(11), "admin-openid", now))
 	byModel, err := svc.GetUsageByModelID(adminTestContext(), &proto.GetUsageByModelIDRequest{ModelId: 3})
 	if err != nil {
 		t.Fatal(err)

@@ -24,10 +24,10 @@ func TestApiKeyServiceCreateApiKey(t *testing.T) {
 	svc := NewApiKeyService(db)
 	now := time.Now()
 
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO api_keys (key_hash, key_name, channel_id, user_id) VALUES ($1, $2, $3, $4) RETURNING id, key_hash, key_name, channel_id, created_at, user_id")).
-		WithArgs(sqlmock.AnyArg(), "primary", int32(7), int32(99)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "user_id"}).
-			AddRow(int32(1), sql.NullString{String: strings.Repeat("a", 64), Valid: true}, "primary", int32(7), now, int32(99)))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO api_keys (key_hash, key_name, channel_id, owner_openid)\nVALUES ($1, $2, $3, $4)\nRETURNING id, key_hash, key_name, channel_id, owner_openid, created_at")).
+		WithArgs(sqlmock.AnyArg(), "primary", int32(7), "admin-openid").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"}).
+			AddRow(int32(1), sql.NullString{String: strings.Repeat("a", 64), Valid: true}, "primary", int32(7), "admin-openid", now))
 
 	res, err := svc.CreateApiKey(adminTestContext(), &proto.CreateAdminApiKeyRequest{KeyName: "primary", ChannelId: 7})
 	if err != nil {
@@ -76,10 +76,10 @@ func TestApiKeyServiceRevokeAndList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, created_at, user_id FROM api_keys").
+	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, owner_openid, created_at FROM api_keys").
 		WithArgs(int32(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "user_id"}).
-			AddRow(int32(1), sql.NullString{String: "hash", Valid: true}, "primary", int32(7), now, int32(99)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"}).
+			AddRow(int32(1), sql.NullString{String: "hash", Valid: true}, "primary", int32(7), "admin-openid", now))
 	list, err := svc.ListApiKeysByChannelID(adminTestContext(), &proto.ListAdminApiKeysByChannelIDRequest{ChannelId: 7})
 	if err != nil {
 		t.Fatal(err)
@@ -90,8 +90,8 @@ func TestApiKeyServiceRevokeAndList(t *testing.T) {
 
 	mock.ExpectQuery("JOIN channels ON api_keys.channel_id = channels.id").
 		WithArgs("openai").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "user_id"}).
-			AddRow(int32(2), sql.NullString{String: "hash2", Valid: true}, "secondary", int32(7), now, int32(99)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"}).
+			AddRow(int32(2), sql.NullString{String: "hash2", Valid: true}, "secondary", int32(7), "admin-openid", now))
 	byName, err := svc.ListApiKeysByChannelName(adminTestContext(), &proto.ListAdminApiKeysByChannelNameRequest{ChannelName: "openai"})
 	if err != nil {
 		t.Fatal(err)

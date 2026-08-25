@@ -15,6 +15,10 @@ message AdminApiKey {
     string key_hash = 2;
     string raw_key = 3;
     google.protobuf.Timestamp created_at = 4;
+    int32 key_id = 5;
+    int32 channel_id = 6;
+    string channel_name = 7;
+    string owner_openid = 8;
 }
 
 message CreateAdminApiKeyRequest {

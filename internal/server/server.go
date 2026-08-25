@@ -11,12 +11,12 @@ import (
 	"github.com/HyperToken-dev/fabric/internal/service"
 )
 
-// Server implements administrator-facing Connect services.
+// Server implements Connect services used by the management console.
 //
-// Authorization: Methods that expose system-wide resources require the admin
-// role either in their service implementation or at this boundary. The value is
-// safe for concurrent use after construction because services hold sql.DB-backed
-// repositories.
+// Authorization: Methods that mutate system-wide resources require the admin
+// permission either in their service implementation or at this boundary. The
+// value is safe for concurrent use after construction because services hold
+// sql.DB-backed repositories.
 type Server struct {
 	protoconnect.UnimplementedApiKeyAdminServiceHandler
 	protoconnect.UnimplementedUsageServiceHandler
@@ -277,11 +277,8 @@ func (s *Server) CreateIntegralLog(ctx context.Context, req *connect.Request[gen
 	return connect.NewResponse(resp), nil
 }
 
-// GetIntegralLog is admin-only because integral logs include audit data.
+// GetIntegralLog returns one owner-scoped integral log, or any log for admins.
 func (s *Server) GetIntegralLog(ctx context.Context, req *connect.Request[gen.GetIntegralLogRequest]) (*connect.Response[gen.IntegralLogResponse], error) {
-	if _, err := adminauth.RequireAdmin(ctx); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	resp, err := s.integralLogSvc.GetIntegralLog(ctx, req.Msg)
 	if err != nil {
 		return nil, connectError(err)
@@ -289,11 +286,8 @@ func (s *Server) GetIntegralLog(ctx context.Context, req *connect.Request[gen.Ge
 	return connect.NewResponse(resp), nil
 }
 
-// ListIntegralLogs is admin-only because integral logs include audit data.
+// ListIntegralLogs returns owner-scoped logs, or global/filterable logs for admins.
 func (s *Server) ListIntegralLogs(ctx context.Context, req *connect.Request[gen.ListIntegralLogsRequest]) (*connect.Response[gen.ListIntegralLogsResponse], error) {
-	if _, err := adminauth.RequireAdmin(ctx); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	resp, err := s.integralLogSvc.ListIntegralLogs(ctx, req.Msg)
 	if err != nil {
 		return nil, connectError(err)
@@ -354,7 +348,7 @@ func connectError(err error) error {
 	if strings.Contains(message, "authenticated user is required") {
 		return connect.NewError(connect.CodeUnauthenticated, err)
 	}
-	if strings.Contains(message, "admin role is required") {
+	if strings.Contains(message, "admin role is required") || strings.Contains(message, "admin permission is required") {
 		return connect.NewError(connect.CodePermissionDenied, err)
 	}
 	return connect.NewError(connect.CodeInternal, err)

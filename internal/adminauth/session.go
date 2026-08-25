@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,22 +37,35 @@ func NewCookieManager(secret string, secure bool) *CookieManager {
 	return &CookieManager{secret: []byte(secret), secure: secure}
 }
 
-// SetSession writes a signed browser session cookie for the Fabric user id.
-func (m *CookieManager) SetSession(w http.ResponseWriter, userID int32) {
-	m.setSigned(w, sessionCookieName, strconv.FormatInt(int64(userID), 10), sessionTTL)
+// SetSession writes a signed browser session cookie for the OIDC principal.
+func (m *CookieManager) SetSession(w http.ResponseWriter, principal Principal) error {
+	payload, err := json.Marshal(principal)
+	if err != nil {
+		return fmt.Errorf("marshal principal session: %w", err)
+	}
+	m.setSigned(w, sessionCookieName, base64.RawURLEncoding.EncodeToString(payload), sessionTTL)
+	return nil
 }
 
-// SessionUserID verifies the browser session cookie and returns its user id.
-func (m *CookieManager) SessionUserID(r *http.Request) (int32, error) {
+// SessionPrincipal verifies the browser session cookie and returns its OIDC
+// identity snapshot. The snapshot is authorization state until the next login.
+func (m *CookieManager) SessionPrincipal(r *http.Request) (Principal, error) {
 	value, err := m.signedValue(r, sessionCookieName)
 	if err != nil {
-		return 0, err
+		return Principal{}, err
 	}
-	parsed, err := strconv.ParseInt(value, 10, 32)
+	payload, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
-		return 0, fmt.Errorf("invalid session user id: %w", err)
+		return Principal{}, fmt.Errorf("decode principal session: %w", err)
 	}
-	return int32(parsed), nil
+	var principal Principal
+	if err := json.Unmarshal(payload, &principal); err != nil {
+		return Principal{}, fmt.Errorf("unmarshal principal session: %w", err)
+	}
+	if strings.TrimSpace(principal.OpenID) == "" {
+		return Principal{}, fmt.Errorf("session openid is required")
+	}
+	return principal, nil
 }
 
 // ClearSession removes the browser session cookie.

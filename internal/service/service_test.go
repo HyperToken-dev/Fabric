@@ -7,7 +7,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/HyperToken-dev/fabric/internal/adminauth"
-	"github.com/HyperToken-dev/fabric/internal/repository"
 )
 
 func newServiceMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock, func()) {
@@ -20,9 +19,16 @@ func newServiceMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock, func()) {
 }
 
 func adminTestContext() context.Context {
-	return adminauth.WithUser(context.Background(), repository.User{ID: 99, Role: adminauth.RoleAdmin, Status: "active"})
+	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
+		OpenID:      "admin-openid",
+		Role:        adminauth.RoleAdmin,
+		Permissions: []string{adminauth.AdminPermission},
+	})
 }
 
 func userTestContext() context.Context {
-	return adminauth.WithUser(context.Background(), repository.User{ID: 77, Role: adminauth.RoleUser, Status: "active"})
+	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
+		OpenID: "user-openid",
+		Role:   adminauth.RoleUser,
+	})
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getCurrentUser, logout, type CurrentUser } from './api/auth';
+import { getCurrentUser, isAdminUser, logout, type CurrentUser } from './api/auth';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import ChannelsPage from './components/ChannelsPage';
@@ -22,7 +22,7 @@ export default function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [user, setUser] = useState<CurrentUser | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const isAdmin = user?.role === 'admin';
+    const isAdmin = isAdminUser(user);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -81,7 +81,7 @@ export default function App() {
             <ApiKeysPage user={user} />
         ) : activeTab === 'usage' ? (
             <UsageLogsPage />
-        ) : activeTab === 'models' && user.role !== 'admin' ? (
+        ) : activeTab === 'models' && !isAdmin ? (
             <ClientModelsPage />
         ) : (
             <ActivePage />

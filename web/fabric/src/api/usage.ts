@@ -8,6 +8,7 @@ export type UsageLog = {
     keyId: number;
     modelId: number;
     channelId: number;
+    ownerOpenid: string;
     promptTokens: number;
     completionTokens: number;
     createdAt: string | null;
@@ -21,6 +22,7 @@ function toUsageLog(log: ProtoUsageLog, field: string): UsageLog {
         keyId: safeInteger(log.keyId, `${field}.keyId`),
         modelId: safeInteger(log.modelId, `${field}.modelId`),
         channelId: safeInteger(log.channelId, `${field}.channelId`),
+        ownerOpenid: log.ownerOpenid,
         promptTokens: safeInteger(log.promptTokens || '0', `${field}.promptTokens`),
         completionTokens: safeInteger(log.completionTokens || '0', `${field}.completionTokens`),
         createdAt: log.createdAt ? timestampToIso(log.createdAt, `${field}.createdAt`) : null,

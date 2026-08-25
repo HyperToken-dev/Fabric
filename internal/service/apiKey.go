@@ -37,7 +37,7 @@ func (s *ApiKeyService) CreateApiKey(ctx context.Context, req *proto.CreateAdmin
 	if err != nil {
 		return nil, err
 	}
-	return s.createApiKeyForChannel(ctx, user.ID, req.KeyName, req.ChannelId, "")
+	return s.createApiKeyForChannel(ctx, user.OpenID, req.KeyName, req.ChannelId, "")
 }
 
 func (s *ApiKeyService) CreateClientApiKey(ctx context.Context, req *proto.CreateClientApiKeyRequest) (*proto.CreateClientApiKeyResponse, error) {
@@ -47,52 +47,58 @@ func (s *ApiKeyService) CreateClientApiKey(ctx context.Context, req *proto.Creat
 	}
 	channel, err := s.queries.GetActiveChannelByName(ctx, req.ChannelName)
 	if err != nil {
-		zap.L().Warn("create client api key channel lookup failed", zap.Error(err), zap.String("channel_name", req.ChannelName), zap.Int32("user_id", user.ID))
+		zap.L().Warn("create client api key channel lookup failed", zap.Error(err), zap.String("channel_name", req.ChannelName), zap.String("owner_openid", user.OpenID))
 		return nil, fmt.Errorf("active channel is required")
 	}
-	res, err := s.createApiKeyForChannel(ctx, user.ID, req.KeyName, channel.ID, channel.ChannelName)
+	res, err := s.createApiKeyForChannel(ctx, user.OpenID, req.KeyName, channel.ID, channel.ChannelName)
 	if err != nil {
 		return nil, err
 	}
 	return &proto.CreateClientApiKeyResponse{ApiKey: &proto.ClientApiKey{
+		KeyId:       res.ApiKey.KeyId,
 		KeyHash:     res.ApiKey.KeyHash,
 		RawKey:      res.ApiKey.RawKey,
 		KeyName:     res.ApiKey.KeyName,
 		ChannelName: channel.ChannelName,
+		OwnerOpenid: user.OpenID,
 		CreatedAt:   res.ApiKey.CreatedAt,
 	}}, nil
 }
 
-func (s *ApiKeyService) createApiKeyForChannel(ctx context.Context, userID int32, keyName string, channelID int32, channelName string) (res *proto.CreateAdminApiKeyResponse, err error) {
+func (s *ApiKeyService) createApiKeyForChannel(ctx context.Context, ownerOpenID string, keyName string, channelID int32, channelName string) (res *proto.CreateAdminApiKeyResponse, err error) {
 	rawKey, hash, err := generateApiKey()
 	if err != nil {
 		return nil, err
 	}
 
 	row, err := s.queries.CreateApiKey(ctx, repository.CreateApiKeyParams{
-		KeyHash:   sql.NullString{String: hash, Valid: true},
-		KeyName:   keyName,
-		ChannelID: channelID,
-		UserID:    userID,
+		KeyHash:     sql.NullString{String: hash, Valid: true},
+		KeyName:     keyName,
+		ChannelID:   channelID,
+		OwnerOpenid: ownerOpenID,
 	})
 	if err != nil {
-		zap.L().Error("create api key failed", zap.Error(err), zap.String("key_name", keyName), zap.Int32("channel_id", channelID), zap.Int32("user_id", userID))
+		zap.L().Error("create api key failed", zap.Error(err), zap.String("key_name", keyName), zap.Int32("channel_id", channelID), zap.String("owner_openid", ownerOpenID))
 		return nil, err
 	}
 	zap.L().Info("api key created",
 		zap.String("key_name", row.KeyName),
 		zap.Int32("channel_id", row.ChannelID),
-		zap.Int32("user_id", row.UserID),
+		zap.String("owner_openid", row.OwnerOpenid),
 		zap.String("channel_name", channelName),
 		zap.String("key_hash_prefix", keyHashPrefix(row.KeyHash.String)),
 	)
 
 	return &proto.CreateAdminApiKeyResponse{
 		ApiKey: &proto.AdminApiKey{
-			KeyHash:   row.KeyHash.String,
-			RawKey:    rawKey, // return once only when create
-			KeyName:   row.KeyName,
-			CreatedAt: timestamppb.New(row.CreatedAt),
+			KeyId:       row.ID,
+			ChannelId:   row.ChannelID,
+			ChannelName: channelName,
+			KeyHash:     row.KeyHash.String,
+			RawKey:      rawKey, // return once only when create
+			KeyName:     row.KeyName,
+			OwnerOpenid: row.OwnerOpenid,
+			CreatedAt:   timestamppb.New(row.CreatedAt),
 		},
 	}, nil
 }
@@ -115,12 +121,12 @@ func (s *ApiKeyService) RevokeClientApiKey(ctx context.Context, req *proto.Revok
 	if err != nil {
 		return nil, err
 	}
-	err = s.queries.DeleteApiKeyByHashAndUser(ctx, repository.DeleteApiKeyByHashAndUserParams{
-		KeyHash: sql.NullString{String: req.KeyHash, Valid: true},
-		UserID:  user.ID,
+	err = s.queries.DeleteApiKeyByHashAndOwnerOpenID(ctx, repository.DeleteApiKeyByHashAndOwnerOpenIDParams{
+		KeyHash:     sql.NullString{String: req.KeyHash, Valid: true},
+		OwnerOpenid: user.OpenID,
 	})
 	if err != nil {
-		zap.L().Error("revoke client api key failed", zap.Error(err), zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)), zap.Int32("user_id", user.ID))
+		zap.L().Error("revoke client api key failed", zap.Error(err), zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)), zap.String("owner_openid", user.OpenID))
 		return nil, err
 	}
 	return &proto.RevokeClientApiKeyResponse{}, nil
@@ -138,9 +144,12 @@ func (s *ApiKeyService) ListApiKeysByChannelID(ctx context.Context, req *proto.L
 	keys := make([]*proto.AdminApiKey, len(rows))
 	for i, r := range rows {
 		keys[i] = &proto.AdminApiKey{
-			KeyHash:   r.KeyHash.String,
-			KeyName:   r.KeyName,
-			CreatedAt: timestamppb.New(r.CreatedAt),
+			KeyId:       r.ID,
+			ChannelId:   r.ChannelID,
+			KeyHash:     r.KeyHash.String,
+			KeyName:     r.KeyName,
+			OwnerOpenid: r.OwnerOpenid,
+			CreatedAt:   timestamppb.New(r.CreatedAt),
 		}
 	}
 	zap.L().Info("api keys listed by channel id", zap.Int32("channel_id", req.ChannelId), zap.Int("count", len(keys)))
@@ -159,9 +168,13 @@ func (s *ApiKeyService) ListApiKeysByChannelName(ctx context.Context, req *proto
 	keys := make([]*proto.AdminApiKey, len(rows))
 	for i, r := range rows {
 		keys[i] = &proto.AdminApiKey{
-			KeyHash:   r.KeyHash.String,
-			KeyName:   r.KeyName,
-			CreatedAt: timestamppb.New(r.CreatedAt),
+			KeyId:       r.ID,
+			ChannelId:   r.ChannelID,
+			ChannelName: req.ChannelName,
+			KeyHash:     r.KeyHash.String,
+			KeyName:     r.KeyName,
+			OwnerOpenid: r.OwnerOpenid,
+			CreatedAt:   timestamppb.New(r.CreatedAt),
 		}
 	}
 	zap.L().Info("api keys listed by channel name", zap.String("channel_name", req.ChannelName), zap.Int("count", len(keys)))
@@ -173,17 +186,19 @@ func (s *ApiKeyService) ListClientApiKeys(ctx context.Context, req *proto.ListCl
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.queries.ListApiKeysWithChannelByUser(ctx, user.ID)
+	rows, err := s.queries.ListApiKeysWithChannelByOwnerOpenID(ctx, user.OpenID)
 	if err != nil {
-		zap.L().Error("list client api keys failed", zap.Error(err), zap.Int32("user_id", user.ID))
+		zap.L().Error("list client api keys failed", zap.Error(err), zap.String("owner_openid", user.OpenID))
 		return nil, err
 	}
 	keys := make([]*proto.ClientApiKey, len(rows))
 	for i, r := range rows {
 		keys[i] = &proto.ClientApiKey{
+			KeyId:       r.ID,
 			KeyHash:     r.KeyHash.String,
 			KeyName:     r.KeyName,
 			ChannelName: r.ChannelName,
+			OwnerOpenid: r.OwnerOpenid,
 			CreatedAt:   timestamppb.New(r.CreatedAt),
 		}
 	}
