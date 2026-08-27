@@ -205,20 +205,20 @@ func (s *ChannelService) ListClientChannels(ctx context.Context, req *proto.List
 
 func validateChannelName(channelName string) error {
 	if strings.TrimSpace(channelName) == "" {
-		return fmt.Errorf("channel name is required")
+		return ValidationError{Message: "channel name is required"}
 	}
 	if len(channelName) > channelNameMaxLength {
-		return fmt.Errorf("channel name must be at most %d characters", channelNameMaxLength)
+		return ValidationError{Message: fmt.Sprintf("channel name must be at most %d characters", channelNameMaxLength)}
 	}
 	return nil
 }
 
 func validateChannelBaseURL(baseURL string) error {
 	if len(baseURL) > channelBaseURLMaxLength {
-		return fmt.Errorf("base_url must be at most %d characters", channelBaseURLMaxLength)
+		return ValidationError{Message: fmt.Sprintf("base_url must be at most %d characters", channelBaseURLMaxLength)}
 	}
 	if _, err := coreproxy.ParseBaseURL(baseURL); err != nil {
-		return fmt.Errorf("invalid base_url: %w", err)
+		return ValidationError{Message: fmt.Sprintf("invalid base_url: %v", err)}
 	}
 	return nil
 }
@@ -228,7 +228,7 @@ func validateChannelStatus(status int32) error {
 	case channelStatusActive, channelStatusBanned, channelStatusPending:
 		return nil
 	default:
-		return fmt.Errorf("invalid channel status: %d", status)
+		return ValidationError{Message: fmt.Sprintf("invalid channel status: %d", status)}
 	}
 }
 

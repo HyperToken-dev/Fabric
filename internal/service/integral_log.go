@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	proto "github.com/HyperToken-dev/fabric/gen"
@@ -29,7 +28,7 @@ func NewIntegralLogService(db *sql.DB) *IntegralLogService {
 
 func (s *IntegralLogService) CreateIntegralLog(ctx context.Context, req *proto.CreateIntegralLogRequest) (*proto.IntegralLogResponse, error) {
 	if req.KeyId <= 0 {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, ValidationError{Message: "key_id is required"}
 	}
 	contextJSON, err := validateIntegralLogContext(req.Context)
 	if err != nil {
@@ -57,7 +56,7 @@ func (s *IntegralLogService) CreateIntegralLog(ctx context.Context, req *proto.C
 
 func (s *IntegralLogService) GetIntegralLog(ctx context.Context, req *proto.GetIntegralLogRequest) (*proto.IntegralLogResponse, error) {
 	if req.Id <= 0 {
-		return nil, fmt.Errorf("id is required")
+		return nil, ValidationError{Message: "id is required"}
 	}
 
 	user, err := adminauth.RequireUser(ctx)
@@ -148,7 +147,7 @@ func (s *IntegralLogService) ListIntegralLogs(ctx context.Context, req *proto.Li
 
 func (s *IntegralLogService) UpdateIntegralLog(ctx context.Context, req *proto.UpdateIntegralLogRequest) (*proto.IntegralLogResponse, error) {
 	if req.Id <= 0 {
-		return nil, fmt.Errorf("id is required")
+		return nil, ValidationError{Message: "id is required"}
 	}
 	contextJSON, err := validateIntegralLogContext(req.Context)
 	if err != nil {
@@ -170,7 +169,7 @@ func (s *IntegralLogService) UpdateIntegralLog(ctx context.Context, req *proto.U
 
 func (s *IntegralLogService) DeleteIntegralLog(ctx context.Context, req *proto.DeleteIntegralLogRequest) (*proto.DeleteIntegralLogResponse, error) {
 	if req.Id <= 0 {
-		return nil, fmt.Errorf("id is required")
+		return nil, ValidationError{Message: "id is required"}
 	}
 
 	if err := s.queries.DeleteIntegralLog(ctx, req.Id); err != nil {
@@ -184,11 +183,11 @@ func (s *IntegralLogService) DeleteIntegralLog(ctx context.Context, req *proto.D
 func validateIntegralLogContext(contextText string) (json.RawMessage, error) {
 	contextText = strings.TrimSpace(contextText)
 	if contextText == "" {
-		return nil, fmt.Errorf("context is required")
+		return nil, ValidationError{Message: "context is required"}
 	}
 	contextJSON := json.RawMessage(contextText)
 	if !json.Valid(contextJSON) {
-		return nil, fmt.Errorf("context must be valid JSON")
+		return nil, ValidationError{Message: "context must be valid JSON"}
 	}
 	return contextJSON, nil
 }

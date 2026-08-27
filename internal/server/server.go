@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -353,15 +354,16 @@ func (s *Server) UpdateSensitiveWordEnabled(ctx context.Context, req *connect.Re
 }
 
 func connectError(err error) error {
+	var validationErr service.ValidationError
+	if errors.As(err, &validationErr) {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	message := err.Error()
 	if strings.Contains(message, "authenticated user is required") {
 		return connect.NewError(connect.CodeUnauthenticated, err)
 	}
 	if strings.Contains(message, "admin role is required") || strings.Contains(message, "admin permission is required") {
 		return connect.NewError(connect.CodePermissionDenied, err)
-	}
-	if strings.Contains(message, "active channel is required") {
-		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewError(connect.CodeInternal, err)
 }

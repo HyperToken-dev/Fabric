@@ -24,6 +24,9 @@ func TestApiKeyServiceCreateApiKey(t *testing.T) {
 	svc := NewApiKeyService(db)
 	now := time.Now()
 
+	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE id").
+		WithArgs(int32(7)).
+		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(7), "openai", "https://api.example.com", "provider", int32(1), int16(1), now))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO api_keys (key_hash, key_name, channel_id, owner_openid)\nVALUES ($1, $2, $3, $4)\nRETURNING id, key_hash, key_name, channel_id, owner_openid, created_at")).
 		WithArgs(sqlmock.AnyArg(), "primary", int32(7), "admin-openid").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"}).
@@ -39,6 +42,9 @@ func TestApiKeyServiceCreateApiKey(t *testing.T) {
 	if res.ApiKey.KeyName != "primary" || res.ApiKey.KeyHash != strings.Repeat("a", 64) {
 		t.Fatalf("ApiKey = %+v", res.ApiKey)
 	}
+	if res.ApiKey.ChannelName != "openai" {
+		t.Fatalf("ChannelName = %q, want openai", res.ApiKey.ChannelName)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +59,11 @@ func TestApiKeyServiceCreateApiKeyRandomFailure(t *testing.T) {
 	db, mock, cleanup := newServiceMock(t)
 	defer cleanup()
 	svc := NewApiKeyService(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE id").
+		WithArgs(int32(7)).
+		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(7), "openai", "https://api.example.com", "provider", int32(1), int16(1), now))
 
 	_, err := svc.CreateApiKey(adminTestContext(), &proto.CreateAdminApiKeyRequest{KeyName: "primary", ChannelId: 7})
 	if !errors.Is(err, wantErr) {
@@ -76,6 +87,9 @@ func TestApiKeyServiceRevokeAndList(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE id").
+		WithArgs(int32(7)).
+		WillReturnRows(sqlmock.NewRows(channelRows).AddRow(int32(7), "openai", "https://api.example.com", "provider", int32(1), int16(1), now))
 	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, owner_openid, created_at FROM api_keys").
 		WithArgs(int32(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"}).
@@ -84,7 +98,7 @@ func TestApiKeyServiceRevokeAndList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.ApiKeys) != 1 || list.ApiKeys[0].RawKey != "" || list.ApiKeys[0].KeyName != "primary" {
+	if len(list.ApiKeys) != 1 || list.ApiKeys[0].RawKey != "" || list.ApiKeys[0].KeyName != "primary" || list.ApiKeys[0].ChannelName != "openai" {
 		t.Fatalf("ApiKeys = %+v", list.ApiKeys)
 	}
 

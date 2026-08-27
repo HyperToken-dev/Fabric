@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"io"
 
 	proto "github.com/HyperToken-dev/fabric/gen"
@@ -37,7 +36,15 @@ func (s *ApiKeyService) CreateApiKey(ctx context.Context, req *proto.CreateAdmin
 	if err != nil {
 		return nil, err
 	}
-	return s.createApiKeyForChannel(ctx, user.OpenID, req.KeyName, req.ChannelId, "")
+	channel, err := s.queries.GetChannelById(ctx, req.ChannelId)
+	if err == sql.ErrNoRows {
+		return nil, ValidationError{Message: "channel is required"}
+	}
+	if err != nil {
+		zap.L().Error("create admin api key channel lookup failed", zap.Error(err), zap.Int32("channel_id", req.ChannelId), zap.String("owner_openid", user.OpenID))
+		return nil, err
+	}
+	return s.createApiKeyForChannel(ctx, user.OpenID, req.KeyName, channel.ID, channel.ChannelName)
 }
 
 func (s *ApiKeyService) CreateClientApiKey(ctx context.Context, req *proto.CreateClientApiKeyRequest) (*proto.CreateClientApiKeyResponse, error) {
@@ -46,9 +53,13 @@ func (s *ApiKeyService) CreateClientApiKey(ctx context.Context, req *proto.Creat
 		return nil, err
 	}
 	channel, err := s.queries.GetActiveChannelByName(ctx, req.ChannelName)
-	if err != nil {
+	if err == sql.ErrNoRows {
 		zap.L().Warn("create client api key channel lookup failed", zap.Error(err), zap.String("channel_name", req.ChannelName), zap.String("owner_openid", user.OpenID))
-		return nil, fmt.Errorf("active channel is required")
+		return nil, ValidationError{Message: "active channel is required"}
+	}
+	if err != nil {
+		zap.L().Error("create client api key channel lookup failed", zap.Error(err), zap.String("channel_name", req.ChannelName), zap.String("owner_openid", user.OpenID))
+		return nil, err
 	}
 	res, err := s.createApiKeyForChannel(ctx, user.OpenID, req.KeyName, channel.ID, channel.ChannelName)
 	if err != nil {
@@ -136,6 +147,14 @@ func (s *ApiKeyService) ListApiKeysByChannelID(ctx context.Context, req *proto.L
 	if _, err := adminauth.RequireAdmin(ctx); err != nil {
 		return nil, err
 	}
+	channel, err := s.queries.GetChannelById(ctx, req.ChannelId)
+	if err == sql.ErrNoRows {
+		return nil, ValidationError{Message: "channel is required"}
+	}
+	if err != nil {
+		zap.L().Error("list api keys channel lookup failed", zap.Error(err), zap.Int32("channel_id", req.ChannelId))
+		return nil, err
+	}
 	rows, err := s.queries.ListApiKeysByChannelID(ctx, req.ChannelId)
 	if err != nil {
 		zap.L().Error("list api keys by channel id failed", zap.Error(err), zap.Int32("channel_id", req.ChannelId))
@@ -146,6 +165,7 @@ func (s *ApiKeyService) ListApiKeysByChannelID(ctx context.Context, req *proto.L
 		keys[i] = &proto.AdminApiKey{
 			KeyId:       r.ID,
 			ChannelId:   r.ChannelID,
+			ChannelName: channel.ChannelName,
 			KeyHash:     r.KeyHash.String,
 			KeyName:     r.KeyName,
 			OwnerOpenid: r.OwnerOpenid,

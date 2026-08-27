@@ -86,6 +86,59 @@ func TestClientApiKeyHandlerMapsBadChannelToInvalidArgument(t *testing.T) {
 	}
 }
 
+func TestClientApiKeyHandlerMapsChannelLookupFailureToInternal(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewClientServer(service.NewApiKeyService(db), nil, nil)
+
+	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE channel_name").
+		WithArgs("openai").
+		WillReturnError(context.DeadlineExceeded)
+	_, err = srv.CreateApiKey(userServerTestContext(), connect.NewRequest(&gen.CreateClientApiKeyRequest{KeyName: "client", ChannelName: "openai"}))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("error code = %v, want internal", connect.CodeOf(err))
+	}
+}
+
+func TestChannelHandlerMapsValidationErrorsToInvalidArgument(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewServer(nil, service.NewChannelService(db), nil, nil, nil, nil)
+
+	_, err = srv.CreateChannel(adminServerTestContext(), connect.NewRequest(&gen.CreateAdminChannelRequest{
+		ChannelName: " ",
+		BaseUrl:     "https://api.example.com",
+		ProviderKey: "provider",
+		ApiFormat:   1,
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %v, want invalid argument", connect.CodeOf(err))
+	}
+}
+
+func TestIntegralLogHandlerMapsValidationErrorsToInvalidArgument(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewServer(nil, nil, nil, nil, service.NewIntegralLogService(db), nil)
+
+	_, err = srv.CreateIntegralLog(adminServerTestContext(), connect.NewRequest(&gen.CreateIntegralLogRequest{
+		KeyId:   7,
+		Context: "{",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %v, want invalid argument", connect.CodeOf(err))
+	}
+}
+
 func adminServerTestContext() context.Context {
 	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
 		OpenID:      "admin-openid",
