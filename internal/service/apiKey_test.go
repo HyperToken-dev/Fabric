@@ -89,6 +89,17 @@ func TestApiKeyServiceRevokeAndList(t *testing.T) {
 	}
 
 	mock.ExpectQuery("JOIN channels ON api_keys.channel_id = channels.id").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "created_at", "owner_openid", "channel_name"}).
+			AddRow(int32(2), sql.NullString{String: "hash2", Valid: true}, "secondary", int32(8), now, "owner-openid", "openai"))
+	all, err := svc.ListApiKeys(adminTestContext(), &proto.ListAdminApiKeysRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.ApiKeys) != 1 || all.ApiKeys[0].ChannelName != "openai" || all.ApiKeys[0].OwnerOpenid != "owner-openid" {
+		t.Fatalf("all ApiKeys = %+v", all.ApiKeys)
+	}
+
+	mock.ExpectQuery("JOIN channels ON api_keys.channel_id = channels.id").
 		WithArgs("openai").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"}).
 			AddRow(int32(2), sql.NullString{String: "hash2", Valid: true}, "secondary", int32(7), "admin-openid", now))

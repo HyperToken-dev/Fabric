@@ -6,6 +6,7 @@ import "google/protobuf/timestamp.proto";
 service ApiKeyAdminService {
     rpc CreateApiKey(CreateAdminApiKeyRequest) returns(CreateAdminApiKeyResponse);
     rpc RevokeApiKey(RevokeAdminApiKeyRequest) returns(RevokeAdminApiKeyResponse);
+    rpc ListApiKeys(ListAdminApiKeysRequest) returns(ListAdminApiKeysResponse);
     rpc ListApiKeysByChannelID(ListAdminApiKeysByChannelIDRequest) returns(ListAdminApiKeysResponse);
     rpc ListApiKeysByChannelName(ListAdminApiKeysByChannelNameRequest) returns(ListAdminApiKeysResponse);
 }
@@ -35,6 +36,8 @@ message RevokeAdminApiKeyRequest {
 }
 
 message RevokeAdminApiKeyResponse {}
+
+message ListAdminApiKeysRequest {}
 
 message ListAdminApiKeysByChannelIDRequest {
     int32 channel_id = 1;

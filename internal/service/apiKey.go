@@ -156,6 +156,31 @@ func (s *ApiKeyService) ListApiKeysByChannelID(ctx context.Context, req *proto.L
 	return &proto.ListAdminApiKeysResponse{ApiKeys: keys}, nil
 }
 
+func (s *ApiKeyService) ListApiKeys(ctx context.Context, req *proto.ListAdminApiKeysRequest) (*proto.ListAdminApiKeysResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.queries.ListApiKeysWithChannel(ctx)
+	if err != nil {
+		zap.L().Error("list api keys failed", zap.Error(err))
+		return nil, err
+	}
+	keys := make([]*proto.AdminApiKey, len(rows))
+	for i, r := range rows {
+		keys[i] = &proto.AdminApiKey{
+			KeyId:       r.ID,
+			ChannelId:   r.ChannelID,
+			ChannelName: r.ChannelName,
+			KeyHash:     r.KeyHash.String,
+			KeyName:     r.KeyName,
+			OwnerOpenid: r.OwnerOpenid,
+			CreatedAt:   timestamppb.New(r.CreatedAt),
+		}
+	}
+	zap.L().Info("api keys listed", zap.Int("count", len(keys)))
+	return &proto.ListAdminApiKeysResponse{ApiKeys: keys}, nil
+}
+
 func (s *ApiKeyService) ListApiKeysByChannelName(ctx context.Context, req *proto.ListAdminApiKeysByChannelNameRequest) (*proto.ListAdminApiKeysResponse, error) {
 	if _, err := adminauth.RequireAdmin(ctx); err != nil {
 		return nil, err

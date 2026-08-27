@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -68,10 +69,34 @@ func TestUsageHandlerMapsServiceErrors(t *testing.T) {
 	}
 }
 
+func TestClientApiKeyHandlerMapsBadChannelToInvalidArgument(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewClientServer(service.NewApiKeyService(db), nil, nil)
+
+	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE channel_name").
+		WithArgs("stale").
+		WillReturnError(sql.ErrNoRows)
+	_, err = srv.CreateApiKey(userServerTestContext(), connect.NewRequest(&gen.CreateClientApiKeyRequest{KeyName: "client", ChannelName: "stale"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %v, want invalid argument", connect.CodeOf(err))
+	}
+}
+
 func adminServerTestContext() context.Context {
 	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
 		OpenID:      "admin-openid",
 		Role:        adminauth.RoleAdmin,
 		Permissions: []string{adminauth.AdminPermission},
+	})
+}
+
+func userServerTestContext() context.Context {
+	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
+		OpenID: "user-openid",
+		Role:   adminauth.RoleUser,
 	})
 }

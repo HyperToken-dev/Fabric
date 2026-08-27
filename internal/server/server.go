@@ -85,6 +85,15 @@ func (s *Server) ListApiKeysByChannelID(ctx context.Context, req *connect.Reques
 	return connect.NewResponse(resp), nil
 }
 
+// ListApiKeys lists all administrator-visible API keys with channel names.
+func (s *Server) ListApiKeys(ctx context.Context, req *connect.Request[gen.ListAdminApiKeysRequest]) (*connect.Response[gen.ListAdminApiKeysResponse], error) {
+	resp, err := s.apiKeySvc.ListApiKeys(ctx, req.Msg)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
 // ListApiKeysByChannelName lists API keys for an administrator-selected channel name.
 func (s *Server) ListApiKeysByChannelName(ctx context.Context, req *connect.Request[gen.ListAdminApiKeysByChannelNameRequest]) (*connect.Response[gen.ListAdminApiKeysResponse], error) {
 	resp, err := s.apiKeySvc.ListApiKeysByChannelName(ctx, req.Msg)
@@ -350,6 +359,9 @@ func connectError(err error) error {
 	}
 	if strings.Contains(message, "admin role is required") || strings.Contains(message, "admin permission is required") {
 		return connect.NewError(connect.CodePermissionDenied, err)
+	}
+	if strings.Contains(message, "active channel is required") {
+		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewError(connect.CodeInternal, err)
 }

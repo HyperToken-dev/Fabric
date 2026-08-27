@@ -33,6 +33,19 @@ JOIN channels ON api_keys.channel_id = channels.id
 WHERE channels.channel_name = $1
 ORDER BY api_keys.created_at DESC;
 
+-- name: ListApiKeysWithChannel :many
+SELECT
+    api_keys.id,
+    api_keys.key_hash,
+    api_keys.key_name,
+    api_keys.channel_id,
+    api_keys.created_at,
+    api_keys.owner_openid,
+    channels.channel_name
+FROM api_keys
+JOIN channels ON api_keys.channel_id = channels.id
+ORDER BY api_keys.created_at DESC;
+
 -- name: ListApiKeysByOwnerOpenID :many
 SELECT api_keys.* FROM api_keys
 WHERE owner_openid = $1

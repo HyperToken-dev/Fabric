@@ -94,11 +94,12 @@ export default function UsageLogsPage() {
         }
         const controller = new AbortController();
         setOptionsLoading(true);
-        const channel = channels?.find((item) => item.channelId === channelId);
         const request =
             mode === 'model'
                 ? listModels(channelId, controller.signal)
-                : listAdminApiKeys(channel ? [channel] : [], controller.signal);
+                : listAdminApiKeys(controller.signal).then((items) =>
+                      items.filter((item) => item.channelId === channelId),
+                  );
         request
             .then((result) => {
                 if (mode === 'model') {

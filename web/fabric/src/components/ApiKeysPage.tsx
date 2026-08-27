@@ -76,10 +76,7 @@ export default function ApiKeysPage({ user }: ApiKeysPageProps) {
         const controller = new AbortController();
         setKeys(null);
         setError(null);
-        (isAdmin
-            ? listAdminApiKeys(channels ?? [], controller.signal)
-            : listClientApiKeys(controller.signal)
-        )
+        (isAdmin ? listAdminApiKeys(controller.signal) : listClientApiKeys(controller.signal))
             .then(setKeys)
             .catch((requestError: unknown) => {
                 if (!controller.signal.aborted)

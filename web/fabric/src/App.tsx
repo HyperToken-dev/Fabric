@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Code, ConnectError } from '@connectrpc/connect';
+import { RefreshCw } from 'lucide-react';
 import { getCurrentUser, isAdminUser, logout, type CurrentUser } from './api/auth';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
@@ -22,14 +24,23 @@ export default function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [user, setUser] = useState<CurrentUser | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [authRequired, setAuthRequired] = useState(false);
+    const [sessionVersion, setSessionVersion] = useState(0);
     const isAdmin = isAdminUser(user);
 
     useEffect(() => {
         const controller = new AbortController();
+        setError(null);
+        setAuthRequired(false);
         getCurrentUser(controller.signal)
             .then(setUser)
             .catch((requestError: unknown) => {
                 if (!controller.signal.aborted) {
+                    const cause =
+                        requestError instanceof Error
+                            ? ConnectError.from(requestError.cause)
+                            : null;
+                    setAuthRequired(cause?.code === Code.Unauthenticated);
                     setError(
                         requestError instanceof Error
                             ? requestError.message
@@ -38,7 +49,7 @@ export default function App() {
                 }
             });
         return () => controller.abort();
-    }, []);
+    }, [sessionVersion]);
 
     useEffect(() => {
         if (
@@ -62,13 +73,24 @@ export default function App() {
                     <p className="mt-2 text-sm text-slate-500">
                         {error ?? 'Loading your session...'}
                     </p>
-                    {error && (
+                    {authRequired ? (
                         <a
                             href="/auth/login"
                             className="mt-5 inline-flex rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white"
                         >
                             Sign in
                         </a>
+                    ) : (
+                        error && (
+                            <button
+                                type="button"
+                                onClick={() => setSessionVersion((version) => version + 1)}
+                                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                            >
+                                <RefreshCw size={16} />
+                                Retry
+                            </button>
+                        )
                     )}
                 </div>
             </div>

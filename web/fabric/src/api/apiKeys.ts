@@ -55,24 +55,9 @@ export async function listClientApiKeys(signal?: AbortSignal): Promise<ApiKey[]>
     return response.apiKeys.map((key, index) => toApiKey(key, `apiKeys[${index}]`));
 }
 
-export async function listAdminApiKeys(
-    channels: ApiKeyChannel[],
-    signal?: AbortSignal,
-): Promise<ApiKey[]> {
-    const responses = await Promise.all(
-        channels.map(async (channel) => {
-            const response = await callAdminRpc(() =>
-                apiKeyAdminClient.listApiKeysByChannelName(
-                    { channelName: channel.channelName },
-                    { signal },
-                ),
-            );
-            return response.apiKeys.map((key, index) =>
-                toApiKey(key, `apiKeys[${channel.channelName}][${index}]`, channel.channelName),
-            );
-        }),
-    );
-    return responses.flat();
+export async function listAdminApiKeys(signal?: AbortSignal): Promise<ApiKey[]> {
+    const response = await callAdminRpc(() => apiKeyAdminClient.listApiKeys({}, { signal }));
+    return response.apiKeys.map((key, index) => toApiKey(key, `apiKeys[${index}]`));
 }
 
 export async function createClientApiKey(
