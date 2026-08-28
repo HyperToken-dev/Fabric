@@ -39,6 +39,15 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout }: Sid
     const nextLanguageLabel =
         nextLanguage === 'en-US' ? t('language.english') : t('language.chinese');
     const languageButtonLabel = t('language.toggleAria', { language: nextLanguageLabel });
+    const profileLabel = user.displayName || user.email || user.openid;
+    const profileInitials =
+        profileLabel
+            .trim()
+            .split(/\s+/)
+            .map((part) => part[0])
+            .join('')
+            .slice(0, 2)
+            .toUpperCase() || 'U';
 
     function toggleLanguage() {
         setLanguage(nextLanguage);
@@ -122,13 +131,19 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout }: Sid
                     <span className="text-xs font-bold">{currentLanguageLabel}</span>
                 </button>
                 <div className="flex items-center gap-3 px-4 py-3">
-                    <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-sm font-bold text-white shadow-sm shadow-emerald-200">
-                        AD
+                    <div className="w-8 h-8 overflow-hidden rounded-full bg-emerald-600 flex items-center justify-center text-sm font-bold text-white shadow-sm shadow-emerald-200">
+                        {user.avatarUrl ? (
+                            <img
+                                src={user.avatarUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                            />
+                        ) : (
+                            profileInitials
+                        )}
                     </div>
                     <div className="flex flex-col text-sm text-left">
-                        <span className="text-emerald-950 font-medium">
-                            {user.displayName || user.email || user.openid}
-                        </span>
+                        <span className="text-emerald-950 font-medium">{profileLabel}</span>
                         <span className="text-emerald-700/70 text-xs">
                             {user.email || user.openid}
                         </span>

@@ -138,8 +138,7 @@ export default function UsageLogsPage() {
         return () => controller.abort();
     }, [channelId, mode, optionsVersion]);
 
-    async function submit(event: FormEvent) {
-        event.preventDefault();
+    async function runQuery() {
         if (
             !channelId ||
             loading ||
@@ -189,6 +188,11 @@ export default function UsageLogsPage() {
         } finally {
             setLoading(false);
         }
+    }
+
+    function submit(event: FormEvent) {
+        event.preventDefault();
+        void runQuery();
     }
 
     const stats = summary
@@ -345,7 +349,7 @@ export default function UsageLogsPage() {
                                 >
                                     {keys.map((key) => (
                                         <option key={key.keyHash} value={key.keyHash}>
-                                            {key.keyName}
+                                            {key.keyName} #{key.keyId}
                                         </option>
                                     ))}
                                 </select>
@@ -410,10 +414,10 @@ export default function UsageLogsPage() {
                 />
             )}
             {queryError && logs && (
-                <RefreshWarning message={queryError} retry={() => setQueryError(null)} />
+                <RefreshWarning message={queryError} retry={() => void runQuery()} />
             )}
             {queryError && !logs && (
-                <ErrorState message={queryError} retry={() => setQueryError(null)} />
+                <ErrorState message={queryError} retry={() => void runQuery()} />
             )}
             {loading && !logs && <div className="h-48 animate-pulse rounded-2xl bg-white" />}
             {logs?.length === 0 && (
@@ -456,8 +460,13 @@ export default function UsageLogsPage() {
                                         </td>
                                         <td className="px-5 py-4">{log.channelId || '-'}</td>
                                         <td className="px-5 py-4">{log.modelId || '-'}</td>
-                                        <td className="px-5 py-4">
+                                        <td className="px-5 py-4 text-slate-700">
                                             <KeyRound size={14} className="text-slate-400" />
+                                            <span className="ml-2 font-medium">
+                                                {keys.find((key) => key.keyId === log.keyId)
+                                                    ?.keyName ?? t('usage.selectedKey')}
+                                                {log.keyId ? ` #${log.keyId}` : ''}
+                                            </span>
                                         </td>
                                         <td
                                             className="max-w-[220px] truncate px-5 py-4 text-xs text-slate-500"
