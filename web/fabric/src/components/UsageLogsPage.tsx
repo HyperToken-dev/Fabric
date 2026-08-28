@@ -38,6 +38,8 @@ export default function UsageLogsPage() {
     const [keys, setKeys] = useState<ApiKey[]>([]);
     const [keyHash, setKeyHash] = useState('');
     const [optionsLoading, setOptionsLoading] = useState(false);
+    const [optionsError, setOptionsError] = useState<string | null>(null);
+    const [optionsVersion, setOptionsVersion] = useState(0);
     const [mode, setMode] = useState<QueryMode>('channel');
     const [deadlinePreset, setDeadlinePreset] = useState<DeadlinePreset>('7');
     const [logs, setLogs] = useState<UsageLog[] | null>(null);
@@ -87,13 +89,23 @@ export default function UsageLogsPage() {
     useEffect(() => {
         setLogs(null);
         setQueryError(null);
+        setOptionsError(null);
         if (!channelId || mode === 'channel') {
             setModels([]);
+            setModelId(null);
             setKeys([]);
+            setKeyHash('');
             return;
         }
         const controller = new AbortController();
         setOptionsLoading(true);
+        if (mode === 'model') {
+            setModels([]);
+            setModelId(null);
+        } else {
+            setKeys([]);
+            setKeyHash('');
+        }
         const request =
             mode === 'model'
                 ? listModels(channelId, controller.signal)
@@ -114,7 +126,7 @@ export default function UsageLogsPage() {
             })
             .catch((requestError: unknown) => {
                 if (!controller.signal.aborted)
-                    setQueryError(
+                    setOptionsError(
                         requestError instanceof Error
                             ? requestError.message
                             : 'i18n:usage.optionsError',
@@ -124,7 +136,7 @@ export default function UsageLogsPage() {
                 if (!controller.signal.aborted) setOptionsLoading(false);
             });
         return () => controller.abort();
-    }, [channelId, mode]);
+    }, [channelId, mode, optionsVersion]);
 
     async function submit(event: FormEvent) {
         event.preventDefault();
@@ -367,12 +379,16 @@ export default function UsageLogsPage() {
                     {optionsLoading && (
                         <p className="mt-3 text-xs text-slate-500">{t('usage.loadingResources')}</p>
                     )}
-                    {!optionsLoading && mode === 'model' && models.length === 0 && (
-                        <p className="mt-3 text-xs font-medium text-amber-700">
-                            {t('usage.noModels')}
-                        </p>
-                    )}
                     {!optionsLoading &&
+                        !optionsError &&
+                        mode === 'model' &&
+                        models.length === 0 && (
+                            <p className="mt-3 text-xs font-medium text-amber-700">
+                                {t('usage.noModels')}
+                            </p>
+                        )}
+                    {!optionsLoading &&
+                        !optionsError &&
                         (mode === 'key' || mode === 'deadline') &&
                         keys.length === 0 && (
                             <p className="mt-3 text-xs font-medium text-amber-700">
@@ -380,6 +396,18 @@ export default function UsageLogsPage() {
                             </p>
                         )}
                 </section>
+            )}
+            {optionsError && logs && (
+                <RefreshWarning
+                    message={optionsError}
+                    retry={() => setOptionsVersion((value) => value + 1)}
+                />
+            )}
+            {optionsError && !logs && (
+                <ErrorState
+                    message={optionsError}
+                    retry={() => setOptionsVersion((value) => value + 1)}
+                />
             )}
             {queryError && logs && (
                 <RefreshWarning message={queryError} retry={() => setQueryError(null)} />

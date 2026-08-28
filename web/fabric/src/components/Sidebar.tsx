@@ -5,6 +5,7 @@ import {
     KeyRound,
     Languages,
     LayoutDashboard,
+    LogOut,
     Radio,
     ShieldAlert,
 } from 'lucide-react';
@@ -93,6 +94,16 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout }: Sid
                 >
                     <Languages size={20} />
                     <span className="text-xs">{currentLanguageLabel}</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={onLogout}
+                    className="flex shrink-0 items-center gap-2 rounded-xl border border-emerald-100 bg-white/70 px-4 py-3 font-semibold text-emerald-700 transition hover:bg-emerald-100 hover:text-emerald-900 md:hidden"
+                    aria-label="Logout"
+                    title="Logout"
+                >
+                    <LogOut size={20} />
+                    <span className="text-xs">Logout</span>
                 </button>
             </nav>
 
