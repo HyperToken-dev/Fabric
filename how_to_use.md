@@ -1,18 +1,19 @@
 # Fabric Usage Guide
 
-This document explains how to use Fabric in detail, including running the integrated gateway, configuring management APIs, calling provider-routed proxy APIs, and reusing Core / Business layers as libraries.
+This guide covers the integrated Fabric gateway, management APIs, provider-routed proxy calls, Fire Wall behavior, usage logging, and selective reuse of the Core and Business packages.
 
-## 1. Run the Integrated Gateway
+For a short project overview, start with [README.md](./README.md). This file is the detailed operational and integration reference.
+
+## 1. Quick Start
 
 ### 1.1 Requirements
 
 - Docker and Docker Compose for the recommended startup path.
-- Go 1.26.4 and PostgreSQL only when running locally without Docker.
-- Access to an OpenAI-compatible, Alibaba Bailian, or Seedance upstream service, depending on the provider channel you configure.
+- Go 1.26.4 and PostgreSQL when running locally without Docker.
+- A real upstream provider key for the channel you configure.
+- An OIDC provider when `oauth.enabled` is true.
 
 ### 1.2 Start with Docker Compose
-
-The recommended way to run Fabric from a fresh clone is Docker Compose:
 
 ```bash
 git clone https://github.com/HyperToken-dev/Fabric.git
@@ -20,39 +21,60 @@ cd Fabric
 docker compose up -d
 ```
 
-Docker Compose builds the Fabric gateway image from `Dockerfile`, starts a PostgreSQL service, waits for PostgreSQL health checks, and then starts the gateway.
+Docker Compose builds the gateway image, starts PostgreSQL, waits for database health checks, and starts Fabric.
 
-Default servers:
+Default endpoints:
 
-- Proxy Server: `http://localhost:3002`
-- Admin Server: `http://localhost:9090`
+| Server | Default URL | Purpose |
+| --- | --- | --- |
+| Proxy | `http://localhost:3002` | Provider-routed AI API proxy |
+| Admin | `http://localhost:9090` | Web Console and connect-go management APIs |
 
-Fabric runs migrations from `db/migrations/` during startup. The current migrations create and maintain these core tables:
+Docker Compose uses the tracked `configs/config.docker.yaml` and mounts it inside the Fabric container as `/app/configs/config.yaml`. You do not need to create a separate `configs/config.yaml` for Docker.
 
-- `channels`
-- `api_keys`
-- `models`
-- `usage_logs`
-- `integral_logs`
-- `provider_tasks`
+The gateway runs migrations from `db/migrations/` at startup. Migrations create and maintain tables such as `channels`, `api_keys`, `models`, `usage_logs`, `integral_logs`, and `provider_tasks`. They do not seed provider channels or models.
 
-The migrations do not seed default provider channels or models. In real deployments, configure or create a channel with a real `provider_key` and add required models through the management API or Admin Console.
+### 1.3 First Gateway Flow
 
-### 1.3 Configuration Files
+```mermaid
+flowchart LR
+    Browser[Admin Browser] --> Console[Web Console :9090]
+    Console --> Channel[Create Channel]
+    Console --> Model[Create Model]
+    Console --> Key[Create Gateway API Key]
+    Client[Client App] --> Proxy[Proxy :3002]
+    Proxy --> Resolve[Resolve API Key, Channel, Model]
+    Resolve --> Provider[Upstream Provider]
+    Provider --> Proxy
+    Proxy --> Client
+```
 
-Fabric's binary reads a file named `config.yaml`. Which file you edit depends on how you start Fabric:
+1. Start Fabric.
+2. Open the Web Console on `http://localhost:9090`.
+3. Sign in through OIDC if OAuth is enabled.
+4. Create a channel for the upstream provider.
+5. Create or select a model under that channel.
+6. Create a Gateway API Key.
+7. Send client traffic to the Proxy Server with `Authorization: Bearer <gateway-key>`.
 
-- **Docker Compose**: edit `configs/config.docker.yaml`. The tracked `compose.yaml` mounts it as `/app/configs/config.yaml` inside the Fabric container.
-- **Local Go run**: edit `configs/config.yaml`. This is the default file read by `go run ./cmd/gateway` from the repository.
+## 2. Configuration
 
-Docker users do not need to create a separate `configs/config.yaml` before starting Fabric.
+### 2.1 Configuration Files
 
-The Docker configuration currently looks like this:
+Fabric reads a file named `config.yaml`. Which source file you edit depends on startup mode:
+
+| Startup mode | File to edit | Runtime path |
+| --- | --- | --- |
+| Docker Compose | `configs/config.docker.yaml` | Mounted as `/app/configs/config.yaml` |
+| Local Go run | `configs/config.yaml` | Read from the local `configs/` directory |
+
+### 2.2 Core Fields
 
 ```yaml
 proxyAddr: 3002
 adminAddr: 9090
 logLevel: info
+timeZone: Asia/Shanghai
 
 db:
   addr: postgres
@@ -71,278 +93,196 @@ log:
   compress: true
 ```
 
-Configuration reference:
+| Field | Meaning |
+| --- | --- |
+| `proxyAddr` | Proxy server listen port. Clients call provider APIs through this port. |
+| `adminAddr` | Admin server listen port for the Web Console and connect-go APIs. |
+| `logLevel` | Zap log level, for example `info`. |
+| `timeZone` | Time zone used by usage service date handling. |
+| `db.*` | PostgreSQL connection and pool settings. |
+| `log.*` | Log rotation settings. |
 
-- `proxyAddr`: proxy server listen port. Clients call OpenAI-compatible APIs through this port. Docker exposes it as `3002`.
-- `adminAddr`: admin server listen port. connect-go management APIs are exposed through this port. Docker exposes it as `9090`.
-- `logLevel`: logging level, for example `info`.
-- `db.addr`: PostgreSQL host. In Docker Compose this is the service name `postgres`.
-- `db.user`: PostgreSQL user. In Docker Compose this must match `POSTGRES_USER` in `compose.yaml`.
-- `db.port`: PostgreSQL port.
-- `db.dbName`: PostgreSQL database name. In Docker Compose this must match `POSTGRES_DB` in `compose.yaml`.
-- `db.password`: PostgreSQL password. In Docker Compose this must match `POSTGRES_PASSWORD` in `compose.yaml`.
-- `db.maxIdle`: maximum idle database connections.
-- `db.maxOpen`: maximum open database connections.
-- `db.maxLifeTime`: maximum database connection lifetime.
-- `log.maxSize`: maximum size of one rotated log file.
-- `log.maxBackups`: maximum number of retained rotated log files.
-- `log.maxAge`: maximum age of retained log files.
-- `log.compress`: whether to compress rotated log files.
+### 2.3 OAuth / OIDC
 
-### 1.4 Local Go Run
-
-Fabric reads `configs/config.yaml` by default. A typical configuration looks like this:
+Docker configuration currently includes an OAuth example:
 
 ```yaml
-proxyAddr: 3002
-adminAddr: 9090
-logLevel: info
-
-db:
-  addr: 127.0.0.1
-  user: postgres
-  port: 5432
-  dbName: dbexample
-  password: "your-password"
-  maxIdle: 20
-  maxOpen: 100
-  maxLifeTime: 1h
-
-log:
-  maxSize: 100
-  maxBackups: 10
-  maxAge: 30
-  compress: true
+oauth:
+  enabled: true
+  issuerURL: "http://casdoor.localhost:8000/.well-known/openid-configuration"
+  clientID: "your-client-id"
+  clientSecret: "your-client-secret"
+  redirectURL: "http://localhost:9090/auth/callback"
+  scopes:
+    - openid
+    - email
+    - profile
+  sessionSecret: "replace-with-at-least-32-characters"
 ```
 
-Field reference:
+When `oauth.enabled` is true:
 
-- `proxyAddr`: proxy server listen port. Clients call OpenAI-compatible APIs through this port.
-- `adminAddr`: admin server listen port. connect-go management APIs are exposed through this port.
-- `logLevel`: logging level.
-- `db.addr`: PostgreSQL host.
-- `db.user`: PostgreSQL user.
-- `db.port`: PostgreSQL port.
-- `db.dbName`: database name.
-- `db.password`: PostgreSQL password.
-- `db.maxIdle`: maximum idle connections.
-- `db.maxOpen`: maximum open connections.
-- `db.maxLifeTime`: maximum connection lifetime.
-- `log.maxSize`, `log.maxBackups`, `log.maxAge`, `log.compress`: log rotation settings.
+- `issuerURL`, `clientID`, `clientSecret`, `redirectURL`, and `sessionSecret` are required.
+- `sessionSecret` must be at least 32 characters.
+- `redirectURL` must point at the admin server callback path `/auth/callback`.
+- `/auth/login` starts the browser login flow.
+- `/auth/callback` completes the OIDC flow and writes the session cookie.
+- Admin APIs and Web Console pages require the authenticated session.
 
-Fire Wall dictionaries are managed from the Web Console, not from `config.yaml`. For local runs, the runtime store is created under `configs/sensitive/` on first startup.
+When `oauth.enabled` is false, the admin server uses a built-in system principal:
 
-#### Local Database
+- OpenID: `system`
+- Email: `system@fabric.local`
+- Role: `admin`
+- Permission: `fabric_admin`
 
-Create the database:
+Use OAuth for shared or production environments. OAuth-disabled mode is primarily useful for isolated local development.
+
+### 2.4 Local Run
+
+For local development without Docker:
+
+1. Start PostgreSQL.
+2. Create the configured database, for example:
 
 ```bash
 createdb dbexample
 ```
 
-Fabric runs migrations from `db/migrations/` during startup. The current migrations create and maintain these core tables:
-
-- `channels`
-- `api_keys`
-- `models`
-- `usage_logs`
-- `integral_logs`
-- `provider_tasks`
-
-The migrations do not seed default provider channels or models. In real deployments, configure or create a channel with a real `provider_key` and add required models through the management API or Admin Console.
-
-#### Local Start
+3. Edit `configs/config.yaml`.
+4. Run:
 
 ```bash
 make generate
 make run
 ```
 
-Default servers:
+## 3. Provider and Model Reference
 
-- Proxy Server: `http://localhost:3002`
-- Admin Server: `http://localhost:9090`
+### 3.1 API Formats
 
-### 1.5 Basic Integration Flow
+Channels select provider behavior with `api_format`.
 
-When running the integrated gateway directly, the recommended flow is:
+| Value | Constant | Provider behavior |
+| ---: | --- | --- |
+| `1` | `models.APIFormatOpenAI` | OpenAI-compatible APIs |
+| `2` | `models.APIFormatAlibabaBailian` | Alibaba Bailian video task APIs |
+| `3` | `models.APIFormatSeedance` | Seedance async video task APIs |
+| `4` | `models.APIFormatGoogle` | Google `/v1beta/interactions` |
+| `5` | `models.APIFormatExtrotec` | Extrotec image/video generation and task APIs |
 
-1. Clone the repository.
-2. Start Fabric with `docker compose up -d`.
-3. Confirm Proxy Server `http://localhost:3002` and Admin Server `http://localhost:9090` are reachable.
-4. Create or configure a Channel through the Admin API.
-5. Create a Model through the Admin API.
-6. Create a Gateway API Key through the Admin API.
-7. Let clients call the Proxy Server with the Gateway API Key.
+### 3.2 Model Types
 
-## 2. Management APIs
+| Value | Constant | Meaning |
+| ---: | --- | --- |
+| `1` | `models.ModelTypeText` | Text model |
+| `2` | `models.ModelTypeVideo` | Video model |
+| `3` | `models.ModelTypeImage` | Image model |
 
-Management APIs are exposed with connect-go. Proto definitions are located at:
+### 3.3 Provider Matrix
 
-- `proto/channel.proto`
-- `proto/model.proto`
-- `proto/apiKey.proto`
-- `proto/usage.proto`
+| Provider | API format | Main routes | Model validation | Structured usage |
+| --- | ---: | --- | --- | --- |
+| OpenAI-compatible | `1` | `/v1/chat/completions`, `/v1/responses`, and compatible pass-through routes | Generation requests validate configured model | Yes, with fallback for supported Chat/Responses paths |
+| Alibaba Bailian | `2` | `/api/v1/services/aigc/video-generation/video-synthesis`, `/api/v1/tasks/<task_id>` | Task creation validates configured model | No structured video usage logging currently |
+| Seedance | `3` | `/api/v3/contents/generations/tasks`, task query/delete under that prefix | Task creation validates configured model | Yes, only for Fabric-tracked successful tasks with positive `usage.completion_tokens` |
+| Google | `4` | `/v1beta/interactions` | Interaction requests validate configured model | Yes, from non-streaming response usage or `interaction.completed` SSE usage |
+| Extrotec | `5` | `/v1/video/generations`, `/v1/video/i2v`, `/v1/video/ref2v`, `/v1/images/generations`, `/v1/videos/<task_id>`, `/v1/videos/<task_id>/content` | Generation requests validate configured model | No structured usage logging currently |
 
-The Admin Server listens on `:9090` by default. connect-go handler paths are registered from generated code and usually follow this shape:
+## 4. Management APIs
 
-```text
-/proto.ChannelService/<Method>
-/proto.ModelService/<Method>
-/proto.ManageApiKeyService/<Method>
-/proto.UsageService/<Method>
-```
+Management APIs are connect-go services on the Admin Server. Browser requests are session-protected when OAuth is enabled.
 
-### 2.1 ChannelService
+Common paths:
 
-A Channel represents an upstream model service channel, including the upstream base URL, provider key, and API format.
+| Service | Path prefix |
+| --- | --- |
+| Auth | `/proto.AuthService/*` |
+| Channel admin | `/proto.ChannelAdminService/*` |
+| Channel client | `/proto.ChannelClientService/*` |
+| Model admin | `/proto.ModelAdminService/*` |
+| Model client | `/proto.ModelClientService/*` |
+| API key admin | `/proto.ApiKeyAdminService/*` |
+| API key client | `/proto.ApiKeyClientService/*` |
+| Usage | `/proto.UsageService/*` |
+| Integral logs | `/proto.IntegralLogService/*` |
+| Sensitive words | `/proto.SensitiveWordService/*` |
 
-Methods:
+### 4.1 Create Channels
 
-- `CreateChannel(CreateChannelRequest) returns (CreateChannelResponse)`
-- `ListChannels(ListChannelsRequest) returns (ListChannelsResponse)`
-- `ListActiveChannels(ListActiveChannelsRequest) returns (ListChannelsResponse)`
-- `UpdateChannelName(UpdateChannelNameRequest) returns (UpdateChannelResponse)`
-- `UpdateChannelStatus(UpdateChannelStatusRequest) returns (UpdateChannelResponse)`
-- `UpdateChannelBaseURL(UpdateChannelBaseURLRequest) returns (UpdateChannelResponse)`
-- `UpdateChannelAPIFormat(UpdateChannelAPIFormatRequest) returns (UpdateChannelResponse)`
-- `UpdateChannelProviderKey(UpdateChannelProviderKeyRequest) returns (UpdateChannelResponse)`
-
-`CreateChannelRequest` fields:
-
-- `channel_name`: channel name.
-- `base_url`: upstream service URL, for example `https://api.openai.com` (OpenAI), `https://dashscope.aliyuncs.com` (Alibaba Bailian), or your Seedance upstream base URL.
-- `api_format`: API format. `1` for OpenAI, `2` for Alibaba Bailian, `3` for Seedance.
-- `provider_key`: upstream provider API key.
-
-Update request fields:
-
-- `UpdateChannelNameRequest`: `channel_id`, `channel_name`.
-- `UpdateChannelStatusRequest`: `channel_id`, `status`. Current status values are `1` active, `2` banned, and `3` pending.
-- `UpdateChannelBaseURLRequest`: `channel_id`, `base_url`.
-- `UpdateChannelAPIFormatRequest`: `channel_id`, `api_format`.
-- `UpdateChannelProviderKeyRequest`: `channel_id`, `provider_key`.
-
-`UpdateChannelProviderKey` updates the stored upstream provider credential. `Channel` responses do not expose `provider_key`.
-
-Example for OpenAI:
+OpenAI-compatible:
 
 ```bash
-curl http://localhost:9090/proto.ChannelService/CreateChannel \
+curl http://localhost:9090/proto.ChannelAdminService/CreateChannel \
   -H "Content-Type: application/json" \
   -d '{
-    "channelName": "OpenAI",
+    "channelName": "openai-prod",
     "baseUrl": "https://api.openai.com",
     "apiFormat": 1,
     "providerKey": "sk-your-provider-key"
   }'
 ```
 
-Example for Alibaba Bailian:
+Alibaba Bailian:
 
 ```bash
-curl http://localhost:9090/proto.ChannelService/CreateChannel \
+curl http://localhost:9090/proto.ChannelAdminService/CreateChannel \
   -H "Content-Type: application/json" \
   -d '{
-    "channelName": "Bailian",
+    "channelName": "bailian-video",
     "baseUrl": "https://dashscope.aliyuncs.com",
     "apiFormat": 2,
     "providerKey": "sk-your-dashscope-key"
   }'
 ```
 
-Example for Seedance:
+Seedance:
 
 ```bash
-curl http://localhost:9090/proto.ChannelService/CreateChannel \
+curl http://localhost:9090/proto.ChannelAdminService/CreateChannel \
   -H "Content-Type: application/json" \
   -d '{
-    "channelName": "Seedance",
+    "channelName": "seedance-video",
     "baseUrl": "https://your-seedance-upstream.example.com",
     "apiFormat": 3,
     "providerKey": "sk-your-seedance-key"
   }'
 ```
 
-Use the upstream base URL assigned by your Seedance provider account. Fabric routes Seedance traffic through the configured channel `base_url`; it does not require a hardcoded Seedance base URL in `config.yaml`.
-
-Update channel name:
+Google:
 
 ```bash
-curl http://localhost:9090/proto.ChannelService/UpdateChannelName \
+curl http://localhost:9090/proto.ChannelAdminService/CreateChannel \
   -H "Content-Type: application/json" \
   -d '{
-    "channelId": 1,
-    "channelName": "openai-prod"
+    "channelName": "google-interactions",
+    "baseUrl": "https://generativelanguage.googleapis.com",
+    "apiFormat": 4,
+    "providerKey": "your-google-api-key"
   }'
 ```
 
-Update channel status:
+Extrotec:
 
 ```bash
-curl http://localhost:9090/proto.ChannelService/UpdateChannelStatus \
+curl http://localhost:9090/proto.ChannelAdminService/CreateChannel \
   -H "Content-Type: application/json" \
   -d '{
-    "channelId": 1,
-    "status": 1
+    "channelName": "extrotec-media",
+    "baseUrl": "https://your-extrotec-upstream.example.com",
+    "apiFormat": 5,
+    "providerKey": "sk-your-extrotec-key"
   }'
 ```
 
-Update channel base URL:
+Channel responses do not expose `providerKey`.
+
+### 4.2 Create Models
+
+Text model:
 
 ```bash
-curl http://localhost:9090/proto.ChannelService/UpdateChannelBaseURL \
-  -H "Content-Type: application/json" \
-  -d '{
-    "channelId": 1,
-    "baseUrl": "https://api.openai.com"
-  }'
-```
-
-Update channel API format:
-
-```bash
-curl http://localhost:9090/proto.ChannelService/UpdateChannelAPIFormat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "channelId": 1,
-    "apiFormat": 1
-  }'
-```
-
-Update channel provider key:
-
-```bash
-curl http://localhost:9090/proto.ChannelService/UpdateChannelProviderKey \
-  -H "Content-Type: application/json" \
-  -d '{
-    "channelId": 1,
-    "providerKey": "sk-new-provider-key"
-  }'
-```
-
-### 2.2 ModelService
-
-A Model represents an available model under a channel.
-
-Methods:
-
-- `GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse)`
-- `CreateModel(CreateModelRequest) returns (CreateModelResponse)`
-- `ListModels(ListModelsRequest) returns (ListModelsResponse)`
-- `ListCatalogModels(ListCatalogModelsRequest) returns (ListCatalogModelsResponse)`
-
-`CreateModelRequest` fields:
-
-- `model_name`: model name, for example `gpt-5.5` or `wan2.7-t2v-2026-06-12`.
-- `channel_id`: owning channel ID.
-- `status`: model status. The current active status is `1`.
-- `model_type`: model type. Text is `1`, Video is `2`.
-
-Example for a text model:
-
-```bash
-curl http://localhost:9090/proto.ModelService/CreateModel \
+curl http://localhost:9090/proto.ModelAdminService/CreateModel \
   -H "Content-Type: application/json" \
   -d '{
     "modelName": "gpt-5.5",
@@ -352,10 +292,10 @@ curl http://localhost:9090/proto.ModelService/CreateModel \
   }'
 ```
 
-Example for a Seedance video model:
+Video model:
 
 ```bash
-curl http://localhost:9090/proto.ModelService/CreateModel \
+curl http://localhost:9090/proto.ModelAdminService/CreateModel \
   -H "Content-Type: application/json" \
   -d '{
     "modelName": "doubao-seedance-2-0-260128",
@@ -365,28 +305,33 @@ curl http://localhost:9090/proto.ModelService/CreateModel \
   }'
 ```
 
-The `channelId` must point to a Seedance channel. Seedance catalog models are video models, so use `modelType: 2`.
-
-### 2.3 ManageApiKeyService
-
-A Gateway API Key is the key downstream applications use when calling the Fabric Proxy Server. It is not the upstream provider key.
-
-Methods:
-
-- `CreateApiKey(CreateApiKeyRequest) returns (CreateApiKeyResponse)`
-- `RevokeApiKey(RevokeApiKeyRequest) returns (RevokeApiKeyResponse)`
-- `ListApiKeysByChannelID(ListApiKeysByChannelIDRequest) returns (ListApiKeysResponse)`
-- `ListApiKeysByChannelName(ListApiKeysByChannelNameRequest) returns (ListApiKeysResponse)`
-
-`CreateApiKeyRequest` fields:
-
-- `key_name`: key name.
-- `channel_id`: bound channel ID.
-
-Example:
+Image model:
 
 ```bash
-curl http://localhost:9090/proto.ManageApiKeyService/CreateApiKey \
+curl http://localhost:9090/proto.ModelAdminService/CreateModel \
+  -H "Content-Type: application/json" \
+  -d '{
+    "modelName": "Z-imageturbo-t2i",
+    "channelId": 5,
+    "status": 1,
+    "modelType": 3
+  }'
+```
+
+Use `ListCatalogModels` to inspect the built-in catalog for restricted API formats:
+
+```bash
+curl http://localhost:9090/proto.ModelAdminService/ListCatalogModels \
+  -H "Content-Type: application/json" \
+  -d '{"apiFormat": 5}'
+```
+
+### 4.3 Create Gateway API Keys
+
+A Gateway API Key is the downstream key clients send to Fabric. It is not the upstream provider key stored on the channel.
+
+```bash
+curl http://localhost:9090/proto.ApiKeyAdminService/CreateApiKey \
   -H "Content-Type: application/json" \
   -d '{
     "keyName": "local-dev",
@@ -394,23 +339,15 @@ curl http://localhost:9090/proto.ManageApiKeyService/CreateApiKey \
   }'
 ```
 
-The response `rawKey` is returned only when the key is created. Save it securely. Use this `rawKey` when calling the Proxy Server.
+The raw key is returned only on creation. Store it securely and use it on Proxy Server requests:
 
-### 2.4 UsageService
+```text
+Authorization: Bearer hy_xxx
+```
 
-UsageService queries and records usage data.
+### 4.4 Usage and Sensitive APIs
 
-Methods:
-
-- `GetUsageByKeyID(GetUsageByKeyIDRequest) returns (GetUsageResponse)`
-- `GetUsageByKeyHash(GetUsageByKeyHashRequest) returns (GetUsageResponse)`
-- `GetUsageByChannelID(GetUsageByChannelIDRequest) returns (GetUsageResponse)`
-- `GetUsageByModelID(GetUsageByModelIDRequest) returns (GetUsageResponse)`
-- `GetUsageByDeadlineAndKeyHash(GetUsageByDeadlineAndKeyHashRequest) returns (GetUsageResponse)`
-- `GetUsageSummary(GetUsageSummaryRequest) returns (GetUsageResponse)`
-- `LogUsage(LogUsageRequest) returns (LogUsageResponse)`
-
-Query global usage summary:
+Usage summary:
 
 ```bash
 curl http://localhost:9090/proto.UsageService/GetUsageSummary \
@@ -418,11 +355,21 @@ curl http://localhost:9090/proto.UsageService/GetUsageSummary \
   -d '{}'
 ```
 
-## 3. Proxy Examples
+Fire Wall status:
 
-Clients call the Fabric Proxy Server with a Fabric-issued Gateway API Key. Fabric resolves the bound Channel and injects the provider key when forwarding the request upstream.
+```bash
+curl http://localhost:9090/proto.SensitiveWordService/GetSensitiveWordStatus \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
 
-### 3.1 OpenAI Chat Completions
+The Web Console is the preferred interface for sensitive-word dictionaries because it manages runtime storage and reload behavior.
+
+## 5. Proxy Examples
+
+Clients call the Proxy Server with a Fabric-issued Gateway API Key. Fabric resolves the channel and model, injects the upstream provider credential, and forwards to the selected provider implementation.
+
+### 5.1 OpenAI Chat Completions
 
 ```bash
 curl http://localhost:3002/v1/chat/completions \
@@ -436,14 +383,7 @@ curl http://localhost:3002/v1/chat/completions \
   }'
 ```
 
-Notes:
-
-- `hy_xxx` is a Gateway API Key created by Fabric.
-- `hy_xxx` is not an OpenAI provider key.
-- The provider key is stored in the Channel and injected by Fabric during forwarding.
-- The requested `model` must exist under the bound Channel and must be enabled.
-
-### 3.2 OpenAI Streaming Chat Completions
+Streaming:
 
 ```bash
 curl http://localhost:3002/v1/chat/completions \
@@ -458,7 +398,7 @@ curl http://localhost:3002/v1/chat/completions \
   }'
 ```
 
-For streaming chat completions, Fabric injects:
+For streaming Chat Completions, Fabric injects:
 
 ```json
 {
@@ -468,9 +408,36 @@ For streaming chat completions, Fabric injects:
 }
 ```
 
-This allows Fabric to capture usage from the streaming response.
+### 5.2 OpenAI Responses
 
-### 3.3 Alibaba Bailian Text-to-Video Task Creation
+Non-streaming:
+
+```bash
+curl http://localhost:3002/v1/responses \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "input": "Write a short status update."
+  }'
+```
+
+Streaming:
+
+```bash
+curl http://localhost:3002/v1/responses \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5",
+    "stream": true,
+    "input": "Write a short status update."
+  }'
+```
+
+### 5.3 Alibaba Bailian Text-to-Video
+
+Task creation:
 
 ```bash
 curl http://localhost:3002/api/v1/services/aigc/video-generation/video-synthesis \
@@ -489,23 +456,18 @@ curl http://localhost:3002/api/v1/services/aigc/video-generation/video-synthesis
   }'
 ```
 
-Notes:
-- The `Authorization` header expects a Gateway API Key bound to an Alibaba Bailian API format channel.
-- Fabric automatically injects `X-DashScope-Async: enable` and the provider key when forwarding.
-- The `model` must be configured under the bound channel.
-
-### 3.4 Alibaba Bailian Task Fetch
+Task fetch:
 
 ```bash
 curl http://localhost:3002/api/v1/tasks/<task_id> \
   -H "Authorization: Bearer hy_xxx"
 ```
 
-Notes:
-- Replace `<task_id>` with the ID returned by the task creation request.
-- The same Gateway API Key must be used.
+Fabric injects `X-DashScope-Async: enable` on Bailian video synthesis requests. Alibaba Bailian video task responses are proxied and audited, but structured video usage logging is not currently recorded.
 
-### 3.5 Seedance Video Task Creation
+### 5.4 Seedance Tasks
+
+Task creation:
 
 ```bash
 curl http://localhost:3002/api/v3/contents/generations/tasks \
@@ -522,165 +484,322 @@ curl http://localhost:3002/api/v3/contents/generations/tasks \
   }'
 ```
 
-Notes:
-- The `Authorization` header expects a Gateway API Key bound to a Seedance API format channel.
-- The `model` must be configured under the bound Seedance channel and must be enabled.
-- Fabric checks `content[]` entries where `type` is `text` before forwarding the request upstream.
-- If the upstream creation response contains a task ID, Fabric stores a provider task record for later lifecycle and usage handling.
-
-### 3.6 Seedance Task Query
+Task query:
 
 ```bash
 curl http://localhost:3002/api/v3/contents/generations/tasks/<task_id> \
   -H "Authorization: Bearer hy_xxx"
 ```
 
-Notes:
-- Replace `<task_id>` with the ID returned by the Seedance task creation request.
-- The same Gateway API Key must be used.
-- Fabric updates usage only for Seedance tasks that were created through Fabric and are already tracked in `provider_tasks`.
+Task delete:
 
-## 4. Usage Logging
-
-Fabric currently records usage for OpenAI-compatible requests and for tracked successful Seedance task responses. Alibaba Bailian text-to-video requests are proxied successfully, but structured Alibaba Bailian video usage is not currently recorded.
-
-For non-streaming responses:
-
-- Fabric reads the upstream response body.
-- It extracts the `usage` field from the response JSON.
-- It writes the usage log asynchronously.
-
-For streaming responses:
-
-- Fabric wraps the response stream with a tracking reader.
-- It captures usage information from SSE events.
-- It writes the usage log to `usage_logs`.
-
-Usage logs are associated with:
-
-- Gateway API Key
-- Channel
-- Model
-- Prompt tokens
-- Completion tokens
-- Created time
-
-For Seedance asynchronous video tasks:
-
-- Fabric creates a `provider_tasks` row only when a Seedance generation request passes through Fabric and the upstream creation response includes a task ID.
-- Later Seedance task query responses update only existing provider task records; querying a task ID that was not created through Fabric does not create a provider task or usage log.
-- Usage is recorded only when a tracked task reaches a successful status and the response includes a positive `usage.completion_tokens` value.
-- Seedance usage rows use `prompt_tokens = 0` and `completion_tokens = usage.completion_tokens`.
-- `usage.total_tokens` alone is intentionally ignored.
-- Repeated or concurrent polling for the same completed Seedance task records usage at most once.
-
-## 5. Fire Wall
-
-Fire Wall is managed from the Web Console. Use the `Fire Wall` page to enable detection, create dictionaries, set model scopes, and manage words. Docker Compose persists Fire Wall runtime data in the `fabric-sensitive` named volume. Local runs create the runtime store under `configs/sensitive/`.
-
-### 5.1 Detection Behavior
-
-- Fabric checks input prompts before forwarding requests upstream.
-- Fabric checks non-streaming model outputs before returning responses.
-- For Seedance generation requests, Fabric checks `content[]` entries where `type` is `text` and `text` is non-empty before forwarding upstream.
-- Seedance image, video, and audio URL fields are not checked by this text-entry behavior.
-- If an input prompt matches, Fabric returns `403` with `prompt rejected`.
-- If a non-streaming model output matches, Fabric returns `422` with `model output rejected, please change your prompt`.
-- Streaming output sensitive-word detection is not currently applied to streamed response chunks.
-- If a runtime reload fails because the updated Fire Wall files are invalid, Fabric keeps using the previous rules and logs the reload error.
-
-## 6. Library Usage
-
-One of Fabric's goals is to help downstream projects avoid rebuilding AI gateway primitives. Besides running the integrated gateway directly, you can reuse capabilities by layer.
-
-### 6.1 Use Only the Core Layer
-
-Use this when you already have a business system and only want provider proxying.
-
-Relevant directories:
-
-- `core/proxy/`
-- `core/providers/`
-
-Reusable capabilities:
-
-- OpenAI-compatible reverse proxy.
-- Alibaba Bailian task API proxy.
-- Seedance asynchronous task API proxy.
-- Provider request rewrite hooks.
-- Upstream base URL and provider key injection.
-
-### 6.2 Use Only the Business Layer
-
-Use this when you already have a proxy or gateway and only want business governance modules.
-
-Relevant directories:
-
-- `business/usage/`
-- `business/sensitive/`
-
-Reusable capabilities:
-
-- OpenAI usage extraction.
-- Streaming usage tracking.
-- Sensitive-word detector.
-- OpenAI prompt/output text extraction.
-- Model-scoped dictionary policy.
-
-Business-layer packages can be imported directly from downstream Go services:
-
-```go
-import (
-    openaiusage "github.com/HyperToken-dev/fabric/business/usage/openai"
-    "github.com/HyperToken-dev/fabric/business/sensitive"
-    sensitiveopenai "github.com/HyperToken-dev/fabric/business/sensitive/openai"
-)
+```bash
+curl -X DELETE http://localhost:3002/api/v3/contents/generations/tasks/<task_id> \
+  -H "Authorization: Bearer hy_xxx"
 ```
 
-#### 6.2.1 Non-Streaming Usage Extraction
+Fabric tracks only tasks created through Fabric. Usage is recorded at most once when a tracked task reaches a successful status and the response includes positive `usage.completion_tokens`.
 
-Use `business/usage/openai` when your service already has the upstream OpenAI-compatible response body and wants to extract token usage without running Fabric's integrated gateway:
+### 5.5 Google Interactions
+
+```bash
+curl http://localhost:3002/v1beta/interactions \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3-flash-preview",
+    "input": "Summarize the current deployment status."
+  }'
+```
+
+Fabric forwards Google requests with `x-goog-api-key` using the provider key stored on the channel and removes downstream `Authorization` from the upstream request.
+
+### 5.6 Extrotec
+
+Text-to-video:
+
+```bash
+curl http://localhost:3002/v1/video/generations \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "MiniMax-H3",
+    "prompt": "A cinematic city skyline at sunrise"
+  }'
+```
+
+Image-to-video:
+
+```bash
+curl http://localhost:3002/v1/video/i2v \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "MiniMax-H3",
+    "prompt": "Animate this scene gently",
+    "image_url": "https://example.com/input.png"
+  }'
+```
+
+Reference-to-video:
+
+```bash
+curl http://localhost:3002/v1/video/ref2v \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "MiniMax-H3",
+    "prompt": "Use these references for style"
+  }'
+```
+
+Image generation:
+
+```bash
+curl http://localhost:3002/v1/images/generations \
+  -H "Authorization: Bearer hy_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Z-imageturbo-t2i",
+    "prompt": "A clean product render on a white background"
+  }'
+```
+
+Task status:
+
+```bash
+curl http://localhost:3002/v1/videos/<task_id> \
+  -H "Authorization: Bearer hy_xxx"
+```
+
+Task content:
+
+```bash
+curl http://localhost:3002/v1/videos/<task_id>/content \
+  -H "Authorization: Bearer hy_xxx"
+```
+
+Extrotec generation requests validate `model` and inspect `prompt`, `forward_prompt`, and `negative_prompt` for input sensitive words. Status and content fetches are proxied without model validation.
+
+## 6. Usage Logging
+
+Usage rows are associated with Gateway API Key, channel, model, prompt tokens, completion tokens, and creation time. Provider request/response audit data is recorded separately in `integral_logs`.
+
+| Provider | Usage behavior |
+| --- | --- |
+| OpenAI-compatible | Reads upstream `usage` from non-streaming and SSE responses. If usage is missing on supported Chat Completions or Responses paths, Fabric can estimate fallback prompt/completion tokens from request and output text. |
+| Alibaba Bailian | No structured video usage logging currently. Integral logs still record provider request/response audit data. |
+| Seedance | Records completion tokens only for Fabric-tracked successful tasks with positive `usage.completion_tokens`; ignores `usage.total_tokens` alone. |
+| Google | Extracts interaction usage from non-streaming response `usage` or streaming `interaction.completed` events. |
+| Extrotec | No structured usage logging currently. Integral logs still record provider request/response audit data. |
+
+OpenAI Responses nuance:
+
+- Sensitive output extraction checks non-streaming `output_text` and `output[*].content[*].text`.
+- Usage fallback prefers `output_text` when present and falls back to `output[*].content` only when `output_text` is empty.
+- Nested visible text is recursively inspected where supported by the extractor.
+
+## 7. Fire Wall
+
+Fire Wall is managed from the Web Console for the integrated gateway. Use the `Fire Wall` page to enable detection, create dictionaries, set model scopes, and manage words.
+
+Runtime storage:
+
+| Startup mode | Runtime store |
+| --- | --- |
+| Docker Compose | `fabric-sensitive` named volume |
+| Local Go run | `configs/sensitive/` |
+
+Detection behavior:
+
+| Provider | Input checks | Output checks |
+| --- | --- | --- |
+| OpenAI-compatible | Chat Completions messages, Responses instructions/input, and generic model extraction where supported | Non-streaming Chat/Responses text; SSE Chat/Responses text events |
+| Alibaba Bailian | Not currently documented as Fire Wall checked by integrated gateway | No structured output check documented |
+| Seedance | `content[]` entries where `type == "text"` | No output check documented |
+| Google | Interaction `input` string or text content entries | No output check documented |
+| Extrotec | `prompt`, `forward_prompt`, `negative_prompt` | No output check documented |
+
+OpenAI-compatible SSE output safety:
+
+```mermaid
+flowchart TB
+    Upstream[Upstream SSE] --> Decode[Core decodes response stream]
+    Decode --> Parse[Parse complete SSE events]
+    Parse --> Lanes[Track text lanes and retained tails]
+    Lanes --> Detect[Run Fire Wall detection]
+    Detect -->|allowed| Rewrite[Rewrite approved text events]
+    Detect -->|rejected| Refusal[Emit policy_violation sensitive_output event]
+    Rewrite --> Client[Client]
+    Refusal --> Client
+```
+
+Chat Completions streaming uses `choices[*].index` as the text lane. Responses streaming uses `item_id`, `output_index`, and `content_index` for text delta lanes. Snapshot events are checked as full text before matching retained tails are released.
+
+If input text matches, Fabric returns `403` with `prompt rejected`. If non-streaming output matches, Fabric returns `422` with `model output rejected, please change your prompt`. If OpenAI-compatible SSE output matches, Fabric emits an SSE error event with code `sensitive_output` and stops the upstream stream.
+
+If a runtime Fire Wall update fails because the new files are invalid, Fabric keeps the previous valid rules active and returns or logs the reload error.
+
+## 8. Core Layer Reuse
+
+Use Core when your service already owns authentication, model selection, persistence, billing, and policy decisions, but you want Fabric's provider-aware proxy primitives.
+
+Core does not own:
+
+- Gateway API key management.
+- Channel or model persistence.
+- Model validation.
+- Usage log persistence.
+- Integral log persistence.
+- Business rejection policy.
+
+### 8.1 Generic Proxy
 
 ```go
-parsedUsage, err := openaiusage.ExtractNonStreaming(rawResponseBody, contentEncoding)
+package main
+
+import (
+    "net/http"
+
+    coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
+)
+
+var proxy = coreproxy.New(coreproxy.Options{
+    OnComplete: func(resp *http.Response, decodedBody []byte) {
+        // Persist usage, audit, or diagnostics in your own system.
+    },
+})
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    proxy.ServeHTTP(w, r, coreproxy.Upstream{
+        BaseURL: "https://api.openai.com",
+        APIKey:  "sk-upstream-provider-key",
+    })
+}
+```
+
+### 8.2 Provider Wrappers
+
+Provider wrappers configure protocol-specific defaults:
+
+| Wrapper | Default behavior |
+| --- | --- |
+| `core/providers/openai.New` | Injects `stream_options.include_usage=true` for streaming `/v1/chat/completions` requests. |
+| `core/providers/Alibaba.New` | Injects `X-DashScope-Async: enable` for Bailian video synthesis requests. |
+| `core/providers/google.New` | Uses `x-goog-api-key` and removes upstream `Authorization`. |
+| `core/providers/seedance.New` | Uses generic proxy behavior. |
+| `core/providers/extrotec.New` | Uses generic proxy behavior. |
+
+### 8.3 Stream Transform
+
+`StreamTransformFunc` can create a per-response `StreamProcessor` for SSE responses.
+
+```mermaid
+sequenceDiagram
+    participant Upstream
+    participant Core
+    participant Processor
+    participant Client
+
+    Upstream->>Core: encoded SSE bytes
+    Core->>Core: decode Content-Encoding
+    Core->>Processor: Write(decoded chunk)
+    Processor-->>Core: StreamResult{Data, Stop}
+    Core->>Core: re-encode original Content-Encoding
+    Core-->>Client: transformed SSE bytes
+    Core->>Processor: Finish() on EOF
+```
+
+`StreamResult.Data` is decoded output that Core re-encodes before sending to the client. `StreamResult.Stop` closes upstream early after final output is sent. The processor instance is owned by one response stream and is called serially.
+
+`OnComplete` receives decoded upstream stream bytes before transformation, so usage parsers can inspect provider-native events even when client-visible output is rewritten.
+
+## 9. Business Layer Reuse
+
+Use Business packages when you want Fabric's usage or sensitive-word primitives inside another service. Business packages do not send HTTP responses, persist usage rows, create audit records, or decide billing. Your service owns those side effects.
+
+### 9.1 Usage Primitives
+
+OpenAI-compatible:
+
+```go
+import openaiusage "github.com/HyperToken-dev/fabric/business/usage/openai"
+
+parsedUsage, err := openaiusage.ExtractNonStreamingWithFallback(req, rawBody, contentEncoding, model)
 if err != nil {
     return err
 }
-
-// Persist, bill, or audit usage in your own system.
 recordUsage(parsedUsage.PromptTokens, parsedUsage.CompletionTokens)
 ```
 
-`rawResponseBody` is the complete upstream response body. `contentEncoding` should be the response `Content-Encoding` value, for example `""`, `"identity"`, `"gzip"`, or `"br"`.
-
-#### 6.2.2 Streaming Usage Tracking
-
-For streaming OpenAI-compatible responses, wrap the upstream response body before returning it to your caller:
+Streaming OpenAI-compatible responses:
 
 ```go
-trackedBody := openaiusage.NewTrackingReader(upstreamBody, contentEncoding, func(parsedUsage *usage.Usage) {
-    // This callback runs when stream usage is discovered.
-    recordUsage(parsedUsage.PromptTokens, parsedUsage.CompletionTokens)
-})
+import (
+    "github.com/HyperToken-dev/fabric/business/usage"
+    openaiusage "github.com/HyperToken-dev/fabric/business/usage/openai"
+)
 
+trackedBody := openaiusage.NewTrackingReaderWithFallbackAndErrors(
+    req,
+    upstreamBody,
+    contentEncoding,
+    model,
+    func(parsedUsage *usage.Usage) {
+        recordUsage(parsedUsage.PromptTokens, parsedUsage.CompletionTokens)
+    },
+    func(decodedBody []byte) {
+        recordAudit(decodedBody)
+    },
+    func(err error) {
+        recordUsageParseError(err)
+    },
+)
 defer trackedBody.Close()
 ```
 
-Your proxy still streams `trackedBody` to the client. The Business layer only parses usage and invokes the callback; your application decides where to store usage records and how to handle callback errors.
-
-If you need the `usage.Usage` type in your callback signature, import it from:
+Google interactions:
 
 ```go
-import "github.com/HyperToken-dev/fabric/business/usage"
+import googleusage "github.com/HyperToken-dev/fabric/business/usage/google"
+
+parsedUsage, err := googleusage.ExtractInteraction(rawBody)
+if err != nil {
+    return err
+}
+recordUsage(parsedUsage.PromptTokens, parsedUsage.CompletionTokens)
 ```
 
-#### 6.2.3 Sensitive-Word Detection
-
-Use `business/sensitive` when you want Fabric's dictionary matching and model-scoped policy behavior inside your own request flow.
-
-For static in-memory dictionaries, construct a detector directly:
+Google interaction SSE:
 
 ```go
+parsedUsage, err := googleusage.ExtractInteractionStreaming(decodedBody)
+if err != nil {
+    return err
+}
+```
+
+Seedance task usage:
+
+```go
+import seedanceusage "github.com/HyperToken-dev/fabric/business/usage/seedance"
+
+parsedUsage, err := seedanceusage.ExtractTaskUsage(taskResponseBody)
+if err != nil {
+    return err
+}
+if parsedUsage != nil {
+    recordUsage(0, parsedUsage.CompletionTokens)
+}
+```
+
+### 9.2 Sensitive-Word Primitives
+
+In-memory detector:
+
+```go
+import "github.com/HyperToken-dev/fabric/business/sensitive"
+
 detector, err := sensitive.NewDetector(
     sensitive.Dictionary{
         Name:         "default-block-list",
@@ -692,49 +811,76 @@ if err != nil {
     return err
 }
 
-result := detector.Detect("gpt-5.5", "user prompt containing secret")
+result := detector.Detect("gpt-5.5", "prompt containing secret")
 if result.Rejected() {
     rejectRequest(result.Matches)
 }
 ```
 
-`EffectModels` scopes a dictionary to specific model names. Leave it empty to apply that dictionary to every model passed to `Detect`. Dictionary names are included in match results so downstream systems can audit which rule matched.
-
-For runtime updates, use the reloadable policy from `business/sensitive` and provide your own source callback:
+File-backed detector:
 
 ```go
-policy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
-
-source := func(ctx context.Context) (sensitive.SourceState, error) {
-	 detector, err := sensitive.NewDetector(sensitive.Dictionary{
-	     Name:         "default-block-list",
-	     Words:        []string{"blocked phrase", "secret"},
-	     EffectModels: []string{"gpt-5.5"},
-	 })
-	 if err != nil {
-	     return sensitive.SourceState{}, err
-    }
-    return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: 1}, nil
-}
-
-_, err := policy.Reload(ctx, source)
+detector, err := sensitive.LoadDetectorFromFiles("configs/sensitive", []sensitive.DictionaryFileConfig{
+    {
+        Name:            "default-block-list",
+        EffectModels:    []string{"gpt-5.5"},
+        KeywordFileList: []string{"default"},
+    },
+})
 if err != nil {
     return err
 }
 ```
 
-`Reload` publishes a new snapshot only after the source callback succeeds. If a later reload fails, callers can keep the existing policy active and log the returned error.
-
-#### 6.2.4 OpenAI Prompt and Output Extraction
-
-Use `business/sensitive/openai` when your proxy receives OpenAI-compatible requests and responses but wants to apply its own rejection policy:
+Reloadable policy:
 
 ```go
+policy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
+
+_, err := policy.Reload(ctx, func(ctx context.Context) (sensitive.SourceState, error) {
+    detector, err := sensitive.NewDetector(sensitive.Dictionary{
+        Name:  "default-block-list",
+        Words: []string{"blocked phrase", "secret"},
+    })
+    if err != nil {
+        return sensitive.SourceState{}, err
+    }
+    return sensitive.SourceState{Enabled: true, Detector: detector, DictionaryCount: 1}, nil
+})
+if err != nil {
+    return err
+}
+```
+
+Watch reload paths:
+
+```go
+err := sensitive.Watch(ctx, sensitive.WatchOptions{
+    Paths: []string{"configs/sensitive"},
+    Reload: func(ctx context.Context) error {
+        _, err := policy.Reload(ctx, loadSourceState)
+        return err
+    },
+})
+```
+
+Provider text extraction:
+
+| Package | Use |
+| --- | --- |
+| `business/sensitive/openai` | Extract OpenAI-compatible prompt text, non-streaming output text, and streaming text events. |
+| `business/sensitive/google` | Extract Google interaction input text. |
+| `business/sensitive/extrotec` | Extract Extrotec `prompt`, `forward_prompt`, and `negative_prompt`. |
+
+Example:
+
+```go
+import sensitiveopenai "github.com/HyperToken-dev/fabric/business/sensitive/openai"
+
 promptReq, err := sensitiveopenai.ExtractPromptRequest(req)
 if err != nil {
     return err
 }
-
 for _, prompt := range promptReq.Prompts {
     if detector.Detect(promptReq.Model, prompt).Rejected() {
         rejectRequest(nil)
@@ -742,137 +888,20 @@ for _, prompt := range promptReq.Prompts {
 }
 ```
 
-`ExtractPromptRequest` reads and restores `req.Body`, so the request can still be forwarded upstream after inspection.
+`ExtractPromptRequest` reads and restores `req.Body`, so the request can still be forwarded after inspection.
 
-For non-streaming upstream responses, extract output text before returning the response to your caller:
+## 10. Troubleshooting
 
-```go
-texts, err := sensitiveopenai.ExtractOutputTexts(req, rawResponseBody)
-if err != nil {
-    return err
-}
-
-for _, text := range texts {
-    if detector.Detect(promptReq.Model, text).Rejected() {
-        rejectResponse(nil)
-    }
-}
-```
-
-Streaming output sensitive-word detection is not provided by these helpers today; downstream callers must implement chunk-level inspection themselves if they need it.
-
-#### 6.2.5 Business-Layer Boundaries
-
-When used as a library, the Business layer provides parsing, extraction, detection, and callback hooks only. Your application remains responsible for:
-
-- HTTP routing and request lifecycle.
-- Forwarding requests to upstream providers.
-- Returning or streaming responses to clients.
-- Persisting usage records.
-- Billing, quota, audit, or reporting side effects.
-- Choosing whether matched sensitive text rejects, warns, logs, or triggers another policy.
-- Logging and error handling around your own storage or policy systems.
-
-Fabric's integrated gateway wires these pieces to `internal/router/`, `internal/storage/`, and management APIs. Downstream projects that import only `business/...` packages do not need to use Fabric's PostgreSQL schema, Admin Server, or integrated gateway process.
-
-### 6.3 Use the Integrated Gateway
-
-Use this when you do not want to compose modules yourself.
-
-Relevant directories:
-
-- `cmd/gateway/`
-- `internal/router/`
-- `internal/server/`
-- `internal/service/`
-- `internal/storage/`
-
-Usage flow:
-
-1. Start with `docker compose up -d` or run locally with `go run ./cmd/gateway` after preparing PostgreSQL.
-2. Configure Channel, Model, and Gateway API Key through the Admin API.
-3. Let applications call the Fabric Proxy Server with OpenAI-compatible, Alibaba Bailian, or Seedance requests through the Gateway API Key bound to the appropriate channel.
-
-## 7. Troubleshooting
-
-### Proxy returns `missing provider key`
-
-The bound Channel does not have an upstream provider key. Provide `provider_key` when creating or updating the Channel through the Admin API.
-
-### Proxy returns `unsupported model`
-
-The requested model is not configured under the current Channel, or the model is disabled. Create or inspect model configuration through `ModelService`. Official catalog models are only candidates; you must explicitly add a model to your channel before clients can request it.
-
-### Proxy returns `unsupported alibaba bailian path`
-
-The requested path is not `video-synthesis` or `tasks/`. Fabric restricts the Alibaba Bailian proxy surface to explicitly supported task paths.
-
-### Proxy returns `unsupported seedance path`
-
-The requested path is not under `/api/v3/contents/generations/tasks`, or the method is not supported for that Seedance task route. Fabric supports Seedance task creation with `POST /api/v3/contents/generations/tasks` and task query/delete paths under that prefix.
-
-### Bailian Video Usage is not shown
-
-Alibaba Bailian text-to-video requests are proxied successfully, but Fabric does not currently record video usage. This is a known limitation.
-
-### Seedance Usage is not shown
-
-Seedance usage is recorded only from tracked Fabric-created tasks. If no usage appears, check whether:
-
-- The original Seedance task creation request passed through Fabric and returned a provider task ID.
-- The task query response reached a successful status.
-- The successful response included a positive `usage.completion_tokens` value.
-- The response only included `usage.total_tokens`, which Fabric intentionally ignores for Seedance usage accounting.
-- The task ID was created outside Fabric; unknown task queries produce audit logs but do not create provider task or usage records.
-
-### Proxy returns `invalid api key`
-
-The Gateway API Key does not exist or has been revoked. Create a new API Key through `ManageApiKeyService`.
-
-### Database connection fails
-
-For Docker Compose, check that PostgreSQL is healthy and that `configs/config.docker.yaml` matches the PostgreSQL environment in `compose.yaml`:
-
-- `db.addr` should be `postgres`.
-- `db.user` should match `POSTGRES_USER`.
-- `db.password` should match `POSTGRES_PASSWORD`.
-- `db.dbName` should match `POSTGRES_DB`.
-
-```bash
-docker compose ps
-```
-
-For local Go runs, check the `db` section in `configs/config.yaml`. Confirm PostgreSQL is running, the database exists, and the username/password are correct.
-
-## 8. Development and Generation Commands
-
-```bash
-go build ./...
-go vet ./...
-go test ./...
-go run ./cmd/gateway
-
-docker compose up -d
-docker compose down
-
-make generate
-make build
-make run
-make lint
-make test
-make sqlc-check
-```
-
-If you change database schema or queries, run:
-
-```bash
-sqlc generate
-```
-
-If you change proto files, run:
-
-```bash
-buf generate
-```
-
-If both change, run `sqlc generate` first, then `buf generate`.
+| Symptom | Check |
+| --- | --- |
+| `401 unauthorized` from Proxy Server | Client must send `Authorization: Bearer <gateway-key>`, not the upstream provider key. |
+| `403 channel disabled` | The API key's channel status must be active. |
+| `unsupported api format` | The channel `api_format` must map to a registered provider implementation. |
+| `unsupported model` | The requested model must exist under the channel and be enabled. Restricted catalogs must use known model names. |
+| Extrotec returns `unsupported extrotec path` | Use only the documented Extrotec routes in section 5.6. |
+| Google request returns `unsupported google path` | Use `POST /v1beta/interactions`. |
+| Image model appears unknown | Use `modelType: 3` for image models such as Extrotec image generation catalog entries. |
+| Admin redirects to `/auth/login` | OAuth is enabled and the browser session is missing or expired. |
+| Admin starts without login | OAuth is disabled, so Fabric uses the built-in system administrator principal. |
+| Fire Wall update fails | Fix the invalid dictionary/runtime data; Fabric keeps the previous valid rules active. |
+| OpenAI stream emits `sensitive_output` | The streamed model output matched Fire Wall output rules and Fabric closed the stream with a policy error. |

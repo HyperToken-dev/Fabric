@@ -1,0 +1,17 @@
+syntax = "proto3";
+package proto;
+option go_package = "github.com/HyperToken-dev/fabric/gen;proto";
+
+service ChannelClientService {
+    rpc ListChannels(ListClientChannelsRequest) returns(ListClientChannelsResponse);
+}
+
+message ClientChannel {
+    string channel_name = 1;
+}
+
+message ListClientChannelsRequest {}
+
+message ListClientChannelsResponse {
+    repeated ClientChannel channels = 1;
+}

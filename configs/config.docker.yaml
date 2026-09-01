@@ -19,3 +19,15 @@ log:
   maxBackups: 10
   maxAge: 30
   compress: true
+
+oauth:
+  enabled: true
+  issuerURL: "http://casdoor.localhost:8000/.well-known/openid-configuration"
+  clientID: "e289d5f6a25fee57ef2e" # Default
+  clientSecret: "6beb0ea6fe3cbbf6ec2d3853860ad8e68c013fd7" # Default
+  redirectURL: "http://localhost:9090/auth/callback" # path should always /auth/callback
+  scopes:
+    - openid
+    - email
+    - profile
+  sessionSecret: "37c7d2f241dd5f4f4c629ebf9da151e96ea9eb2db52b934dd22c7b186c5f64c2" # Change this secret if needed

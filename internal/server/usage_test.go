@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/DATA-DOG/go-sqlmock"
 	gen "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/adminauth"
 	"github.com/HyperToken-dev/fabric/internal/service"
 )
 
@@ -21,8 +23,8 @@ func TestUsageHandlersDelegateToService(t *testing.T) {
 
 	mock.ExpectQuery("FROM usage_logs").
 		WithArgs(int32(7), int32(100), int32(0)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "created_at"}))
-	resp, err := srv.GetUsageByKeyID(context.Background(), connect.NewRequest(&gen.GetUsageByKeyIDRequest{KeyId: 7}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "owner_openid", "created_at"}))
+	resp, err := srv.GetUsageByKeyID(adminServerTestContext(), connect.NewRequest(&gen.GetUsageByKeyIDRequest{KeyId: 7}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +45,7 @@ func TestUsageDashboardHandlerIsImplemented(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"total_prompt_tokens", "total_completion_tokens", "request_count"}).AddRow(0, 0, 0))
 	mock.ExpectQuery("DATE\\(created_at AT TIME ZONE").
 		WillReturnRows(sqlmock.NewRows([]string{"date", "total_prompt_tokens", "total_completion_tokens", "request_count"}))
-	resp, err := srv.GetUsageDashboard(context.Background(), connect.NewRequest(&gen.GetUsageDashboardRequest{}))
+	resp, err := srv.GetUsageDashboard(adminServerTestContext(), connect.NewRequest(&gen.GetUsageDashboardRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +63,93 @@ func TestUsageHandlerMapsServiceErrors(t *testing.T) {
 	srv := NewServer(nil, nil, nil, service.NewUsageService(db, time.UTC), nil, nil)
 
 	mock.ExpectQuery("FROM usage_logs").WillReturnError(context.DeadlineExceeded)
-	_, err = srv.GetUsageByKeyID(context.Background(), connect.NewRequest(&gen.GetUsageByKeyIDRequest{KeyId: 7}))
+	_, err = srv.GetUsageByKeyID(adminServerTestContext(), connect.NewRequest(&gen.GetUsageByKeyIDRequest{KeyId: 7}))
 	if connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("error code = %v, want internal", connect.CodeOf(err))
 	}
+}
+
+func TestClientApiKeyHandlerMapsBadChannelToInvalidArgument(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewClientServer(service.NewApiKeyService(db), nil, nil)
+
+	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE channel_name").
+		WithArgs("stale").
+		WillReturnError(sql.ErrNoRows)
+	_, err = srv.CreateApiKey(userServerTestContext(), connect.NewRequest(&gen.CreateClientApiKeyRequest{KeyName: "client", ChannelName: "stale"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %v, want invalid argument", connect.CodeOf(err))
+	}
+}
+
+func TestClientApiKeyHandlerMapsChannelLookupFailureToInternal(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewClientServer(service.NewApiKeyService(db), nil, nil)
+
+	mock.ExpectQuery("SELECT id, channel_name, base_url, provider_key, api_format, status, created_at FROM channels WHERE channel_name").
+		WithArgs("openai").
+		WillReturnError(context.DeadlineExceeded)
+	_, err = srv.CreateApiKey(userServerTestContext(), connect.NewRequest(&gen.CreateClientApiKeyRequest{KeyName: "client", ChannelName: "openai"}))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("error code = %v, want internal", connect.CodeOf(err))
+	}
+}
+
+func TestChannelHandlerMapsValidationErrorsToInvalidArgument(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewServer(nil, service.NewChannelService(db), nil, nil, nil, nil)
+
+	_, err = srv.CreateChannel(adminServerTestContext(), connect.NewRequest(&gen.CreateAdminChannelRequest{
+		ChannelName: " ",
+		BaseUrl:     "https://api.example.com",
+		ProviderKey: "provider",
+		ApiFormat:   1,
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %v, want invalid argument", connect.CodeOf(err))
+	}
+}
+
+func TestIntegralLogHandlerMapsValidationErrorsToInvalidArgument(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := NewServer(nil, nil, nil, nil, service.NewIntegralLogService(db), nil)
+
+	_, err = srv.CreateIntegralLog(adminServerTestContext(), connect.NewRequest(&gen.CreateIntegralLogRequest{
+		KeyId:   7,
+		Context: "{",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %v, want invalid argument", connect.CodeOf(err))
+	}
+}
+
+func adminServerTestContext() context.Context {
+	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
+		OpenID:      "admin-openid",
+		Role:        adminauth.RoleAdmin,
+		Permissions: []string{adminauth.AdminPermission},
+	})
+}
+
+func userServerTestContext() context.Context {
+	return adminauth.WithPrincipal(context.Background(), adminauth.Principal{
+		OpenID: "user-openid",
+		Role:   adminauth.RoleUser,
+	})
 }

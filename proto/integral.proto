@@ -17,6 +17,7 @@ message IntegralLog {
     string response = 3;
     int32 key_id = 4;
     google.protobuf.Timestamp created_at = 5;
+    string owner_openid = 6;
 }
 
 message CreateIntegralLogRequest {
@@ -33,6 +34,7 @@ message ListIntegralLogsRequest {
     int32 key_id = 1;
     int32 limit = 2;
     int32 offset = 3;
+    string owner_openid = 4;
 }
 
 message ListIntegralLogsResponse {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/adminauth"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"go.uber.org/zap"
@@ -28,11 +29,25 @@ func NewUsageService(db *sql.DB, location *time.Location) *UsageService {
 }
 
 func (s *UsageService) GetUsageByKeyID(ctx context.Context, req *proto.GetUsageByKeyIDRequest) (*proto.GetUsageResponse, error) {
-	logs, err := s.queries.GetUsageLogsByKeyID(ctx, repository.GetUsageLogsByKeyIDParams{
-		KeyID:  req.KeyId,
-		Limit:  100,
-		Offset: 0,
-	})
+	user, err := adminauth.RequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var logs []repository.UsageLog
+	if user.Role == adminauth.RoleAdmin {
+		logs, err = s.queries.GetUsageLogsByKeyID(ctx, repository.GetUsageLogsByKeyIDParams{
+			KeyID:  req.KeyId,
+			Limit:  100,
+			Offset: 0,
+		})
+	} else {
+		logs, err = s.queries.GetUsageLogsByKeyIDAndOwnerOpenID(ctx, repository.GetUsageLogsByKeyIDAndOwnerOpenIDParams{
+			KeyID:       req.KeyId,
+			OwnerOpenid: user.OpenID,
+			Limit:       100,
+			Offset:      0,
+		})
+	}
 	if err != nil {
 		zap.L().Error("get usage by key id failed", zap.Error(err), zap.Int32("key_id", req.KeyId))
 		return nil, err
@@ -42,11 +57,25 @@ func (s *UsageService) GetUsageByKeyID(ctx context.Context, req *proto.GetUsageB
 }
 
 func (s *UsageService) GetUsageByKeyHash(ctx context.Context, req *proto.GetUsageByKeyHashRequest) (*proto.GetUsageResponse, error) {
-	logs, err := s.queries.GetUsageLogsByKeyHash(ctx, repository.GetUsageLogsByKeyHashParams{
-		KeyHash: sql.NullString{String: req.KeyHash, Valid: true},
-		Limit:   100,
-		Offset:  0,
-	})
+	user, err := adminauth.RequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var logs []repository.UsageLog
+	if user.Role == adminauth.RoleAdmin {
+		logs, err = s.queries.GetUsageLogsByKeyHash(ctx, repository.GetUsageLogsByKeyHashParams{
+			KeyHash: sql.NullString{String: req.KeyHash, Valid: true},
+			Limit:   100,
+			Offset:  0,
+		})
+	} else {
+		logs, err = s.queries.GetUsageLogsByKeyHashAndOwnerOpenID(ctx, repository.GetUsageLogsByKeyHashAndOwnerOpenIDParams{
+			KeyHash:     sql.NullString{String: req.KeyHash, Valid: true},
+			OwnerOpenid: user.OpenID,
+			Limit:       100,
+			Offset:      0,
+		})
+	}
 	if err != nil {
 		zap.L().Error("get usage by key hash failed", zap.Error(err), zap.String("key_hash_prefix", keyHashPrefix(req.KeyHash)))
 		return nil, err
@@ -56,6 +85,9 @@ func (s *UsageService) GetUsageByKeyHash(ctx context.Context, req *proto.GetUsag
 }
 
 func (s *UsageService) GetUsageByChannelID(ctx context.Context, req *proto.GetUsageByChannelIDRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	logs, err := s.queries.GetUsageLogsByChannel(ctx, repository.GetUsageLogsByChannelParams{
 		ChannelID: req.ChannelId,
 		Limit:     100,
@@ -70,6 +102,9 @@ func (s *UsageService) GetUsageByChannelID(ctx context.Context, req *proto.GetUs
 }
 
 func (s *UsageService) GetUsageByModelID(ctx context.Context, req *proto.GetUsageByModelIDRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	logs, err := s.queries.GetUsageLogsByModelID(ctx, repository.GetUsageLogsByModelIDParams{
 		ModelID: req.ModelId,
 		Limit:   100,
@@ -84,6 +119,9 @@ func (s *UsageService) GetUsageByModelID(ctx context.Context, req *proto.GetUsag
 }
 
 func (s *UsageService) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *proto.GetUsageByDeadlineAndKeyHashRequest) (*proto.GetUsageResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	var deadline time.Time
 	if req.Deadline != nil {
 		deadline = req.Deadline.AsTime()
@@ -112,19 +150,35 @@ func (s *UsageService) GetUsageByDeadlineAndKeyHash(ctx context.Context, req *pr
 }
 
 func (s *UsageService) GetUsageSummary(ctx context.Context, req *proto.GetUsageSummaryRequest) (*proto.GetUsageResponse, error) {
-	stats, err := s.queries.GetUsageStatsGlobal(ctx, repository.GetUsageStatsGlobalParams{})
+	user, err := adminauth.RequireUser(ctx)
 	if err != nil {
-		zap.L().Error("get usage summary failed", zap.Error(err))
 		return nil, err
 	}
-
 	var totalPrompt, totalCompletion int64
-	for _, stat := range stats {
-		totalPrompt += stat.TotalPromptTokens
-		totalCompletion += stat.TotalCompletionTokens
+	if user.Role == adminauth.RoleAdmin {
+		stats, err := s.queries.GetUsageStatsGlobal(ctx, repository.GetUsageStatsGlobalParams{})
+		if err != nil {
+			zap.L().Error("get usage summary failed", zap.Error(err))
+			return nil, err
+		}
+		for _, stat := range stats {
+			totalPrompt += stat.TotalPromptTokens
+			totalCompletion += stat.TotalCompletionTokens
+		}
+		zap.L().Info("usage summary retrieved", zap.Int("count", len(stats)), zap.Int64("prompt_tokens", totalPrompt), zap.Int64("completion_tokens", totalCompletion))
+	} else {
+		stats, err := s.queries.GetUsageStatsByOwnerOpenID(ctx, repository.GetUsageStatsByOwnerOpenIDParams{OwnerOpenid: user.OpenID})
+		if err != nil {
+			zap.L().Error("get owner usage summary failed", zap.Error(err), zap.String("owner_openid", user.OpenID))
+			return nil, err
+		}
+		for _, stat := range stats {
+			totalPrompt += stat.TotalPromptTokens
+			totalCompletion += stat.TotalCompletionTokens
+		}
+		zap.L().Info("owner usage summary retrieved", zap.String("owner_openid", user.OpenID), zap.Int("count", len(stats)), zap.Int64("prompt_tokens", totalPrompt), zap.Int64("completion_tokens", totalCompletion))
 	}
 
-	zap.L().Info("usage summary retrieved", zap.Int("count", len(stats)), zap.Int64("prompt_tokens", totalPrompt), zap.Int64("completion_tokens", totalCompletion))
 	return &proto.GetUsageResponse{
 		UsageLog: []*proto.UsageLog{{
 			PromptTokens:     fmt.Sprintf("%d", totalPrompt),
@@ -134,31 +188,50 @@ func (s *UsageService) GetUsageSummary(ctx context.Context, req *proto.GetUsageS
 }
 
 func (s *UsageService) GetUsageDashboard(ctx context.Context, req *proto.GetUsageDashboardRequest) (*proto.GetUsageDashboardResponse, error) {
+	user, err := adminauth.RequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now().In(s.location)
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, s.location)
 	tomorrowStart := todayStart.AddDate(0, 0, 1)
 	timelineStart := todayStart.AddDate(0, 0, -6)
 
-	totals, err := s.queries.GetUsageDashboardTotals(ctx, repository.GetUsageDashboardTotalsParams{
-		StartAt: todayStart.UTC(),
-		EndAt:   tomorrowStart.UTC(),
-	})
-	if err != nil {
-		zap.L().Error("get usage dashboard totals failed", zap.Error(err))
-		return nil, err
+	var totals dashboardTotalsRow
+	var rows []dashboardTimelineRow
+	if user.Role == adminauth.RoleAdmin && req.OwnerOpenid == "" {
+		dbTotals, err := s.queries.GetUsageDashboardTotals(ctx, repository.GetUsageDashboardTotalsParams{StartAt: todayStart.UTC(), EndAt: tomorrowStart.UTC()})
+		if err != nil {
+			zap.L().Error("get usage dashboard totals failed", zap.Error(err), zap.String("owner_openid", req.OwnerOpenid), zap.String("role", user.Role))
+			return nil, err
+		}
+		dbRows, err := s.queries.GetUsageDashboardTimeline(ctx, repository.GetUsageDashboardTimelineParams{TimeZone: s.location.String(), StartAt: timelineStart.UTC(), EndAt: tomorrowStart.UTC()})
+		if err != nil {
+			zap.L().Error("get usage dashboard timeline failed", zap.Error(err), zap.String("owner_openid", req.OwnerOpenid), zap.String("role", user.Role))
+			return nil, err
+		}
+		totals = dashboardTotalsRow(dbTotals)
+		rows = convertGlobalTimeline(dbRows)
+	} else {
+		ownerOpenID := user.OpenID
+		if user.Role == adminauth.RoleAdmin && req.OwnerOpenid != "" {
+			ownerOpenID = req.OwnerOpenid
+		}
+		dbTotals, err := s.queries.GetUsageDashboardTotalsByOwnerOpenID(ctx, repository.GetUsageDashboardTotalsByOwnerOpenIDParams{OwnerOpenid: ownerOpenID, StartAt: todayStart.UTC(), EndAt: tomorrowStart.UTC()})
+		if err != nil {
+			zap.L().Error("get usage dashboard owner totals failed", zap.Error(err), zap.String("owner_openid", ownerOpenID), zap.String("role", user.Role))
+			return nil, err
+		}
+		dbRows, err := s.queries.GetUsageDashboardTimelineByOwnerOpenID(ctx, repository.GetUsageDashboardTimelineByOwnerOpenIDParams{TimeZone: s.location.String(), OwnerOpenid: ownerOpenID, StartAt: timelineStart.UTC(), EndAt: tomorrowStart.UTC()})
+		if err != nil {
+			zap.L().Error("get usage dashboard owner timeline failed", zap.Error(err), zap.String("owner_openid", ownerOpenID), zap.String("role", user.Role))
+			return nil, err
+		}
+		totals = dashboardTotalsRow(dbTotals)
+		rows = convertOwnerTimeline(dbRows)
 	}
 
-	rows, err := s.queries.GetUsageDashboardTimeline(ctx, repository.GetUsageDashboardTimelineParams{
-		TimeZone: s.location.String(),
-		StartAt:  timelineStart.UTC(),
-		EndAt:    tomorrowStart.UTC(),
-	})
-	if err != nil {
-		zap.L().Error("get usage dashboard timeline failed", zap.Error(err))
-		return nil, err
-	}
-
-	byDate := make(map[string]repository.GetUsageDashboardTimelineRow, len(rows))
+	byDate := make(map[string]dashboardTimelineRow, len(rows))
 	for _, row := range rows {
 		byDate[row.Date.Format("2006-01-02")] = row
 	}
@@ -188,6 +261,35 @@ func (s *UsageService) GetUsageDashboard(ctx context.Context, req *proto.GetUsag
 	}, nil
 }
 
+type dashboardTotalsRow struct {
+	TotalPromptTokens     int64
+	TotalCompletionTokens int64
+	RequestCount          int64
+}
+
+type dashboardTimelineRow struct {
+	Date                  time.Time
+	TotalPromptTokens     int64
+	TotalCompletionTokens int64
+	RequestCount          int64
+}
+
+func convertGlobalTimeline(rows []repository.GetUsageDashboardTimelineRow) []dashboardTimelineRow {
+	result := make([]dashboardTimelineRow, len(rows))
+	for i, row := range rows {
+		result[i] = dashboardTimelineRow(row)
+	}
+	return result
+}
+
+func convertOwnerTimeline(rows []repository.GetUsageDashboardTimelineByOwnerOpenIDRow) []dashboardTimelineRow {
+	result := make([]dashboardTimelineRow, len(rows))
+	for i, row := range rows {
+		result[i] = dashboardTimelineRow(row)
+	}
+	return result
+}
+
 func repoLogsToProto(logs []repository.UsageLog) []*proto.UsageLog {
 	result := make([]*proto.UsageLog, len(logs))
 	for i, l := range logs {
@@ -198,6 +300,7 @@ func repoLogsToProto(logs []repository.UsageLog) []*proto.UsageLog {
 			ChannelId:        l.ChannelID,
 			PromptTokens:     strconv.FormatInt(l.PromptTokens, 10),
 			CompletionTokens: strconv.FormatInt(l.CompletionTokens, 10),
+			OwnerOpenid:      l.OwnerOpenid,
 			CreatedAt:        timestamppb.New(l.CreatedAt),
 		}
 	}

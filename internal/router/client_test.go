@@ -59,7 +59,7 @@ func TestRouterAuthMiddlewareRejectsDisabledChannel(t *testing.T) {
 
 	mock.ExpectQuery("FROM api_keys").
 		WithArgs(sql.NullString{String: auth.HashKey("key"), Valid: true}).
-		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(models.APIFormatOpenAI), int16(2)))
+		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(models.APIFormatOpenAI), int16(2), "owner-openid"))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -80,7 +80,7 @@ func TestRouterProxyHandlerDispatchesOpenAI(t *testing.T) {
 
 	mock.ExpectQuery("FROM api_keys").
 		WithArgs(sql.NullString{String: auth.HashKey("key"), Valid: true}).
-		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(models.APIFormatOpenAI), int16(channelStatusEnabled)))
+		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(models.APIFormatOpenAI), int16(channelStatusEnabled), "owner-openid"))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -103,7 +103,7 @@ func TestRouterProxyHandlerRejectsUnsupportedAPIFormat(t *testing.T) {
 
 	mock.ExpectQuery("FROM api_keys").
 		WithArgs(sql.NullString{String: auth.HashKey("key"), Valid: true}).
-		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(99), int16(channelStatusEnabled)))
+		WillReturnRows(apiKeyWithChannelRows().AddRow(int32(1), int32(2), "https://upstream", "provider", int32(99), int16(channelStatusEnabled), "owner-openid"))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -115,7 +115,7 @@ func TestRouterProxyHandlerRejectsUnsupportedAPIFormat(t *testing.T) {
 }
 
 func apiKeyWithChannelRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"key_id", "channel_id", "base_url", "provider_key", "channel_api_format", "channel_status"})
+	return sqlmock.NewRows([]string{"key_id", "channel_id", "base_url", "provider_key", "channel_api_format", "channel_status", "owner_openid"})
 }
 
 func newRouterMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock, func()) {

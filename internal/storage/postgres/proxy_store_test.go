@@ -90,10 +90,13 @@ func TestProxyStoreInsertUsage(t *testing.T) {
 	id := uuid.New()
 	now := time.Now()
 
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO usage_logs (key_id, channel_id, model_id, prompt_tokens, completion_tokens) VALUES ($1, $2, $3, $4, $5) RETURNING id, key_id, channel_id, model_id, prompt_tokens, completion_tokens, created_at")).
-		WithArgs(int32(1), int32(2), int32(3), int64(4), int64(5)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "created_at"}).
-			AddRow(id, int32(1), int32(2), int32(3), int64(4), int64(5), now))
+	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, owner_openid, created_at FROM api_keys WHERE id").
+		WithArgs(int32(1)).
+		WillReturnRows(apiKeyRows().AddRow(int32(1), sql.NullString{String: "hash", Valid: true}, "key", int32(2), "owner-openid", now))
+	mock.ExpectQuery("INSERT INTO usage_logs").
+		WithArgs(int32(1), int32(2), int32(3), int64(4), int64(5), "owner-openid").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "owner_openid", "created_at"}).
+			AddRow(id, int32(1), int32(2), int32(3), int64(4), int64(5), "owner-openid", now))
 
 	if err := store.InsertUsage(context.Background(), 1, 2, 3, 4, 5); err != nil {
 		t.Fatal(err)
@@ -109,8 +112,11 @@ func TestProxyStoreInsertUsageError(t *testing.T) {
 	store := NewProxyStore(db)
 	wantErr := errors.New("insert failed")
 
+	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, owner_openid, created_at FROM api_keys WHERE id").
+		WithArgs(int32(1)).
+		WillReturnRows(apiKeyRows().AddRow(int32(1), sql.NullString{String: "hash", Valid: true}, "key", int32(2), "owner-openid", time.Now()))
 	mock.ExpectQuery("INSERT INTO usage_logs").
-		WithArgs(int32(1), int32(2), int32(3), int64(4), int64(5)).
+		WithArgs(int32(1), int32(2), int32(3), int64(4), int64(5), "owner-openid").
 		WillReturnError(wantErr)
 
 	if err := store.InsertUsage(context.Background(), 1, 2, 3, 4, 5); !errors.Is(err, wantErr) {
@@ -162,10 +168,13 @@ func TestProxyStoreCompleteProviderTaskInsertsUsageOnce(t *testing.T) {
 	mock.ExpectQuery("UPDATE provider_tasks").
 		WithArgs("seedance", "task-1", int16(ProviderTaskStatusSuccess), response).
 		WillReturnRows(providerTaskRows().AddRow(id, "seedance", int32(1), int32(2), int32(3), "task-1", int16(ProviderTaskStatusSuccess), json.RawMessage(`{"model":"seedance"}`), response, false, now, now))
+	mock.ExpectQuery("SELECT id, key_hash, key_name, channel_id, owner_openid, created_at FROM api_keys WHERE id").
+		WithArgs(int32(1)).
+		WillReturnRows(apiKeyRows().AddRow(int32(1), sql.NullString{String: "hash", Valid: true}, "key", int32(2), "owner-openid", now))
 	mock.ExpectQuery("INSERT INTO usage_logs").
-		WithArgs(int32(1), int32(2), int32(3), int64(0), int64(100)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "created_at"}).
-			AddRow(usageID, int32(1), int32(2), int32(3), int64(0), int64(100), now))
+		WithArgs(int32(1), int32(2), int32(3), int64(0), int64(100), "owner-openid").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_id", "channel_id", "model_id", "prompt_tokens", "completion_tokens", "owner_openid", "created_at"}).
+			AddRow(usageID, int32(1), int32(2), int32(3), int64(0), int64(100), "owner-openid", now))
 	mock.ExpectQuery("UPDATE provider_tasks").
 		WithArgs("seedance", "task-1").
 		WillReturnRows(providerTaskRows().AddRow(id, "seedance", int32(1), int32(2), int32(3), "task-1", int16(ProviderTaskStatusSuccess), json.RawMessage(`{"model":"seedance"}`), response, true, now, now))
@@ -293,4 +302,8 @@ func newProxyStoreMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock, func()) {
 	return db, mock, func() {
 		_ = db.Close()
 	}
+}
+
+func apiKeyRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "key_hash", "key_name", "channel_id", "owner_openid", "created_at"})
 }

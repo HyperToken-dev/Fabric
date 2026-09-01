@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Activity, Cpu, KeyRound, Search, Zap } from 'lucide-react';
-import { listApiKeys, type ApiKey } from '../api/apiKeys';
+import { listAdminApiKeys, type ApiKey } from '../api/apiKeys';
 import { listChannels, type Channel } from '../api/channels';
 import { listModels, type Model } from '../api/models';
 import {
@@ -38,6 +38,8 @@ export default function UsageLogsPage() {
     const [keys, setKeys] = useState<ApiKey[]>([]);
     const [keyHash, setKeyHash] = useState('');
     const [optionsLoading, setOptionsLoading] = useState(false);
+    const [optionsError, setOptionsError] = useState<string | null>(null);
+    const [optionsVersion, setOptionsVersion] = useState(0);
     const [mode, setMode] = useState<QueryMode>('channel');
     const [deadlinePreset, setDeadlinePreset] = useState<DeadlinePreset>('7');
     const [logs, setLogs] = useState<UsageLog[] | null>(null);
@@ -87,17 +89,29 @@ export default function UsageLogsPage() {
     useEffect(() => {
         setLogs(null);
         setQueryError(null);
+        setOptionsError(null);
         if (!channelId || mode === 'channel') {
             setModels([]);
+            setModelId(null);
             setKeys([]);
+            setKeyHash('');
             return;
         }
         const controller = new AbortController();
         setOptionsLoading(true);
+        if (mode === 'model') {
+            setModels([]);
+            setModelId(null);
+        } else {
+            setKeys([]);
+            setKeyHash('');
+        }
         const request =
             mode === 'model'
                 ? listModels(channelId, controller.signal)
-                : listApiKeys(channelId, controller.signal);
+                : listAdminApiKeys(controller.signal).then((items) =>
+                      items.filter((item) => item.channelId === channelId),
+                  );
         request
             .then((result) => {
                 if (mode === 'model') {
@@ -112,7 +126,7 @@ export default function UsageLogsPage() {
             })
             .catch((requestError: unknown) => {
                 if (!controller.signal.aborted)
-                    setQueryError(
+                    setOptionsError(
                         requestError instanceof Error
                             ? requestError.message
                             : 'i18n:usage.optionsError',
@@ -122,10 +136,9 @@ export default function UsageLogsPage() {
                 if (!controller.signal.aborted) setOptionsLoading(false);
             });
         return () => controller.abort();
-    }, [channelId, mode]);
+    }, [channelId, mode, optionsVersion]);
 
-    async function submit(event: FormEvent) {
-        event.preventDefault();
+    async function runQuery() {
         if (
             !channelId ||
             loading ||
@@ -175,6 +188,11 @@ export default function UsageLogsPage() {
         } finally {
             setLoading(false);
         }
+    }
+
+    function submit(event: FormEvent) {
+        event.preventDefault();
+        void runQuery();
     }
 
     const stats = summary
@@ -331,7 +349,7 @@ export default function UsageLogsPage() {
                                 >
                                     {keys.map((key) => (
                                         <option key={key.keyHash} value={key.keyHash}>
-                                            {key.keyName}
+                                            {key.keyName} #{key.keyId}
                                         </option>
                                     ))}
                                 </select>
@@ -365,12 +383,16 @@ export default function UsageLogsPage() {
                     {optionsLoading && (
                         <p className="mt-3 text-xs text-slate-500">{t('usage.loadingResources')}</p>
                     )}
-                    {!optionsLoading && mode === 'model' && models.length === 0 && (
-                        <p className="mt-3 text-xs font-medium text-amber-700">
-                            {t('usage.noModels')}
-                        </p>
-                    )}
                     {!optionsLoading &&
+                        !optionsError &&
+                        mode === 'model' &&
+                        models.length === 0 && (
+                            <p className="mt-3 text-xs font-medium text-amber-700">
+                                {t('usage.noModels')}
+                            </p>
+                        )}
+                    {!optionsLoading &&
+                        !optionsError &&
                         (mode === 'key' || mode === 'deadline') &&
                         keys.length === 0 && (
                             <p className="mt-3 text-xs font-medium text-amber-700">
@@ -379,11 +401,23 @@ export default function UsageLogsPage() {
                         )}
                 </section>
             )}
+            {optionsError && logs && (
+                <RefreshWarning
+                    message={optionsError}
+                    retry={() => setOptionsVersion((value) => value + 1)}
+                />
+            )}
+            {optionsError && !logs && (
+                <ErrorState
+                    message={optionsError}
+                    retry={() => setOptionsVersion((value) => value + 1)}
+                />
+            )}
             {queryError && logs && (
-                <RefreshWarning message={queryError} retry={() => setQueryError(null)} />
+                <RefreshWarning message={queryError} retry={() => void runQuery()} />
             )}
             {queryError && !logs && (
-                <ErrorState message={queryError} retry={() => setQueryError(null)} />
+                <ErrorState message={queryError} retry={() => void runQuery()} />
             )}
             {loading && !logs && <div className="h-48 animate-pulse rounded-2xl bg-white" />}
             {logs?.length === 0 && (
@@ -411,6 +445,7 @@ export default function UsageLogsPage() {
                                     <th className="px-5 py-3">{t('usage.channel')}</th>
                                     <th className="px-5 py-3">{t('usage.model')}</th>
                                     <th className="px-5 py-3">{t('usage.key')}</th>
+                                    <th className="px-5 py-3">{t('common.ownerOpenid')}</th>
                                     <th className="px-5 py-3">{t('dashboard.prompt')}</th>
                                     <th className="px-5 py-3">{t('dashboard.completion')}</th>
                                 </tr>
@@ -425,8 +460,19 @@ export default function UsageLogsPage() {
                                         </td>
                                         <td className="px-5 py-4">{log.channelId || '-'}</td>
                                         <td className="px-5 py-4">{log.modelId || '-'}</td>
-                                        <td className="px-5 py-4">
+                                        <td className="px-5 py-4 text-slate-700">
                                             <KeyRound size={14} className="text-slate-400" />
+                                            <span className="ml-2 font-medium">
+                                                {keys.find((key) => key.keyId === log.keyId)
+                                                    ?.keyName ?? t('usage.selectedKey')}
+                                                {log.keyId ? ` #${log.keyId}` : ''}
+                                            </span>
+                                        </td>
+                                        <td
+                                            className="max-w-[220px] truncate px-5 py-4 text-xs text-slate-500"
+                                            title={log.ownerOpenid}
+                                        >
+                                            {log.ownerOpenid || '-'}
                                         </td>
                                         <td className="px-5 py-4 font-medium">
                                             {formatNumber(log.promptTokens)}

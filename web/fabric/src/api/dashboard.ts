@@ -38,8 +38,13 @@ function toTotals(value: ProtoTotals | undefined, prefix: string): UsageTotals {
     };
 }
 
-export async function getUsageDashboard(signal?: AbortSignal): Promise<UsageDashboard> {
-    const payload = await callAdminRpc(() => usageClient.getUsageDashboard({}, { signal }));
+export async function getUsageDashboard(
+    signal?: AbortSignal,
+    ownerOpenid = '',
+): Promise<UsageDashboard> {
+    const payload = await callAdminRpc(() =>
+        usageClient.getUsageDashboard({ ownerOpenid }, { signal }),
+    );
     if (!payload.timeZone) {
         throw new Error('Invalid dashboard response');
     }

@@ -262,6 +262,12 @@ export default function IntegralLogsPage() {
                         outcome={summary.outcome}
                         rejectionStage={summary.rejectionStage}
                     />
+                    <p
+                        className="mt-3 truncate text-xs text-slate-500"
+                        title={selectedLog.ownerOpenid}
+                    >
+                        {t('common.ownerOpenid')}: {selectedLog.ownerOpenid}
+                    </p>
                 </div>
                 <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900">
@@ -368,7 +374,7 @@ function LogListItem({ log, onClick }: { log: IntegralLog; onClick: () => void }
         <button
             type="button"
             onClick={onClick}
-            className="grid w-full gap-3 border-b border-slate-100 px-5 py-4 text-left transition last:border-b-0 hover:bg-emerald-50/60 md:grid-cols-[220px_110px_130px_minmax(160px,1fr)_minmax(180px,1.4fr)] md:items-center"
+            className="grid w-full gap-3 border-b border-slate-100 px-5 py-4 text-left transition last:border-b-0 hover:bg-emerald-50/60 md:grid-cols-[220px_110px_130px_minmax(150px,1fr)_minmax(160px,1fr)_minmax(180px,1.4fr)] md:items-center"
         >
             <span className="flex items-center gap-3 font-semibold text-slate-900">
                 <span className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700">
@@ -390,6 +396,9 @@ function LogListItem({ log, onClick }: { log: IntegralLog; onClick: () => void }
                     {summary.provider}
                 </span>
             </div>
+            <span className="truncate text-xs text-slate-500" title={log.ownerOpenid}>
+                {log.ownerOpenid}
+            </span>
             <div className="space-y-2">
                 <StatusBadge outcome={summary.outcome} rejectionStage={summary.rejectionStage} />
                 <span className="block truncate text-sm text-slate-500" title={summary.input}>

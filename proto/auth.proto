@@ -1,0 +1,28 @@
+syntax = "proto3";
+package proto;
+option go_package = "github.com/HyperToken-dev/fabric/gen;proto";
+
+service AuthService {
+    rpc GetCurrentUser(GetCurrentUserRequest) returns(GetCurrentUserResponse);
+    rpc Logout(LogoutRequest) returns(LogoutResponse);
+}
+
+message CurrentUser {
+    string openid = 1;
+    string email = 2;
+    string display_name = 3;
+    string avatar_url = 4;
+    string role = 5;
+    bool oauth_enabled = 6;
+    repeated string permissions = 7;
+}
+
+message GetCurrentUserRequest {}
+
+message GetCurrentUserResponse {
+    CurrentUser user = 1;
+}
+
+message LogoutRequest {}
+
+message LogoutResponse {}

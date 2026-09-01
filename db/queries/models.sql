@@ -28,5 +28,14 @@ SELECT * FROM models WHERE channel_id = $1 ORDER BY model_name;
 -- name: ListActiveModelsByChannel :many
 SELECT * FROM models WHERE channel_id = $1 AND status = 1 ORDER BY model_name;
 
+-- name: ListClientModels :many
+SELECT models.model_name, models.model_type, channels.channel_name
+FROM models
+JOIN channels ON models.channel_id = channels.id
+WHERE models.status = 1
+  AND channels.status = 1
+  AND (sqlc.arg(channel_name)::text = '' OR channels.channel_name = sqlc.arg(channel_name))
+ORDER BY channels.channel_name, models.model_name;
+
 -- name: DeleteModel :exec
 DELETE FROM models WHERE id = $1;

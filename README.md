@@ -10,7 +10,7 @@
 
 Fabric is a modular AI gateway framework. You can run as full AI gateway service or selectively import the Core and Business layers as libraries and compose them into your own services.
 
-Fabric is not intended to be only a proxy service. Its goal is to provide reusable AI gateway primitives: transparent proxying, API key management, downstream-to-upstream key mapping, channel/model mapping, usage tracking, sensitive-word detection, and future governance modules such as quota and limit controls.
+Fabric is not intended to be only a proxy service. Its goal is to provide reusable AI gateway primitives: transparent proxying, API key management, downstream-to-upstream key mapping, channel/model mapping, usage tracking, sensitive-word detection, provider audit logs, and future governance modules such as quota and limit controls.
 
 </div>
 
@@ -43,13 +43,13 @@ Fabric exists to split these common capabilities into independent, composable, r
 | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 🧩 Layered modular gateway               | A pluggable, layered modular gateway.                                                                                                                |
 | 🌐 Multi-provider and multimodal         | A multi-provider, multimodal AI gateway foundation.                                                                                                  |
-| 🖥️ Modern Web Console                    | A modern gateway product with an easy-to-operate Web Console.                                                                                        |
+| 🖥️ Modern Web Console                    | A modern gateway product with an easy-to-operate Web Console and optional OIDC browser login.                                                        |
 | 📊 Dynamic data dashboard                | A dynamic data dashboard.                                                                                                                            |
 | ⚡ High concurrency and availability     | A high-concurrency, high-availability gateway architecture.                                                                                          |
 | 🔁 Transparent proxying                  | Callers use Fabric Gateway API Keys while Fabric resolves channels, models, upstream base URLs, and provider credentials before forwarding requests. |
-| 📈 Usage logging                         | Records key, channel, model, prompt-token, and completion-token usage                                                                                |
-| 🛡️ Fire Wall                             | Detects sensitive text before forwarding supported inputs, supports model-scoped dictionaries and hot updating                                       |
-| 🎞️ Multi-provider and multimodal support | OpenAI、Google、Anthropic、Seedance and more                                                                                                         |
+| 📈 Usage logging                         | Records key, channel, model, prompt-token, completion-token, and provider-specific token usage where supported                                       |
+| 🛡️ Fire Wall                             | Detects sensitive text on supported input and output surfaces, supports model-scoped dictionaries and runtime updates                                |
+| 🎞️ Multi-provider and multimodal support | OpenAI-compatible, Alibaba Bailian, Seedance, Google, Extrotec, Anthropic, and more                                                                  |
 
 ## 🏗️ Architecture
 
@@ -60,13 +60,13 @@ flowchart TB
     subgraph Deployments["Deployable Forms"]
         GBC["Gateway + Business + Core<br/>Integrated AI gateway"]
         BC["Business + Core<br/>Governance modules with provider proxying"]
-        B["Business Only<br/>Usage, sensitive-word detection, quota, limit, audit"]
+        B["Business Only<br/>Usage extraction, sensitive-word detection, audit primitives"]
         C["Core Only<br/>Provider proxying, protocol adaptation, I/O primitives"]
     end
 
     subgraph Layers["Reusable Layers"]
         Gateway["Gateway Layer<br/>Admin APIs, routing, assembled product"]
-        Business["Business Layer<br/>Usage / Sensitive Words / Quota / Limit / Audit"]
+        Business["Business Layer<br/>Usage / Sensitive Words / Audit primitives<br/>Future: Quota / Limit"]
         Core["Core Layer<br/>Provider proxying / protocol adaptation / I/O"]
     end
 
@@ -86,9 +86,9 @@ flowchart TB
 
 Supported deployment and reuse forms include:
 
-- **Gateway + Business + Core**: run Fabric as a complete OpenAI-compatible gateway with admin APIs, proxy routes, usage logging, model/channel/key management, and policy modules.
+- **Gateway + Business + Core**: run Fabric as a complete AI gateway with admin APIs, proxy routes, usage logging, model/channel/key management, provider audit logs, Web Console, and policy modules.
 - **Business + Core**: use governance capabilities together with provider proxying without adopting the full integrated gateway product.
-- **Business only**: embed usage logging, sensitive-word detection, quota, limit, audit, or policy modules into an existing gateway.
+- **Business only**: embed usage extraction, sensitive-word detection, audit primitives, or policy helpers into an existing gateway.
 - **Core only**: embed provider proxying, protocol adaptation, and low-level I/O primitives into your own service.
 
 ### Core Layer
@@ -103,12 +103,12 @@ It is useful for:
 
 ### Business Layer
 
-Business contains cross-cutting governance capabilities such as usage tracking, sensitive-word detection, quota, limit, and audit modules.
+Business contains cross-cutting governance primitives such as usage extraction, sensitive-word detection, and audit helpers. Quota and limit modules are future governance directions.
 
 It is useful for:
 
-- Existing proxy services that only need usage logging.
-- Existing business gateways that only need sensitive-word detection.
+- Existing proxy services that only need provider-specific usage extraction.
+- Existing business gateways that only need sensitive-word detection primitives.
 - Systems that need different policies by model, key, or channel.
 
 ### Integrated Gateway Layer
@@ -121,9 +121,9 @@ It is useful for:
 - Users who do not want to manually compose Core and Business modules.
 - Scenarios where writing a configuration file and running the gateway is enough.
 
-## 🌐 Supported and Planned Providers / Models
+## 🌐 Provider / Model Vendors
 
-Planned provider/model vendors include:
+Provider/model vendors include:
 
 - OpenAI
 - Google
@@ -154,7 +154,7 @@ Planned provider/model vendors include:
 - Microsoft
 - ...
 
-**More than 300+ providers would be supported.**
+Fabric is designed to continue expanding toward 300+ providers.
 
 ## 🚀 Quick Start
 
@@ -173,13 +173,27 @@ Docker Compose builds the gateway image from `Dockerfile`, starts PostgreSQL, an
 
 The tracked `configs/config.docker.yaml` is used by Docker Compose. It is mounted into the container as `/app/configs/config.yaml`, so Docker users do not need to create a separate `configs/config.yaml` before starting Fabric.
 
-The gateway runs database migrations from `db/migrations/` during startup. After startup, create a channel for your desired provider (e.g. OpenAI, Alibaba Bailian, or Seedance), add a model, and configure a real upstream provider key through the Admin API or Web Console before proxying production traffic.
+The gateway runs database migrations from `db/migrations/` during startup. After startup, open the Web Console on the Admin Server, sign in if OAuth is enabled, create a channel for your desired provider, add a model, and configure a real upstream provider key before proxying production traffic.
 
-### 2. Optional Fire Wall
+Docker Compose uses the tracked `configs/config.docker.yaml`. That file currently includes an OAuth/OIDC example configuration. For a real deployment, point the `oauth` block at your own OIDC issuer and use your own client secret and session secret. For local-only development, you can disable OAuth in the config and Fabric will use a built-in system administrator identity.
+
+### 2. OAuth User Permissions
+
+When OAuth is enabled, Fabric reads user identity and permissions from the OIDC provider. The Web Console and management APIs treat users with the `fabric_admin` permission as administrators. Users without this permission can sign in, but they are not granted administrator privileges.
+
+For the default Casdoor setup:
+
+1. Open the Casdoor console(with port `8000`) and sign in with the default account `admin` and password `123`.
+2. Create a permission named `fabric_admin`.
+3. Add the organization members who should be Fabric administrators to that permission.
+
+Fabric expects the OIDC user claims to include a stable `id` value and a `permissions` claim. The `permissions` claim can be either a string list such as `["fabric_admin"]` or an object list such as `[{"name":"fabric_admin"}]`.
+
+### 3. Optional Fire Wall
 
 Fire Wall is managed from the Web Console. Use the `Fire Wall` page to enable detection, create dictionaries, set model scopes, and manage words. Docker Compose persists this runtime data in the `fabric-sensitive` named volume.
 
-### 3. Local Development Run
+### 4. Local Development Run
 
 For local development without Docker, prepare PostgreSQL, edit `configs/config.yaml`, then run:
 
@@ -190,7 +204,7 @@ make run
 
 ## 📖 Detailed Usage
 
-See [how_to_use.md](./how_to_use.md) for detailed configuration, management APIs, proxy examples, and library integration guidance.
+See [how_to_use.md](./how_to_use.md) for exact configuration fields, management APIs, provider API format values, model type values, proxy route examples, Fire Wall behavior, usage logging behavior, and Core / Business library integration guidance.
 
 ## 🛠️ Development Commands
 

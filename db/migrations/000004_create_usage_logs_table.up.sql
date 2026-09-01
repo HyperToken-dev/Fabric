@@ -5,6 +5,7 @@ CREATE TABLE usage_logs (
     model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
     prompt_tokens BIGINT NOT NULL DEFAULT 0,
     completion_tokens BIGINT NOT NULL DEFAULT 0,
+    owner_openid TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -13,3 +14,4 @@ CREATE INDEX idx_usage_logs_channel_id ON usage_logs(channel_id);
 CREATE INDEX idx_usage_logs_created_at ON usage_logs(created_at);
 CREATE INDEX idx_usage_logs_key_time ON usage_logs(key_id, created_at DESC);
 CREATE INDEX idx_usage_logs_channel_time ON usage_logs(channel_id, created_at DESC);
+CREATE INDEX idx_usage_logs_owner_openid ON usage_logs(owner_openid);

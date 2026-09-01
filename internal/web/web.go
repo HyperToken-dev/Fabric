@@ -34,6 +34,11 @@ func Handler(admin http.Handler) http.Handler {
 			return
 		}
 
+		if strings.HasPrefix(r.URL.Path, "/auth/") {
+			admin.ServeHTTP(w, r)
+			return
+		}
+
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if name == "." {
 			name = "index.html"

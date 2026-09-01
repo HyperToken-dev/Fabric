@@ -11,6 +11,7 @@ import (
 type Config struct {
 	DB        DBConfig       `mapstructure:"db"`
 	Log       LogConfig      `mapstructure:"log"`
+	OAuth     OAuthConfig    `mapstructure:"oauth"`
 	ProxyAddr string         `mapstructure:"proxyAddr"`
 	AdminAddr string         `mapstructure:"adminAddr"`
 	LogLevel  string         `mapstructure:"logLevel"`
@@ -41,5 +42,8 @@ func Load(workDir, runPath string) (*Config, error) {
 	}
 	cfg.Location = location
 	cfg.WorkDir, cfg.RunPath = workDir, runPath
+	if err := cfg.OAuth.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }

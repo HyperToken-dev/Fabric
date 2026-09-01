@@ -8,6 +8,7 @@ export type IntegralLog = {
     context: string;
     response: string;
     keyId: number;
+    ownerOpenid: string;
     createdAt: string;
 };
 
@@ -22,6 +23,7 @@ function toIntegralLog(log: ProtoIntegralLog, field: string): IntegralLog {
         context: requireString(log.context, `${field}.context`),
         response: requireString(log.response, `${field}.response`, true),
         keyId: safeInteger(log.keyId, `${field}.keyId`, false),
+        ownerOpenid: requireString(log.ownerOpenid, `${field}.ownerOpenid`),
         createdAt: timestampToIso(log.createdAt, `${field}.createdAt`),
     };
 }
@@ -32,13 +34,14 @@ function requireIntegralLog(log: ProtoIntegralLog | undefined): IntegralLog {
 }
 
 export async function listIntegralLogs(
-    input: { keyId?: number; limit?: number; offset?: number } = {},
+    input: { keyId?: number; ownerOpenid?: string; limit?: number; offset?: number } = {},
     signal?: AbortSignal,
 ): Promise<IntegralLogList> {
     const response = await callAdminRpc(() =>
         integralLogClient.listIntegralLogs(
             {
                 keyId: input.keyId ?? 0,
+                ownerOpenid: input.ownerOpenid ?? '',
                 limit: input.limit ?? 100,
                 offset: input.offset ?? 0,
             },

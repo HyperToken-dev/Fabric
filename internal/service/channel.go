@@ -8,6 +8,7 @@ import (
 
 	coreproxy "github.com/HyperToken-dev/fabric/core/proxy"
 	proto "github.com/HyperToken-dev/fabric/gen"
+	"github.com/HyperToken-dev/fabric/internal/adminauth"
 	"github.com/HyperToken-dev/fabric/internal/repository"
 
 	"go.uber.org/zap"
@@ -31,37 +32,46 @@ func NewChannelService(db *sql.DB) *ChannelService {
 	return &ChannelService{queries: repository.New(db)}
 }
 
-func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListChannelsRequest) (*proto.ListChannelsResponse, error) {
+func (s *ChannelService) ListChannels(ctx context.Context, req *proto.ListAdminChannelsRequest) (*proto.ListAdminChannelsResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	rows, err := s.queries.ListChannels(ctx)
 	if err != nil {
 		zap.L().Error("list channels failed", zap.Error(err))
 		return nil, err
 	}
 
-	channels := make([]*proto.Channel, len(rows))
+	channels := make([]*proto.AdminChannel, len(rows))
 	for i, r := range rows {
 		channels[i] = channelToProto(r)
 	}
 	zap.L().Info("channels listed", zap.Int("count", len(channels)))
-	return &proto.ListChannelsResponse{Channels: channels}, nil
+	return &proto.ListAdminChannelsResponse{Channels: channels}, nil
 }
 
-func (s *ChannelService) ListActiveChannels(ctx context.Context, req *proto.ListActiveChannelsRequest) (*proto.ListChannelsResponse, error) {
+func (s *ChannelService) ListActiveChannels(ctx context.Context, req *proto.ListAdminActiveChannelsRequest) (*proto.ListAdminChannelsResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	rows, err := s.queries.ListActiveChannels(ctx)
 	if err != nil {
 		zap.L().Error("list active channels failed", zap.Error(err))
 		return nil, err
 	}
 
-	channels := make([]*proto.Channel, len(rows))
+	channels := make([]*proto.AdminChannel, len(rows))
 	for i, r := range rows {
 		channels[i] = channelToProto(r)
 	}
 	zap.L().Info("active channels listed", zap.Int("count", len(channels)))
-	return &proto.ListChannelsResponse{Channels: channels}, nil
+	return &proto.ListAdminChannelsResponse{Channels: channels}, nil
 }
 
-func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateChannelRequest) (*proto.CreateChannelResponse, error) {
+func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateAdminChannelRequest) (*proto.AdminChannelResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateChannelName(req.ChannelName); err != nil {
 		return nil, err
 	}
@@ -80,12 +90,15 @@ func (s *ChannelService) CreateChannel(ctx context.Context, req *proto.CreateCha
 		return nil, err
 	}
 	zap.L().Info("channel created", zap.Int32("channel_id", repoChannel.ID), zap.String("channel_name", repoChannel.ChannelName), zap.String("base_url", repoChannel.BaseUrl), zap.Int32("api_format", repoChannel.ApiFormat))
-	return &proto.CreateChannelResponse{
+	return &proto.AdminChannelResponse{
 		Channel: channelToProto(repoChannel),
 	}, nil
 }
 
-func (s *ChannelService) UpdateChannelName(ctx context.Context, req *proto.UpdateChannelNameRequest) (*proto.UpdateChannelResponse, error) {
+func (s *ChannelService) UpdateChannelName(ctx context.Context, req *proto.UpdateAdminChannelNameRequest) (*proto.AdminChannelResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateChannelName(req.ChannelName); err != nil {
 		return nil, err
 	}
@@ -99,10 +112,13 @@ func (s *ChannelService) UpdateChannelName(ctx context.Context, req *proto.Updat
 		return nil, err
 	}
 	zap.L().Info("channel name updated", zap.Int32("channel_id", repoChannel.ID), zap.String("channel_name", repoChannel.ChannelName))
-	return &proto.UpdateChannelResponse{Channel: channelToProto(repoChannel)}, nil
+	return &proto.AdminChannelResponse{Channel: channelToProto(repoChannel)}, nil
 }
 
-func (s *ChannelService) UpdateChannelStatus(ctx context.Context, req *proto.UpdateChannelStatusRequest) (*proto.UpdateChannelResponse, error) {
+func (s *ChannelService) UpdateChannelStatus(ctx context.Context, req *proto.UpdateAdminChannelStatusRequest) (*proto.AdminChannelResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateChannelStatus(req.Status); err != nil {
 		return nil, err
 	}
@@ -116,10 +132,13 @@ func (s *ChannelService) UpdateChannelStatus(ctx context.Context, req *proto.Upd
 		return nil, err
 	}
 	zap.L().Info("channel status updated", zap.Int32("channel_id", repoChannel.ID), zap.Int16("status", repoChannel.Status))
-	return &proto.UpdateChannelResponse{Channel: channelToProto(repoChannel)}, nil
+	return &proto.AdminChannelResponse{Channel: channelToProto(repoChannel)}, nil
 }
 
-func (s *ChannelService) UpdateChannelBaseURL(ctx context.Context, req *proto.UpdateChannelBaseURLRequest) (*proto.UpdateChannelResponse, error) {
+func (s *ChannelService) UpdateChannelBaseURL(ctx context.Context, req *proto.UpdateAdminChannelBaseURLRequest) (*proto.AdminChannelResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateChannelBaseURL(req.BaseUrl); err != nil {
 		return nil, err
 	}
@@ -133,10 +152,13 @@ func (s *ChannelService) UpdateChannelBaseURL(ctx context.Context, req *proto.Up
 		return nil, err
 	}
 	zap.L().Info("channel base url updated", zap.Int32("channel_id", repoChannel.ID), zap.String("base_url", repoChannel.BaseUrl))
-	return &proto.UpdateChannelResponse{Channel: channelToProto(repoChannel)}, nil
+	return &proto.AdminChannelResponse{Channel: channelToProto(repoChannel)}, nil
 }
 
-func (s *ChannelService) UpdateChannelAPIFormat(ctx context.Context, req *proto.UpdateChannelAPIFormatRequest) (*proto.UpdateChannelResponse, error) {
+func (s *ChannelService) UpdateChannelAPIFormat(ctx context.Context, req *proto.UpdateAdminChannelAPIFormatRequest) (*proto.AdminChannelResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	repoChannel, err := s.queries.UpdateChannelAPIFormat(ctx, repository.UpdateChannelAPIFormatParams{
 		ID:        req.ChannelId,
 		ApiFormat: req.ApiFormat,
@@ -146,10 +168,13 @@ func (s *ChannelService) UpdateChannelAPIFormat(ctx context.Context, req *proto.
 		return nil, err
 	}
 	zap.L().Info("channel api format updated", zap.Int32("channel_id", repoChannel.ID), zap.Int32("api_format", repoChannel.ApiFormat))
-	return &proto.UpdateChannelResponse{Channel: channelToProto(repoChannel)}, nil
+	return &proto.AdminChannelResponse{Channel: channelToProto(repoChannel)}, nil
 }
 
-func (s *ChannelService) UpdateChannelProviderKey(ctx context.Context, req *proto.UpdateChannelProviderKeyRequest) (*proto.UpdateChannelResponse, error) {
+func (s *ChannelService) UpdateChannelProviderKey(ctx context.Context, req *proto.UpdateAdminChannelProviderKeyRequest) (*proto.AdminChannelResponse, error) {
+	if _, err := adminauth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	repoChannel, err := s.queries.UpdateChannelProviderKey(ctx, repository.UpdateChannelProviderKeyParams{
 		ID:          req.ChannelId,
 		ProviderKey: req.ProviderKey,
@@ -159,25 +184,41 @@ func (s *ChannelService) UpdateChannelProviderKey(ctx context.Context, req *prot
 		return nil, err
 	}
 	zap.L().Info("channel provider key updated", zap.Int32("channel_id", repoChannel.ID))
-	return &proto.UpdateChannelResponse{Channel: channelToProto(repoChannel)}, nil
+	return &proto.AdminChannelResponse{Channel: channelToProto(repoChannel)}, nil
+}
+
+func (s *ChannelService) ListClientChannels(ctx context.Context, req *proto.ListClientChannelsRequest) (*proto.ListClientChannelsResponse, error) {
+	if _, err := adminauth.RequireUser(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.queries.ListActiveChannelNames(ctx)
+	if err != nil {
+		zap.L().Error("list client channels failed", zap.Error(err))
+		return nil, err
+	}
+	channels := make([]*proto.ClientChannel, len(rows))
+	for i, name := range rows {
+		channels[i] = &proto.ClientChannel{ChannelName: name}
+	}
+	return &proto.ListClientChannelsResponse{Channels: channels}, nil
 }
 
 func validateChannelName(channelName string) error {
 	if strings.TrimSpace(channelName) == "" {
-		return fmt.Errorf("channel name is required")
+		return ValidationError{Message: "channel name is required"}
 	}
 	if len(channelName) > channelNameMaxLength {
-		return fmt.Errorf("channel name must be at most %d characters", channelNameMaxLength)
+		return ValidationError{Message: fmt.Sprintf("channel name must be at most %d characters", channelNameMaxLength)}
 	}
 	return nil
 }
 
 func validateChannelBaseURL(baseURL string) error {
 	if len(baseURL) > channelBaseURLMaxLength {
-		return fmt.Errorf("base_url must be at most %d characters", channelBaseURLMaxLength)
+		return ValidationError{Message: fmt.Sprintf("base_url must be at most %d characters", channelBaseURLMaxLength)}
 	}
 	if _, err := coreproxy.ParseBaseURL(baseURL); err != nil {
-		return fmt.Errorf("invalid base_url: %w", err)
+		return ValidationError{Message: fmt.Sprintf("invalid base_url: %v", err)}
 	}
 	return nil
 }
@@ -187,12 +228,12 @@ func validateChannelStatus(status int32) error {
 	case channelStatusActive, channelStatusBanned, channelStatusPending:
 		return nil
 	default:
-		return fmt.Errorf("invalid channel status: %d", status)
+		return ValidationError{Message: fmt.Sprintf("invalid channel status: %d", status)}
 	}
 }
 
-func channelToProto(channel repository.Channel) *proto.Channel {
-	return &proto.Channel{
+func channelToProto(channel repository.Channel) *proto.AdminChannel {
+	return &proto.AdminChannel{
 		ChannelId:   channel.ID,
 		ChannelName: channel.ChannelName,
 		CreatedAt:   timestamppb.New(channel.CreatedAt),
