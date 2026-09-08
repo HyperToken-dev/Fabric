@@ -10,6 +10,12 @@ import (
 	"path/filepath"
 
 	"github.com/HyperToken-dev/fabric/business/sensitive"
+	"github.com/HyperToken-dev/fabric/cmd/gateway/alibaba"
+	"github.com/HyperToken-dev/fabric/cmd/gateway/common"
+	"github.com/HyperToken-dev/fabric/cmd/gateway/extrotec"
+	"github.com/HyperToken-dev/fabric/cmd/gateway/google"
+	"github.com/HyperToken-dev/fabric/cmd/gateway/openai"
+	"github.com/HyperToken-dev/fabric/cmd/gateway/seedance"
 	"github.com/HyperToken-dev/fabric/internal/adminauth"
 	"github.com/HyperToken-dev/fabric/internal/config"
 	"github.com/HyperToken-dev/fabric/internal/models"
@@ -78,11 +84,11 @@ func main() {
 	)
 
 	// init sensitive word detect
-	sensitiveRuntimeStore := service.NewSensitiveRuntimeStore(sensitiveRuntimePath(workDir, runPath))
+	sensitiveRuntimeStore := service.NewSensitiveRuntimeStore(common.SensitiveRuntimePath(workDir, runPath))
 	if err := sensitiveRuntimeStore.Ensure(context.Background()); err != nil {
 		zap.S().Fatalf("init sensitive runtime store error: %v", err)
 	}
-	sensitiveSource := gatewaySensitiveSource{runtimeStore: sensitiveRuntimeStore}
+	sensitiveSource := common.GatewaySensitiveSource{RuntimeStore: sensitiveRuntimeStore}
 	textPolicy := sensitive.NewReloadablePolicy(sensitive.Snapshot{})
 	loaded, err := sensitiveSource.State(context.Background())
 	if err != nil {
@@ -143,43 +149,43 @@ func main() {
 
 	// register proxy
 	proxyStore := postgres.NewProxyStore(db)
-	openaiProxy, err := NewOpenAIProxy(OpenAIProxyOptions{
-		ModelStore:         newModelStoreAdapter(proxyStore),
-		UsageHandler:       newOpenAIUsageAdapter(proxyStore),
-		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+	openaiProxy, err := openai.NewOpenAIProxy(openai.OpenAIProxyOptions{
+		ModelStore:         common.NewModelStoreAdapter(proxyStore),
+		UsageHandler:       common.NewOpenAIUsageAdapter(proxyStore),
+		IntegralLogHandler: common.NewIntegralLogAdapter(proxyStore),
 		TextPolicy:         textPolicy,
 	})
 	if err != nil {
 		zap.S().Fatalf("create openai proxy error: %v", err)
 	}
-	alibabaBailianProxy, err := NewAlibabaBailianProxy(AlibabaBailianProxyOptions{
-		ModelStore:         newModelStoreAdapter(proxyStore),
-		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+	alibabaBailianProxy, err := alibaba.NewAlibabaBailianProxy(alibaba.AlibabaBailianProxyOptions{
+		ModelStore:         common.NewModelStoreAdapter(proxyStore),
+		IntegralLogHandler: common.NewIntegralLogAdapter(proxyStore),
 	})
 	if err != nil {
 		zap.S().Fatalf("create alibaba bailian proxy error: %v", err)
 	}
-	seedanceProxy, err := NewSeedanceProxy(SeedanceProxyOptions{
-		ModelStore:         newModelStoreAdapter(proxyStore),
-		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
-		ProviderTaskStore:  newProviderTaskStoreAdapter(proxyStore),
+	seedanceProxy, err := seedance.NewSeedanceProxy(seedance.SeedanceProxyOptions{
+		ModelStore:         common.NewModelStoreAdapter(proxyStore),
+		IntegralLogHandler: common.NewIntegralLogAdapter(proxyStore),
+		ProviderTaskStore:  common.NewProviderTaskStoreAdapter(proxyStore),
 		TextPolicy:         textPolicy,
 	})
 	if err != nil {
 		zap.S().Fatalf("create seedance proxy error: %v", err)
 	}
-	googleProxy, err := NewGoogleProxy(GoogleProxyOptions{
-		ModelStore:         newModelStoreAdapter(proxyStore),
-		UsageHandler:       newGoogleUsageAdapter(proxyStore),
-		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+	googleProxy, err := google.NewGoogleProxy(google.GoogleProxyOptions{
+		ModelStore:         common.NewModelStoreAdapter(proxyStore),
+		UsageHandler:       common.NewGoogleUsageAdapter(proxyStore),
+		IntegralLogHandler: common.NewIntegralLogAdapter(proxyStore),
 		TextPolicy:         textPolicy,
 	})
 	if err != nil {
 		zap.S().Fatalf("create google proxy error: %v", err)
 	}
-	extrotecProxy, err := NewExtrotecProxy(ExtrotecProxyOptions{
-		ModelStore:         newModelStoreAdapter(proxyStore),
-		IntegralLogHandler: newIntegralLogAdapter(proxyStore),
+	extrotecProxy, err := extrotec.NewExtrotecProxy(extrotec.ExtrotecProxyOptions{
+		ModelStore:         common.NewModelStoreAdapter(proxyStore),
+		IntegralLogHandler: common.NewIntegralLogAdapter(proxyStore),
 		TextPolicy:         textPolicy,
 	})
 	if err != nil {
